@@ -5,6 +5,12 @@ import (
 	"fmt"
 
 	wechatpaycore "github.com/wechatpay-apiv3/wechatpay-go/core"
+	"github.com/wechatpay-apiv3/wechatpay-go/core/option"
+	"github.com/wechatpay-apiv3/wechatpay-go/services/payments/native"
+	"github.com/wechatpay-apiv3/wechatpay-go/utils"
+
+	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 )
 
 type Config struct {
@@ -62,11 +68,67 @@ func NewClient(cfg Config) (Client, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	return &sdkClient{cfg: cfg}, nil
+	privateKey, err := utils.LoadPrivateKey(cfg.PrivateKeyPEM)
+	if err != nil {
+		return nil, err
+	}
+	cli, err := wechatpaycore.NewClient(
+		context.Background(),
+		option.WithWechatPayAutoAuthCipher(cfg.MchID, cfg.MerchantSerialNo, privateKey, cfg.APIv3Key),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &sdkClient{cfg: cfg, cli: cli}, nil
 }
 
 func (c *sdkClient) CreateNativeOrder(ctx context.Context, req NativeOrderRequest) (*NativeOrderResponse, error) {
-	return nil, fmt.Errorf("not implemented")
+	if c.cli == nil {
+		return nil, fmt.Errorf("wechat pay client is not initialized")
+	}
+
+	description := req.Description
+	if description == "" {
+		description = setting.WeChatPayOrderDescription
+	}
+	if description == "" {
+		description = "账户充值"
+	}
+
+	notifyURL := req.NotifyURL
+	if notifyURL == "" {
+		notifyURL = setting.WeChatPayNotifyUrl
+	}
+	if notifyURL == "" {
+		notifyURL = service.GetCallbackAddress() + "/api/wechat/notify"
+	}
+
+	prepayReq := native.PrepayRequest{
+		Appid:       wechatpaycore.String(c.cfg.AppID),
+		Mchid:       wechatpaycore.String(c.cfg.MchID),
+		Description: wechatpaycore.String(description),
+		OutTradeNo:  wechatpaycore.String(req.OutTradeNo),
+		NotifyUrl:   wechatpaycore.String(notifyURL),
+		Amount: &native.Amount{
+			Total:    wechatpaycore.Int64(req.AmountFen),
+			Currency: wechatpaycore.String("CNY"),
+		},
+	}
+	if req.ClientIP != "" {
+		prepayReq.SceneInfo = &native.SceneInfo{
+			PayerClientIp: wechatpaycore.String(req.ClientIP),
+		}
+	}
+
+	svc := native.NativeApiService{Client: c.cli}
+	resp, _, err := svc.Prepay(ctx, prepayReq)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil || resp.CodeUrl == nil {
+		return nil, fmt.Errorf("wechat pay native order returned empty code url")
+	}
+	return &NativeOrderResponse{CodeURL: *resp.CodeUrl}, nil
 }
 
 func (c *sdkClient) VerifyAndDecryptNotify(ctx context.Context, headers map[string]string, body []byte) (*NotifyResult, error) {

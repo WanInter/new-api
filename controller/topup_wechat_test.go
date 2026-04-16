@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/wechatpay"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -101,7 +103,7 @@ func setupTopupControllerTestEnv(t *testing.T) {
 	model.DB = db
 	model.LOG_DB = db
 
-	if err := db.AutoMigrate(&model.Option{}); err != nil {
+	if err := db.AutoMigrate(&model.Option{}, &model.User{}, &model.TopUp{}); err != nil {
 		t.Fatalf("failed to migrate option table: %v", err)
 	}
 
@@ -115,6 +117,36 @@ func setupTopupControllerTestEnv(t *testing.T) {
 	})
 
 	operation_setting.PayMethods = []map[string]string{}
+}
+
+func seedTopupUser(t *testing.T, id int, group string) {
+	t.Helper()
+
+	user := &model.User{
+		Id:       id,
+		Username: fmt.Sprintf("user-%d", id),
+		Password: "password123",
+		Role:     common.RoleCommonUser,
+		Status:   common.UserStatusEnabled,
+		Email:    fmt.Sprintf("user-%d@example.com", id),
+		Group:    group,
+	}
+	if err := model.DB.Create(user).Error; err != nil {
+		t.Fatalf("failed to seed user: %v", err)
+	}
+}
+
+func seedWeChatPayConfig() {
+	setting.WeChatPayEnabled = true
+	setting.WeChatPayUnitPrice = 7.2
+	setting.WeChatPayMinTopUp = 1
+	setting.WeChatPayMchID = "mch-id"
+	setting.WeChatPayAppID = "app-id"
+	setting.WeChatPayAPIv3Key = "01234567890123456789012345678901"
+	setting.WeChatPayPrivateKey = "pem"
+	setting.WeChatPayMerchantSerialNo = "serial"
+	setting.WeChatPayPublicKeyID = "pub-id"
+	setting.WeChatPayPublicKey = "pub"
 }
 
 func newTopupTestContext(t *testing.T, method string, target string, body any, userID int) (*gin.Context, *httptest.ResponseRecorder) {
@@ -140,6 +172,72 @@ func newTopupTestContext(t *testing.T, method string, target string, body any, u
 	ctx.Set("id", userID)
 
 	return ctx, recorder
+}
+
+func assertSuccessMessage(t *testing.T, recorder *httptest.ResponseRecorder, expected string) {
+	t.Helper()
+
+	var response struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+		Data    string `json:"data"`
+	}
+	if err := common.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if !response.Success {
+		t.Fatalf("expected success response, got body: %s", recorder.Body.String())
+	}
+	if response.Data != expected {
+		t.Fatalf("expected data %q, got %q, body: %s", expected, response.Data, recorder.Body.String())
+	}
+}
+
+func assertSuccessContains(t *testing.T, recorder *httptest.ResponseRecorder, expected string) {
+	t.Helper()
+
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			CodeURL string `json:"code_url"`
+		} `json:"data"`
+	}
+	if err := common.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if !response.Success {
+		t.Fatalf("expected success response, got body: %s", recorder.Body.String())
+	}
+	if !strings.Contains(response.Data.CodeURL, expected) {
+		t.Fatalf("expected code_url to contain %q, got body: %s", expected, recorder.Body.String())
+	}
+}
+
+func assertTopupPending(t *testing.T, paymentMethod string) {
+	t.Helper()
+
+	var topUp model.TopUp
+	if err := model.DB.First(&topUp).Error; err != nil {
+		t.Fatalf("failed to query topup: %v", err)
+	}
+	if topUp.PaymentMethod != paymentMethod {
+		t.Fatalf("expected payment_method %q, got %q", paymentMethod, topUp.PaymentMethod)
+	}
+	if topUp.Status != common.TopUpStatusPending {
+		t.Fatalf("expected pending topup, got %q", topUp.Status)
+	}
+}
+
+type fakeWeChatPayClient struct {
+	createNativeOrderFunc func(ctx context.Context, req wechatpay.NativeOrderRequest) (*wechatpay.NativeOrderResponse, error)
+}
+
+func (f fakeWeChatPayClient) CreateNativeOrder(ctx context.Context, req wechatpay.NativeOrderRequest) (*wechatpay.NativeOrderResponse, error) {
+	return f.createNativeOrderFunc(ctx, req)
+}
+
+func (f fakeWeChatPayClient) VerifyAndDecryptNotify(ctx context.Context, headers map[string]string, body []byte) (*wechatpay.NotifyResult, error) {
+	return nil, fmt.Errorf("not implemented")
 }
 
 func TestGetTopUpInfoIncludesWeChatPayMethodWhenConfigured(t *testing.T) {
@@ -216,4 +314,52 @@ func TestGetTopUpInfoDoesNotExposeWeChatPayWhenConfigIncomplete(t *testing.T) {
 			t.Fatalf("did not expect wechat_pay in pay_methods when config incomplete, body: %s", recorder.Body.String())
 		}
 	}
+}
+
+func TestRequestWeChatAmountReturnsCNYAmount(t *testing.T) {
+	setupTopupControllerTestEnv(t)
+	seedTopupUser(t, 1, "default")
+	setting.WeChatPayEnabled = true
+	setting.WeChatPayUnitPrice = 7.2
+	setting.WeChatPayMinTopUp = 1
+	setting.WeChatPayMchID = "mch-id"
+	setting.WeChatPayAppID = "app-id"
+	setting.WeChatPayAPIv3Key = "01234567890123456789012345678901"
+	setting.WeChatPayPrivateKey = "pem"
+	setting.WeChatPayMerchantSerialNo = "serial"
+	setting.WeChatPayPublicKeyID = "pub-id"
+	setting.WeChatPayPublicKey = "pub"
+
+	ctx, recorder := newTopupTestContext(t, "POST", "/api/user/wechat/amount", map[string]any{"amount": 10}, 1)
+	RequestWeChatAmount(ctx)
+
+	assertSuccessMessage(t, recorder, "72")
+}
+
+func TestRequestWeChatPayCreatesPendingOrderAndReturnsCodeURL(t *testing.T) {
+	setupTopupControllerTestEnv(t)
+	seedTopupUser(t, 1, "default")
+	seedWeChatPayConfig()
+
+	originalFactory := newWeChatPayClient
+	newWeChatPayClient = func() (wechatpay.Client, error) {
+		return fakeWeChatPayClient{
+			createNativeOrderFunc: func(_ context.Context, req wechatpay.NativeOrderRequest) (*wechatpay.NativeOrderResponse, error) {
+				if req.AmountFen != 7200 {
+					t.Fatalf("expected 7200 fen, got %d", req.AmountFen)
+				}
+				return &wechatpay.NativeOrderResponse{CodeURL: "weixin://wxpay/mock-code-url"}, nil
+			},
+		}, nil
+	}
+	defer func() { newWeChatPayClient = originalFactory }()
+
+	ctx, recorder := newTopupTestContext(t, "POST", "/api/user/wechat/pay", map[string]any{
+		"amount":         10,
+		"payment_method": "wechat_pay",
+	}, 1)
+	RequestWeChatPay(ctx)
+
+	assertSuccessContains(t, recorder, "mock-code-url")
+	assertTopupPending(t, "wechat_pay")
 }

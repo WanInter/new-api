@@ -495,16 +495,6 @@ func AdminCompleteTopUp(c *gin.Context) {
 	common.ApiSuccess(c, nil)
 }
 
-// RequestWeChatAmount 微信支付金额计算入口（占位，后续任务实现）
-func RequestWeChatAmount(c *gin.Context) {
-	common.ApiErrorMsg(c, "wechat pay amount is not implemented")
-}
-
-// RequestWeChatPay 微信支付下单入口（占位，后续任务实现）
-func RequestWeChatPay(c *gin.Context) {
-	common.ApiErrorMsg(c, "wechat pay request is not implemented")
-}
-
 // WeChatPayNotify 微信支付回调入口（占位，后续任务实现）
 func WeChatPayNotify(c *gin.Context) {
 	common.ApiErrorMsg(c, "wechat pay notify is not implemented")

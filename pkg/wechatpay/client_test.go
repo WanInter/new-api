@@ -26,14 +26,14 @@ func TestNewClientReturnsConfigErrorFirst(t *testing.T) {
 	}
 }
 
-func TestSDKClientCreateNativeOrderReturnsNotImplemented(t *testing.T) {
+func TestSDKClientCreateNativeOrderRequiresInitializedClient(t *testing.T) {
 	client := &sdkClient{}
 
 	resp, err := client.CreateNativeOrder(context.Background(), NativeOrderRequest{})
 	if err == nil {
-		t.Fatal("expected not implemented error")
+		t.Fatal("expected initialization error")
 	}
-	if err.Error() != "not implemented" {
+	if err.Error() != "wechat pay client is not initialized" {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if resp != nil {
