@@ -86,6 +86,18 @@ func InitOptionMap() {
 	common.OptionMap["StripePriceId"] = setting.StripePriceId
 	common.OptionMap["StripeUnitPrice"] = strconv.FormatFloat(setting.StripeUnitPrice, 'f', -1, 64)
 	common.OptionMap["StripePromotionCodesEnabled"] = strconv.FormatBool(setting.StripePromotionCodesEnabled)
+	common.OptionMap["WeChatPayEnabled"] = strconv.FormatBool(setting.WeChatPayEnabled)
+	common.OptionMap["WeChatPayMchID"] = setting.WeChatPayMchID
+	common.OptionMap["WeChatPayAppID"] = setting.WeChatPayAppID
+	common.OptionMap["WeChatPayAPIv3Key"] = setting.WeChatPayAPIv3Key
+	common.OptionMap["WeChatPayPrivateKey"] = setting.WeChatPayPrivateKey
+	common.OptionMap["WeChatPayMerchantSerialNo"] = setting.WeChatPayMerchantSerialNo
+	common.OptionMap["WeChatPayPublicKeyID"] = setting.WeChatPayPublicKeyID
+	common.OptionMap["WeChatPayPublicKey"] = setting.WeChatPayPublicKey
+	common.OptionMap["WeChatPayUnitPrice"] = strconv.FormatFloat(setting.WeChatPayUnitPrice, 'f', -1, 64)
+	common.OptionMap["WeChatPayMinTopUp"] = strconv.Itoa(setting.WeChatPayMinTopUp)
+	common.OptionMap["WeChatPayNotifyUrl"] = setting.WeChatPayNotifyUrl
+	common.OptionMap["WeChatPayOrderDescription"] = setting.WeChatPayOrderDescription
 	common.OptionMap["CreemApiKey"] = setting.CreemApiKey
 	common.OptionMap["CreemProducts"] = setting.CreemProducts
 	common.OptionMap["CreemTestMode"] = strconv.FormatBool(setting.CreemTestMode)
@@ -369,6 +381,30 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.StripeMinTopUp, _ = strconv.Atoi(value)
 	case "StripePromotionCodesEnabled":
 		setting.StripePromotionCodesEnabled = value == "true"
+	case "WeChatPayEnabled":
+		setting.WeChatPayEnabled = value == "true"
+	case "WeChatPayMchID":
+		setting.WeChatPayMchID = value
+	case "WeChatPayAppID":
+		setting.WeChatPayAppID = value
+	case "WeChatPayAPIv3Key":
+		setting.WeChatPayAPIv3Key = value
+	case "WeChatPayPrivateKey":
+		setting.WeChatPayPrivateKey = value
+	case "WeChatPayMerchantSerialNo":
+		setting.WeChatPayMerchantSerialNo = value
+	case "WeChatPayPublicKeyID":
+		setting.WeChatPayPublicKeyID = value
+	case "WeChatPayPublicKey":
+		setting.WeChatPayPublicKey = value
+	case "WeChatPayUnitPrice":
+		setting.WeChatPayUnitPrice, _ = strconv.ParseFloat(value, 64)
+	case "WeChatPayMinTopUp":
+		setting.WeChatPayMinTopUp, _ = strconv.Atoi(value)
+	case "WeChatPayNotifyUrl":
+		setting.WeChatPayNotifyUrl = value
+	case "WeChatPayOrderDescription":
+		setting.WeChatPayOrderDescription = value
 	case "CreemApiKey":
 		setting.CreemApiKey = value
 	case "CreemProducts":

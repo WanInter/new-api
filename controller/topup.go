@@ -22,6 +22,17 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+func isWeChatPayConfigured() bool {
+	return setting.WeChatPayEnabled &&
+		setting.WeChatPayMchID != "" &&
+		setting.WeChatPayAppID != "" &&
+		setting.WeChatPayAPIv3Key != "" &&
+		setting.WeChatPayPrivateKey != "" &&
+		setting.WeChatPayMerchantSerialNo != "" &&
+		setting.WeChatPayPublicKeyID != "" &&
+		setting.WeChatPayPublicKey != ""
+}
+
 func GetTopUpInfo(c *gin.Context) {
 	// 获取支付方式
 	payMethods := operation_setting.PayMethods
@@ -78,24 +89,44 @@ func GetTopUpInfo(c *gin.Context) {
 		}
 	}
 
+	if isWeChatPayConfigured() {
+		hasWeChatPay := false
+		for _, method := range payMethods {
+			if method["type"] == "wechat_pay" {
+				hasWeChatPay = true
+				break
+			}
+		}
+		if !hasWeChatPay {
+			payMethods = append(payMethods, map[string]string{
+				"name":      "微信支付",
+				"type":      "wechat_pay",
+				"color":     "rgba(var(--semi-green-5), 1)",
+				"min_topup": strconv.Itoa(setting.WeChatPayMinTopUp),
+			})
+		}
+	}
+
 	data := gin.H{
 		"enable_online_topup": operation_setting.PayAddress != "" && operation_setting.EpayId != "" && operation_setting.EpayKey != "",
 		"enable_stripe_topup": setting.StripeApiSecret != "" && setting.StripeWebhookSecret != "" && setting.StripePriceId != "",
 		"enable_creem_topup":  setting.CreemApiKey != "" && setting.CreemProducts != "[]",
-		"enable_waffo_topup": enableWaffo,
+		"enable_waffo_topup":  enableWaffo,
+		"enable_wechat_topup": isWeChatPayConfigured(),
 		"waffo_pay_methods": func() interface{} {
 			if enableWaffo {
 				return setting.GetWaffoPayMethods()
 			}
 			return nil
 		}(),
-		"creem_products": setting.CreemProducts,
-		"pay_methods":         payMethods,
-		"min_topup":           operation_setting.MinTopUp,
-		"stripe_min_topup":    setting.StripeMinTopUp,
-		"waffo_min_topup":     setting.WaffoMinTopUp,
-		"amount_options":      operation_setting.GetPaymentSetting().AmountOptions,
-		"discount":            operation_setting.GetPaymentSetting().AmountDiscount,
+		"creem_products":   setting.CreemProducts,
+		"pay_methods":      payMethods,
+		"min_topup":        operation_setting.MinTopUp,
+		"stripe_min_topup": setting.StripeMinTopUp,
+		"waffo_min_topup":  setting.WaffoMinTopUp,
+		"wechat_min_topup": setting.WeChatPayMinTopUp,
+		"amount_options":   operation_setting.GetPaymentSetting().AmountOptions,
+		"discount":         operation_setting.GetPaymentSetting().AmountDiscount,
 	}
 	common.ApiSuccess(c, data)
 }
@@ -464,3 +495,17 @@ func AdminCompleteTopUp(c *gin.Context) {
 	common.ApiSuccess(c, nil)
 }
 
+// RequestWeChatAmount 微信支付金额计算入口（占位，后续任务实现）
+func RequestWeChatAmount(c *gin.Context) {
+	common.ApiErrorMsg(c, "wechat pay amount is not implemented")
+}
+
+// RequestWeChatPay 微信支付下单入口（占位，后续任务实现）
+func RequestWeChatPay(c *gin.Context) {
+	common.ApiErrorMsg(c, "wechat pay request is not implemented")
+}
+
+// WeChatPayNotify 微信支付回调入口（占位，后续任务实现）
+func WeChatPayNotify(c *gin.Context) {
+	common.ApiErrorMsg(c, "wechat pay notify is not implemented")
+}
