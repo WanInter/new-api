@@ -316,6 +316,48 @@ func TestGetTopUpInfoIncludesWeChatPayMethodWhenConfigured(t *testing.T) {
 	}
 }
 
+func TestGetTopUpInfoReturnsScaledWeChatMinTopupInTokenMode(t *testing.T) {
+	setupTopupControllerTestEnv(t)
+	seedWeChatPayConfig()
+	setting.WeChatPayMinTopUp = 2
+	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeTokens
+
+	ctx, recorder := newTopupTestContext(t, "GET", "/api/user/topup/info", nil, 1)
+	GetTopUpInfo(ctx)
+
+	var response topupWechatTestResponse
+	if err := common.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if !response.Success {
+		t.Fatalf("expected success response, got body: %s", recorder.Body.String())
+	}
+
+	expectedMinTopup := int(common.QuotaPerUnit * 2)
+	if response.Data.WeChatMinTopUp != expectedMinTopup {
+		t.Fatalf("expected wechat_min_topup=%d, got %d", expectedMinTopup, response.Data.WeChatMinTopUp)
+	}
+
+	found := false
+	for _, method := range response.Data.PayMethods {
+		methodType, ok := method["type"].(string)
+		if !ok || methodType != "wechat_pay" {
+			continue
+		}
+		found = true
+		minTopup, ok := method["min_topup"].(string)
+		if !ok {
+			t.Fatalf("expected min_topup string in wechat_pay method, body: %s", recorder.Body.String())
+		}
+		if minTopup != fmt.Sprintf("%d", expectedMinTopup) {
+			t.Fatalf("expected wechat pay min_topup=%d, got %s", expectedMinTopup, minTopup)
+		}
+	}
+	if !found {
+		t.Fatalf("expected wechat_pay in pay_methods, body: %s", recorder.Body.String())
+	}
+}
+
 func TestGetTopUpInfoDoesNotExposeWeChatPayWhenConfigIncomplete(t *testing.T) {
 	setupTopupControllerTestEnv(t)
 	setting.WeChatPayEnabled = true

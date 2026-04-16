@@ -36,6 +36,7 @@ func isWeChatPayConfigured() bool {
 func GetTopUpInfo(c *gin.Context) {
 	// 获取支付方式
 	payMethods := operation_setting.PayMethods
+	wechatMinTopup := getWeChatPayMinTopup()
 
 	// 如果启用了 Stripe 支付，添加到支付方法列表
 	if setting.StripeApiSecret != "" && setting.StripeWebhookSecret != "" && setting.StripePriceId != "" {
@@ -102,7 +103,7 @@ func GetTopUpInfo(c *gin.Context) {
 				"name":      "微信支付",
 				"type":      "wechat_pay",
 				"color":     "rgba(var(--semi-green-5), 1)",
-				"min_topup": strconv.Itoa(setting.WeChatPayMinTopUp),
+				"min_topup": strconv.FormatInt(wechatMinTopup, 10),
 			})
 		}
 	}
@@ -124,7 +125,7 @@ func GetTopUpInfo(c *gin.Context) {
 		"min_topup":        operation_setting.MinTopUp,
 		"stripe_min_topup": setting.StripeMinTopUp,
 		"waffo_min_topup":  setting.WaffoMinTopUp,
-		"wechat_min_topup": setting.WeChatPayMinTopUp,
+		"wechat_min_topup": wechatMinTopup,
 		"amount_options":   operation_setting.GetPaymentSetting().AmountOptions,
 		"discount":         operation_setting.GetPaymentSetting().AmountDiscount,
 	}
