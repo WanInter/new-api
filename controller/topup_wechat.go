@@ -227,6 +227,10 @@ func WeChatPayNotify(c *gin.Context) {
 		c.AbortWithStatus(http.StatusBadRequest)
 		return
 	}
+	if topUp.PaymentMethod != wechatPayMethod {
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
 
 	expectedFen := decimal.NewFromFloat(topUp.Money).Mul(decimal.NewFromInt(100)).Round(0).IntPart()
 	if expectedFen != result.AmountTotal {

@@ -3,6 +3,7 @@ package controller
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -157,4 +158,65 @@ func TestWeChatPayNotifyCompletesRechargeOnce(t *testing.T) {
 
 	assertTopupNotifyUserQuota(t, 1, int(10*common.QuotaPerUnit))
 	assertTopupNotifyStatus(t, "WXPAY-ORDER-1", common.TopUpStatusSuccess)
+}
+
+func TestWeChatPayNotifyRejectsVerifyAndDecryptError(t *testing.T) {
+	setupTopupControllerTestEnv(t)
+	seedTopupUser(t, 1, "default")
+	seedPendingTopup(t, "WXPAY-ORDER-1", 72.00, 10, "wechat_pay")
+	seedWeChatPayConfig()
+
+	originalFactory := newWeChatPayClient
+	newWeChatPayClient = func() (wechatpay.Client, error) {
+		return fakeWeChatPayNotifyClient{
+			verifyAndDecryptNotifyFunc: func(_ context.Context, _ map[string]string, _ []byte) (*wechatpay.NotifyResult, error) {
+				return nil, fmt.Errorf("invalid notify")
+			},
+		}, nil
+	}
+	defer func() { newWeChatPayClient = originalFactory }()
+
+	ctx, recorder := newTopupNotifyContext(t, []byte(`{"id":"EVT-1"}`))
+	WeChatPayNotify(ctx)
+
+	if recorder.Code == http.StatusOK || recorder.Code == http.StatusNoContent {
+		t.Fatalf("expected non-2xx for verify/decrypt error, got %d", recorder.Code)
+	}
+	assertTopupNotifyUserQuota(t, 1, 0)
+	assertTopupNotifyStatus(t, "WXPAY-ORDER-1", common.TopUpStatusPending)
+}
+
+func TestWeChatPayNotifyRejectsNonWeChatPayOrder(t *testing.T) {
+	setupTopupControllerTestEnv(t)
+	seedTopupUser(t, 1, "default")
+	seedPendingTopup(t, "WXPAY-ORDER-1", 72.00, 10, "stripe")
+	seedWeChatPayConfig()
+
+	originalFactory := newWeChatPayClient
+	newWeChatPayClient = func() (wechatpay.Client, error) {
+		return fakeWeChatPayNotifyClient{
+			verifyAndDecryptNotifyFunc: func(_ context.Context, _ map[string]string, _ []byte) (*wechatpay.NotifyResult, error) {
+				return &wechatpay.NotifyResult{
+					OutTradeNo:    "WXPAY-ORDER-1",
+					TransactionID: "TX123",
+					TradeState:    "SUCCESS",
+					TradeType:     "NATIVE",
+					AppID:         setting.WeChatPayAppID,
+					MchID:         setting.WeChatPayMchID,
+					AmountTotal:   7200,
+					Currency:      "CNY",
+				}, nil
+			},
+		}, nil
+	}
+	defer func() { newWeChatPayClient = originalFactory }()
+
+	ctx, recorder := newTopupNotifyContext(t, []byte(`{"id":"EVT-1"}`))
+	WeChatPayNotify(ctx)
+
+	if recorder.Code == http.StatusOK || recorder.Code == http.StatusNoContent {
+		t.Fatalf("expected non-2xx for non-wechat-pay order, got %d", recorder.Code)
+	}
+	assertTopupNotifyUserQuota(t, 1, 0)
+	assertTopupNotifyStatus(t, "WXPAY-ORDER-1", common.TopUpStatusPending)
 }
