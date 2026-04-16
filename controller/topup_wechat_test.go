@@ -16,6 +16,15 @@ import (
 	"gorm.io/gorm"
 )
 
+type topupWechatTestResponse struct {
+	Success bool `json:"success"`
+	Data    struct {
+		EnableWeChatTopup bool             `json:"enable_wechat_topup"`
+		WeChatMinTopUp    int              `json:"wechat_min_topup"`
+		PayMethods        []map[string]any `json:"pay_methods"`
+	} `json:"data"`
+}
+
 type wechatPaySettingSnapshot struct {
 	Enabled          bool
 	MchID            string
@@ -148,57 +157,63 @@ func TestGetTopUpInfoIncludesWeChatPayMethodWhenConfigured(t *testing.T) {
 	ctx, recorder := newTopupTestContext(t, "GET", "/api/user/topup/info", nil, 1)
 	GetTopUpInfo(ctx)
 
-	body := recorder.Body.String()
-	if !strings.Contains(body, "wechat_pay") {
-		t.Fatalf("expected wechat_pay in response: %s", body)
+	var response topupWechatTestResponse
+	if err := common.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if !response.Success {
+		t.Fatalf("expected success response, got body: %s", recorder.Body.String())
+	}
+	if !response.Data.EnableWeChatTopup {
+		t.Fatalf("expected enable_wechat_topup=true, got false, body: %s", recorder.Body.String())
+	}
+	if response.Data.WeChatMinTopUp != 2 {
+		t.Fatalf("expected wechat_min_topup=2, got %d", response.Data.WeChatMinTopUp)
+	}
+
+	hasWeChatPay := false
+	for _, method := range response.Data.PayMethods {
+		methodType, ok := method["type"].(string)
+		if ok && methodType == "wechat_pay" {
+			hasWeChatPay = true
+			break
+		}
+	}
+	if !hasWeChatPay {
+		t.Fatalf("expected wechat_pay in pay_methods, body: %s", recorder.Body.String())
 	}
 }
 
-func TestInitOptionMapAndUpdateOptionSyncWeChatPayConfig(t *testing.T) {
+func TestGetTopUpInfoDoesNotExposeWeChatPayWhenConfigIncomplete(t *testing.T) {
 	setupTopupControllerTestEnv(t)
-
 	setting.WeChatPayEnabled = true
-	setting.WeChatPayMchID = "init-mch-id"
-	setting.WeChatPayAppID = "init-app-id"
+	setting.WeChatPayMchID = "mch-id"
+	setting.WeChatPayAppID = "app-id"
 	setting.WeChatPayAPIv3Key = "01234567890123456789012345678901"
-	setting.WeChatPayPrivateKey = "private-key"
+	setting.WeChatPayPrivateKey = "-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----"
 	setting.WeChatPayMerchantSerialNo = "serial-no"
-	setting.WeChatPayPublicKeyID = "pub-key-id"
-	setting.WeChatPayPublicKey = "public-key"
-	setting.WeChatPayUnitPrice = 3.5
-	setting.WeChatPayMinTopUp = 5
-	setting.WeChatPayNotifyUrl = "https://notify.example.com"
-	setting.WeChatPayOrderDescription = "充值测试"
+	setting.WeChatPayPublicKeyID = "pub-id"
+	// 故意留空 PublicKey，配置不完整
+	setting.WeChatPayPublicKey = ""
+	setting.WeChatPayMinTopUp = 2
 
-	model.InitOptionMap()
+	ctx, recorder := newTopupTestContext(t, "GET", "/api/user/topup/info", nil, 1)
+	GetTopUpInfo(ctx)
 
-	if common.OptionMap["WeChatPayEnabled"] != "true" {
-		t.Fatalf("expected WeChatPayEnabled=true, got %q", common.OptionMap["WeChatPayEnabled"])
+	var response topupWechatTestResponse
+	if err := common.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
 	}
-	if common.OptionMap["WeChatPayMinTopUp"] != "5" {
-		t.Fatalf("expected WeChatPayMinTopUp=5, got %q", common.OptionMap["WeChatPayMinTopUp"])
+	if !response.Success {
+		t.Fatalf("expected success response, got body: %s", recorder.Body.String())
 	}
-	if common.OptionMap["WeChatPayOrderDescription"] != "充值测试" {
-		t.Fatalf("expected WeChatPayOrderDescription=充值测试, got %q", common.OptionMap["WeChatPayOrderDescription"])
+	if response.Data.EnableWeChatTopup {
+		t.Fatalf("expected enable_wechat_topup=false when config incomplete, body: %s", recorder.Body.String())
 	}
-
-	if err := model.UpdateOption("WeChatPayEnabled", "false"); err != nil {
-		t.Fatalf("failed to update WeChatPayEnabled: %v", err)
-	}
-	if err := model.UpdateOption("WeChatPayMinTopUp", "7"); err != nil {
-		t.Fatalf("failed to update WeChatPayMinTopUp: %v", err)
-	}
-	if err := model.UpdateOption("WeChatPayNotifyUrl", "https://new-notify.example.com"); err != nil {
-		t.Fatalf("failed to update WeChatPayNotifyUrl: %v", err)
-	}
-
-	if setting.WeChatPayEnabled {
-		t.Fatal("expected WeChatPayEnabled to be false after UpdateOption")
-	}
-	if setting.WeChatPayMinTopUp != 7 {
-		t.Fatalf("expected WeChatPayMinTopUp=7, got %d", setting.WeChatPayMinTopUp)
-	}
-	if setting.WeChatPayNotifyUrl != "https://new-notify.example.com" {
-		t.Fatalf("expected WeChatPayNotifyUrl to be updated, got %q", setting.WeChatPayNotifyUrl)
+	for _, method := range response.Data.PayMethods {
+		methodType, ok := method["type"].(string)
+		if ok && methodType == "wechat_pay" {
+			t.Fatalf("did not expect wechat_pay in pay_methods when config incomplete, body: %s", recorder.Body.String())
+		}
 	}
 }
