@@ -41,6 +41,7 @@ export default function WeChatPayModal({
       title={t('微信扫码支付')}
       footer={null}
       onCancel={onClose}
+      maskClosable={false}
       centered
     >
       <div className='flex flex-col items-center gap-3'>

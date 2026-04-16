@@ -508,7 +508,10 @@ const TopUp = () => {
               if (!method.color) {
                 if (method.type === 'alipay') {
                   method.color = 'rgba(var(--semi-blue-5), 1)';
-                } else if (method.type === 'wxpay') {
+                } else if (
+                  method.type === 'wxpay' ||
+                  method.type === 'wechat_pay'
+                ) {
                   method.color = 'rgba(var(--semi-green-5), 1)';
                 } else if (method.type === 'stripe') {
                   method.color = 'rgba(var(--semi-purple-5), 1)';
@@ -534,6 +537,8 @@ const TopUp = () => {
             ? data.min_topup
             : enableStripeTopUp
               ? data.stripe_min_topup
+              : enableWeChatTopUp
+                ? data.wechat_min_topup
               : data.enable_waffo_topup
                 ? data.waffo_min_topup
                 : 1;
@@ -871,6 +876,7 @@ const TopUp = () => {
           t={t}
           enableOnlineTopUp={enableOnlineTopUp}
           enableStripeTopUp={enableStripeTopUp}
+          enableWeChatTopUp={enableWeChatTopUp}
           enableCreemTopUp={enableCreemTopUp}
           creemProducts={creemProducts}
           creemPreTopUp={creemPreTopUp}
@@ -886,6 +892,7 @@ const TopUp = () => {
           minTopUp={minTopUp}
           renderQuotaWithAmount={renderQuotaWithAmount}
           getAmount={getAmount}
+          getWeChatAmount={getWeChatAmount}
           setTopUpCount={setTopUpCount}
           setSelectedPreset={setSelectedPreset}
           renderAmount={renderAmount}
