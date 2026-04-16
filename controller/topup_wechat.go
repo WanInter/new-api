@@ -180,15 +180,14 @@ func RequestWeChatPay(c *gin.Context) {
 		ClientIP:   c.ClientIP(),
 	})
 	if err != nil {
-		topUp.Status = common.TopUpStatusFailed
-		_ = topUp.Update()
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "拉起支付失败"})
 		return
 	}
 
 	common.ApiSuccess(c, gin.H{
-		"code_url": resp.CodeURL,
-		"trade_no": tradeNo,
+		"code_url":    resp.CodeURL,
+		"trade_no":    tradeNo,
+		"amount_yuan": yuan.String(),
 	})
 }
 

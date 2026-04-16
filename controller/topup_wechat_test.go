@@ -196,13 +196,14 @@ func assertSuccessMessage(t *testing.T, recorder *httptest.ResponseRecorder, exp
 	}
 }
 
-func assertSuccessContains(t *testing.T, recorder *httptest.ResponseRecorder, expected string) {
+func assertWeChatPaySuccessResponse(t *testing.T, recorder *httptest.ResponseRecorder, expectedURL string, expectedAmount string) {
 	t.Helper()
 
 	var response struct {
 		Success bool `json:"success"`
 		Data    struct {
-			CodeURL string `json:"code_url"`
+			CodeURL    string `json:"code_url"`
+			AmountYuan string `json:"amount_yuan"`
 		} `json:"data"`
 	}
 	if err := common.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
@@ -211,8 +212,11 @@ func assertSuccessContains(t *testing.T, recorder *httptest.ResponseRecorder, ex
 	if !response.Success {
 		t.Fatalf("expected success response, got body: %s", recorder.Body.String())
 	}
-	if !strings.Contains(response.Data.CodeURL, expected) {
-		t.Fatalf("expected code_url to contain %q, got body: %s", expected, recorder.Body.String())
+	if !strings.Contains(response.Data.CodeURL, expectedURL) {
+		t.Fatalf("expected code_url to contain %q, got body: %s", expectedURL, recorder.Body.String())
+	}
+	if response.Data.AmountYuan != expectedAmount {
+		t.Fatalf("expected amount_yuan %q, got %q, body: %s", expectedAmount, response.Data.AmountYuan, recorder.Body.String())
 	}
 }
 
@@ -451,11 +455,11 @@ func TestRequestWeChatPayCreatesPendingOrderAndReturnsCodeURL(t *testing.T) {
 	}, 1)
 	RequestWeChatPay(ctx)
 
-	assertSuccessContains(t, recorder, "mock-code-url")
+	assertWeChatPaySuccessResponse(t, recorder, "mock-code-url", "72")
 	assertTopupPending(t, "wechat_pay")
 }
 
-func TestRequestWeChatPayMarksOrderFailedWhenCreateNativeOrderFails(t *testing.T) {
+func TestRequestWeChatPayKeepsOrderPendingWhenCreateNativeOrderFails(t *testing.T) {
 	setupTopupControllerTestEnv(t)
 	seedTopupUser(t, 1, "default")
 	seedWeChatPayConfig()
@@ -477,5 +481,5 @@ func TestRequestWeChatPayMarksOrderFailedWhenCreateNativeOrderFails(t *testing.T
 	RequestWeChatPay(ctx)
 
 	assertErrorData(t, recorder, "拉起支付失败")
-	assertTopupStatus(t, common.TopUpStatusFailed)
+	assertTopupStatus(t, common.TopUpStatusPending)
 }
