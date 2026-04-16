@@ -71,9 +71,19 @@ func NewClient(cfg Config) (Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	publicKey, err := utils.LoadPublicKey(cfg.PublicKeyPEM)
+	if err != nil {
+		return nil, err
+	}
 	cli, err := wechatpaycore.NewClient(
 		context.Background(),
-		option.WithWechatPayAutoAuthCipher(cfg.MchID, cfg.MerchantSerialNo, privateKey, cfg.APIv3Key),
+		option.WithWechatPayPublicKeyAuthCipher(
+			cfg.MchID,
+			cfg.MerchantSerialNo,
+			privateKey,
+			cfg.PublicKeyID,
+			publicKey,
+		),
 	)
 	if err != nil {
 		return nil, err

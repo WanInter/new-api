@@ -29,6 +29,7 @@ import {
   copy,
   getQuotaPerUnit,
 } from '../../helpers';
+import { getCurrencyConfig } from '../../helpers/render';
 import { Modal, Toast } from '@douyinfe/semi-ui';
 import { useTranslation } from 'react-i18next';
 import { UserContext } from '../../context/User';
@@ -244,7 +245,7 @@ const TopUp = () => {
           amount: parseInt(topUpCount),
           payment_method: 'wechat_pay',
         });
-        if (res?.data?.message === 'success') {
+        if (res?.data?.success) {
           const paymentData = res.data.data || {};
           const fallbackAmount = Number(amount || 0).toFixed(2);
           setOpen(false);
@@ -676,7 +677,8 @@ const TopUp = () => {
   }, [statusState?.status]);
 
   const renderAmount = () => {
-    return amount + ' ' + t('元');
+    const { symbol } = getCurrencyConfig();
+    return `${symbol}${amount}`;
   };
 
   const getAmount = async (value) => {
@@ -739,12 +741,15 @@ const TopUp = () => {
       const res = await API.post('/api/user/wechat/amount', {
         amount: parseFloat(target),
       });
-      if (res?.data?.message === 'success') {
+      if (res?.data?.success) {
         setAmount(parseFloat(res.data.data));
       } else {
         setAmount(0);
         showError(res?.data?.data || t('获取金额失败'));
       }
+    } catch (err) {
+      setAmount(0);
+      showError(t('获取金额失败'));
     } finally {
       setAmountLoading(false);
     }
