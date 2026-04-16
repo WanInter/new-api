@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -189,4 +190,57 @@ func RequestWeChatPay(c *gin.Context) {
 		"code_url": resp.CodeURL,
 		"trade_no": tradeNo,
 	})
+}
+
+func WeChatPayNotify(c *gin.Context) {
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
+
+	client, err := newWeChatPayClient()
+	if err != nil {
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	headers := map[string]string{
+		"Wechatpay-Signature":      c.GetHeader("Wechatpay-Signature"),
+		"Wechatpay-Nonce":          c.GetHeader("Wechatpay-Nonce"),
+		"Wechatpay-Timestamp":      c.GetHeader("Wechatpay-Timestamp"),
+		"Wechatpay-Serial":         c.GetHeader("Wechatpay-Serial"),
+		"Wechatpay-Signature-Type": c.GetHeader("Wechatpay-Signature-Type"),
+	}
+	result, err := client.VerifyAndDecryptNotify(c.Request.Context(), headers, body)
+	if err != nil {
+		c.AbortWithStatus(http.StatusUnauthorized)
+		return
+	}
+	if err = result.ValidateBusinessFields(setting.WeChatPayAppID, setting.WeChatPayMchID); err != nil {
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
+
+	topUp := model.GetTopUpByTradeNo(result.OutTradeNo)
+	if topUp == nil {
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
+
+	expectedFen := decimal.NewFromFloat(topUp.Money).Mul(decimal.NewFromInt(100)).Round(0).IntPart()
+	if expectedFen != result.AmountTotal {
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
+
+	LockOrder(result.OutTradeNo)
+	defer UnlockOrder(result.OutTradeNo)
+
+	if err = model.RechargeWeChatPay(result.OutTradeNo); err != nil {
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	c.AbortWithStatus(http.StatusNoContent)
 }

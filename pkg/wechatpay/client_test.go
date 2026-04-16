@@ -85,14 +85,18 @@ func TestSDKClientResolveNativeOrderDefaultsPrefersRequestValues(t *testing.T) {
 	}
 }
 
-func TestSDKClientVerifyAndDecryptNotifyReturnsNotImplemented(t *testing.T) {
-	client := &sdkClient{}
+func TestSDKClientVerifyAndDecryptNotifyRejectsSerialMismatch(t *testing.T) {
+	client := &sdkClient{
+		cfg: Config{
+			PublicKeyID: "wechat-public-key-id",
+		},
+	}
 
 	resp, err := client.VerifyAndDecryptNotify(context.Background(), map[string]string{}, nil)
 	if err == nil {
-		t.Fatal("expected not implemented error")
+		t.Fatal("expected serial mismatch error")
 	}
-	if err.Error() != "not implemented" {
+	if err.Error() != "wechatpay serial mismatch" {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if resp != nil {

@@ -495,8 +495,3 @@ func AdminCompleteTopUp(c *gin.Context) {
 	}
 	common.ApiSuccess(c, nil)
 }
-
-// WeChatPayNotify 微信支付回调入口（占位，后续任务实现）
-func WeChatPayNotify(c *gin.Context) {
-	common.ApiErrorMsg(c, "wechat pay notify is not implemented")
-}

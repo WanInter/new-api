@@ -106,7 +106,7 @@ func setupTopupControllerTestEnv(t *testing.T) {
 	model.DB = db
 	model.LOG_DB = db
 
-	if err := db.AutoMigrate(&model.Option{}, &model.User{}, &model.TopUp{}); err != nil {
+	if err := db.AutoMigrate(&model.Option{}, &model.User{}, &model.TopUp{}, &model.Log{}); err != nil {
 		t.Fatalf("failed to migrate option table: %v", err)
 	}
 

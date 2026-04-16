@@ -133,7 +133,3 @@ func (c *sdkClient) CreateNativeOrder(ctx context.Context, req NativeOrderReques
 	}
 	return &NativeOrderResponse{CodeURL: *resp.CodeUrl}, nil
 }
-
-func (c *sdkClient) VerifyAndDecryptNotify(ctx context.Context, headers map[string]string, body []byte) (*NotifyResult, error) {
-	return nil, fmt.Errorf("not implemented")
-}
