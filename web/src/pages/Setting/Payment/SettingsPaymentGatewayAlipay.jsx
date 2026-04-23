@@ -108,18 +108,28 @@ export default function SettingsPaymentGatewayAlipay(props) {
       if (inputs.AlipayPublicKey) {
         options.push({ key: 'AlipayPublicKey', value: inputs.AlipayPublicKey });
       }
-      const results = await Promise.all(
+      const results = await Promise.allSettled(
         options.map((item) => API.put('/api/option/', item)),
       );
-      const errorResults = results.filter((res) => !res.data.success);
+      const rejected = results.filter((result) => result.status === 'rejected');
+      const fulfilled = results
+        .filter((result) => result.status === 'fulfilled')
+        .map((result) => result.value);
+      const errorResults = fulfilled.filter((res) => !res.data.success);
+
+      if (rejected.length > 0) {
+        rejected.forEach(() => showError(t('部分配置保存失败，请刷新后确认实际生效项。')));
+      }
       if (errorResults.length > 0) {
         errorResults.forEach((res) => showError(res.data.message));
-      } else {
-        showSuccess(t('更新成功'));
-        props.refresh?.();
       }
+      if (rejected.length === 0 && errorResults.length === 0) {
+        showSuccess(t('更新成功'));
+      }
+      await props.refresh?.();
     } catch (error) {
       showError(t('更新失败'));
+      await props.refresh?.();
     } finally {
       setLoading(false);
     }
@@ -139,32 +149,32 @@ export default function SettingsPaymentGatewayAlipay(props) {
               '推荐先在沙箱环境验证 page 与 qr 两种模式，再切换正式环境。',
             )}
           />
-          <Row gutter={16} style={{ marginTop: 16 }}>
-            <Col span={8}>
+          <Row gutter={{ xs: 8, sm: 16, md: 24 }} style={{ marginTop: 16 }}>
+            <Col xs={24} sm={12} md={8}>
               <Form.Switch
                 field='AlipayEnabled'
                 label={t('启用支付宝官方直连')}
               />
             </Col>
-            <Col span={8}>
+            <Col xs={24} sm={12} md={8}>
               <Form.Switch
                 field='AlipaySandbox'
                 label={t('启用沙箱模式')}
               />
             </Col>
-            <Col span={8}>
+            <Col xs={24} sm={24} md={8}>
               <Form.Input field='AlipayAppID' label={t('支付宝 AppID')} />
             </Col>
           </Row>
-          <Row gutter={16} style={{ marginTop: 16 }}>
-            <Col span={12}>
+          <Row gutter={{ xs: 8, sm: 16, md: 24 }} style={{ marginTop: 16 }}>
+            <Col xs={24} sm={24} md={12}>
               <Form.Input
                 field='AlipayPrivateKey'
                 type='password'
                 label={t('应用私钥')}
               />
             </Col>
-            <Col span={12}>
+            <Col xs={24} sm={24} md={12}>
               <Form.Input
                 field='AlipayPublicKey'
                 type='password'
@@ -172,8 +182,8 @@ export default function SettingsPaymentGatewayAlipay(props) {
               />
             </Col>
           </Row>
-          <Row gutter={16} style={{ marginTop: 16 }}>
-            <Col span={6}>
+          <Row gutter={{ xs: 8, sm: 16, md: 24 }} style={{ marginTop: 16 }}>
+            <Col xs={24} sm={12} md={6}>
               <Form.InputNumber
                 field='AlipayUnitPrice'
                 label={t('单价（元）')}
@@ -181,7 +191,7 @@ export default function SettingsPaymentGatewayAlipay(props) {
                 step={0.01}
               />
             </Col>
-            <Col span={6}>
+            <Col xs={24} sm={12} md={6}>
               <Form.InputNumber
                 field='AlipayMinTopUp'
                 label={t('最小充值数量')}
@@ -189,24 +199,25 @@ export default function SettingsPaymentGatewayAlipay(props) {
                 step={1}
               />
             </Col>
-            <Col span={12}>
+            <Col xs={24} sm={24} md={12}>
               <Form.Input
                 field='AlipayOrderDescription'
                 label={t('订单描述')}
               />
             </Col>
           </Row>
-          <Row gutter={16} style={{ marginTop: 16 }}>
-            <Col span={8}>
-              <Form.Input field='AlipayNotifyURL' label={t('异步通知地址')} />
+          <Row gutter={{ xs: 8, sm: 16, md: 24 }} style={{ marginTop: 16 }}>
+            <Col xs={24} sm={24} md={8}>
+              <Form.Input field='AlipayNotifyURL' label={t('异步通知地址')} type='url' />
             </Col>
-            <Col span={8}>
-              <Form.Input field='AlipayReturnURL' label={t('充值回跳地址')} />
+            <Col xs={24} sm={24} md={8}>
+              <Form.Input field='AlipayReturnURL' label={t('充值回跳地址')} type='url' />
             </Col>
-            <Col span={8}>
+            <Col xs={24} sm={24} md={8}>
               <Form.Input
                 field='AlipaySubscriptionReturnURL'
                 label={t('订阅回跳地址')}
+                type='url'
               />
             </Col>
           </Row>

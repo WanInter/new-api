@@ -3046,7 +3046,6 @@
     "表格视图": "Chế độ xem bảng",
     "被封禁": "Bị cấm",
     "被禁用": "Bị vô hiệu hóa",
-    "覆盖": "Ghi đè",
     "覆盖原模型": "Ghi đè mô hình gốc",
     "覆盖模式": "Chế độ ghi đè",
     "覆盖模式：将完全替换现有的所有密钥": "Chế độ ghi đè: sẽ thay thế hoàn toàn tất cả các khóa hiện có",
@@ -4018,6 +4017,20 @@
     "（当前仅支持易支付接口，默认使用上方服务器地址作为回调地址！）": "(Hiện tại chỉ hỗ trợ giao diện Epay, địa chỉ máy chủ phía trên được sử dụng làm địa chỉ gọi lại theo mặc định!)",
     "，当前无生效订阅，将自动使用钱包": ", hiện không có gói đăng ký hiệu lực, sẽ tự động dùng ví.",
     "，时间：": ", thời gian:",
-    "，点击更新": ", nhấn để cập nhật"
+    "，点击更新": ", nhấn để cập nhật",
+    "支付宝官方直连设置": "Cài đặt Alipay Direct",
+    "推荐先在沙箱环境验证 page 与 qr 两种模式，再切换正式环境。": "Hãy kiểm tra chế độ page và QR trong sandbox của Alipay trước khi chuyển sang production.",
+    "启用支付宝官方直连": "Bật Alipay Direct",
+    "启用沙箱模式": "Bật chế độ sandbox",
+    "支付宝 AppID": "AppID Alipay",
+    "应用私钥": "Khóa riêng ứng dụng",
+    "支付宝公钥": "Khóa công khai Alipay",
+    "单价（元）": "Đơn giá (CNY)",
+    "最小充值数量": "Số lượng nạp tối thiểu",
+    "异步通知地址": "URL thông báo",
+    "充值回跳地址": "URL quay lại nạp tiền",
+    "订阅回跳地址": "URL quay lại đăng ký",
+    "保存支付宝设置": "Lưu cài đặt Alipay",
+    "部分配置保存失败，请刷新后确认实际生效项。": "Một phần cấu hình không lưu được. Hãy tải lại trang để xác nhận những mục đã thực sự có hiệu lực."
   }
 }

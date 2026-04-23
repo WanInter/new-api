@@ -3553,6 +3553,7 @@
     "异步通知地址": "Notify URL",
     "充值回跳地址": "Top-up Return URL",
     "订阅回跳地址": "Subscription Return URL",
-    "保存支付宝设置": "Save Alipay Settings"
+    "保存支付宝设置": "Save Alipay Settings",
+    "部分配置保存失败，请刷新后确认实际生效项。": "Some settings failed to save. Please refresh and confirm which changes actually took effect."
   }
 }

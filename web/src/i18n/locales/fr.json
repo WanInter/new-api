@@ -3469,6 +3469,20 @@
     "（当前仅支持易支付接口，默认使用上方服务器地址作为回调地址！）": "(Actuellement, seule l'interface Epay est prise en charge, l'adresse du serveur ci-dessus est utilisée par défaut comme adresse de rappel !)",
     "，当前无生效订阅，将自动使用钱包": ", aucun abonnement actif, le portefeuille sera utilisé automatiquement.",
     "，时间：": ", time:",
-    "，点击更新": ", cliquez sur Mettre à jour"
+    "，点击更新": ", cliquez sur Mettre à jour",
+    "支付宝官方直连设置": "Paramètres Alipay Direct",
+    "推荐先在沙箱环境验证 page 与 qr 两种模式，再切换正式环境。": "Validez les modes page et QR dans le bac à sable Alipay avant de passer en production.",
+    "启用支付宝官方直连": "Activer Alipay Direct",
+    "启用沙箱模式": "Activer le mode sandbox",
+    "支付宝 AppID": "AppID Alipay",
+    "应用私钥": "Clé privée de l’application",
+    "支付宝公钥": "Clé publique Alipay",
+    "单价（元）": "Prix unitaire (CNY)",
+    "最小充值数量": "Quantité minimale de rechargement",
+    "异步通知地址": "URL de notification",
+    "充值回跳地址": "URL de retour rechargement",
+    "订阅回跳地址": "URL de retour abonnement",
+    "保存支付宝设置": "Enregistrer les paramètres Alipay",
+    "部分配置保存失败，请刷新后确认实际生效项。": "Une partie des paramètres n’a pas pu être enregistrée. Actualisez la page pour confirmer les éléments effectivement appliqués."
   }
 }
