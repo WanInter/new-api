@@ -52,8 +52,10 @@ const PAYMENT_METHOD_MAP = {
   stripe: 'Stripe',
   creem: 'Creem',
   waffo: 'Waffo',
-  alipay: '支付宝',
+  alipay: '支付宝（易支付）',
+  alipay_direct: '支付宝',
   wxpay: '微信',
+  wechat_pay: '微信支付',
 };
 
 const TopupHistoryModal = ({ visible, onCancel, t }) => {

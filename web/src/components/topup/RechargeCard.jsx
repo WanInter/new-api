@@ -57,6 +57,7 @@ const RechargeCard = ({
   enableOnlineTopUp,
   enableStripeTopUp,
   enableWeChatTopUp,
+  enableAlipayTopUp,
   enableCreemTopUp,
   creemProducts,
   creemPreTopUp,
@@ -70,6 +71,7 @@ const RechargeCard = ({
   renderQuotaWithAmount,
   getAmount,
   getWeChatAmount,
+  getAlipayAmount,
   setTopUpCount,
   setSelectedPreset,
   renderAmount,
@@ -270,9 +272,20 @@ const RechargeCard = ({
                             enableWeChatTopUp &&
                             !enableOnlineTopUp &&
                             !enableStripeTopUp &&
-                            !enableWaffoTopUp;
+                            !enableWaffoTopUp &&
+                            !enableAlipayTopUp;
                           if (shouldUseWeChatAmount && getWeChatAmount) {
                             await getWeChatAmount(value);
+                            return;
+                          }
+                          const shouldUseAlipayAmount =
+                            enableAlipayTopUp &&
+                            !enableOnlineTopUp &&
+                            !enableStripeTopUp &&
+                            !enableWaffoTopUp &&
+                            !enableWeChatTopUp;
+                          if (shouldUseAlipayAmount && getAlipayAmount) {
+                            await getAlipayAmount(value);
                             return;
                           }
                           await getAmount(value);
@@ -286,9 +299,20 @@ const RechargeCard = ({
                             enableWeChatTopUp &&
                             !enableOnlineTopUp &&
                             !enableStripeTopUp &&
-                            !enableWaffoTopUp;
+                            !enableWaffoTopUp &&
+                            !enableAlipayTopUp;
                           if (shouldUseWeChatAmount && getWeChatAmount) {
                             getWeChatAmount(1);
+                            return;
+                          }
+                          const shouldUseAlipayAmount =
+                            enableAlipayTopUp &&
+                            !enableOnlineTopUp &&
+                            !enableStripeTopUp &&
+                            !enableWaffoTopUp &&
+                            !enableWeChatTopUp;
+                          if (shouldUseAlipayAmount && getAlipayAmount) {
+                            getAlipayAmount(1);
                             return;
                           }
                           getAmount(1);
@@ -348,7 +372,8 @@ const RechargeCard = ({
                                   paymentLoading && payWay === payMethod.type
                                 }
                                 icon={
-                                  payMethod.type === 'alipay' ? (
+                                  payMethod.type === 'alipay' ||
+                                  payMethod.type === 'alipay_direct' ? (
                                     <SiAlipay size={18} color='#1677FF' />
                                   ) : payMethod.type === 'wxpay' ||
                                     payMethod.type === 'wechat_pay' ? (

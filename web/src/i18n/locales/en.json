@@ -3554,6 +3554,17 @@
     "充值回跳地址": "Top-up Return URL",
     "订阅回跳地址": "Subscription Return URL",
     "保存支付宝设置": "Save Alipay Settings",
-    "部分配置保存失败，请刷新后确认实际生效项。": "Some settings failed to save. Please refresh and confirm which changes actually took effect."
+    "部分配置保存失败，请刷新后确认实际生效项。": "Some settings failed to save. Please refresh and confirm which changes actually took effect.",
+    "支付宝支付": "Alipay Payment",
+    "支付宝收银台支付": "Alipay Checkout",
+    "支付宝扫码支付": "Alipay QR Payment",
+    "确认并发起支付": "Confirm and Pay",
+    "已打开支付宝收银台，请完成支付后返回检查状态。": "The Alipay checkout page has been opened. Complete the payment and then return to check the status.",
+    "请使用支付宝扫码支付，支付成功后到账可能有短暂延迟。": "Please scan with Alipay to pay. Crediting may be slightly delayed after successful payment.",
+    "我已完成支付，检查状态": "I have completed payment, check status",
+    "等待支付中": "Waiting for payment",
+    "支付成功": "Payment successful",
+    "管理员未开启支付宝支付！": "Alipay is not enabled by the administrator!",
+    "支付宝（易支付）": "Alipay (EPay)"
   }
 }
