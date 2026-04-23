@@ -17,6 +17,8 @@ func ParseNotification(values url.Values) (*NotificationResult, error) {
 	}
 
 	result := &NotificationResult{
+		AppID:       values.Get("app_id"),
+		SellerID:    values.Get("seller_id"),
 		OutTradeNo:  values.Get("out_trade_no"),
 		TradeNo:     values.Get("trade_no"),
 		TradeStatus: values.Get("trade_status"),

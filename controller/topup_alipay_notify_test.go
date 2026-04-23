@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	alipaypkg "github.com/QuantumNous/new-api/pkg/alipay"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/shopspring/decimal"
 )
 
@@ -22,6 +23,8 @@ func TestAlipayNotifyCompletesRechargeOnce(t *testing.T) {
 		return fakeAlipayClient{
 			verifyNotifyFunc: func(values url.Values) (*alipaypkg.NotificationResult, error) {
 				return &alipaypkg.NotificationResult{
+					AppID:          setting.AlipayAppID,
+					SellerID:       "2088000000000000",
 					OutTradeNo:     values.Get("out_trade_no"),
 					TradeNo:        "202604230001",
 					TradeStatus:    "TRADE_SUCCESS",
@@ -66,6 +69,8 @@ func TestAlipayNotifyRejectsAmountMismatch(t *testing.T) {
 		return fakeAlipayClient{
 			verifyNotifyFunc: func(values url.Values) (*alipaypkg.NotificationResult, error) {
 				return &alipaypkg.NotificationResult{
+					AppID:          setting.AlipayAppID,
+					SellerID:       "2088000000000000",
 					OutTradeNo:     values.Get("out_trade_no"),
 					TradeNo:        "202604230001",
 					TradeStatus:    "TRADE_SUCCESS",
@@ -87,4 +92,41 @@ func TestAlipayNotifyRejectsAmountMismatch(t *testing.T) {
 		t.Fatalf("expected failure for amount mismatch")
 	}
 	assertTopupNotifyStatus(t, "ALIPAY-TOPUP-1", common.TopUpStatusPending)
+}
+
+func TestAlipayNotifyRejectsAppIDMismatch(t *testing.T) {
+	setupTopupControllerTestEnv(t)
+	setupAlipaySettingIsolation(t)
+	seedTopupUser(t, 1, "default")
+	seedPendingTopup(t, "ALIPAY-TOPUP-APPID", 72.00, 10, "alipay_direct")
+	seedAlipayConfig()
+
+	originalFactory := newAlipayClient
+	newAlipayClient = func() (alipaypkg.Client, error) {
+		return fakeAlipayClient{
+			verifyNotifyFunc: func(values url.Values) (*alipaypkg.NotificationResult, error) {
+				return &alipaypkg.NotificationResult{
+					AppID:          "wrong-app-id",
+					SellerID:       "2088000000000000",
+					OutTradeNo:     values.Get("out_trade_no"),
+					TradeNo:        "202604230009",
+					TradeStatus:    "TRADE_SUCCESS",
+					TotalAmount:    decimal.RequireFromString("72.00"),
+					BuyerPayAmount: decimal.RequireFromString("72.00"),
+					RawForm:        values.Encode(),
+				}, nil
+			},
+		}, nil
+	}
+	defer func() { newAlipayClient = originalFactory }()
+
+	ctx, recorder := newAlipayNotifyContext(t, url.Values{
+		"out_trade_no": []string{"ALIPAY-TOPUP-APPID"},
+		"sign":         []string{"signed"},
+	})
+	AlipayNotify(ctx)
+	if recorder.Code == http.StatusOK {
+		t.Fatalf("expected failure for app id mismatch")
+	}
+	assertTopupNotifyStatus(t, "ALIPAY-TOPUP-APPID", common.TopUpStatusPending)
 }

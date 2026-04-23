@@ -114,6 +114,8 @@ func TestVerifyNotificationRejectsMissingSignature(t *testing.T) {
 
 func TestParseNotificationParsesAmountsAndPreservesRawForm(t *testing.T) {
 	values := url.Values{}
+	values.Set("app_id", "2026000000000000")
+	values.Set("seller_id", "2088000000000000")
 	values.Set("out_trade_no", "T-1")
 	values.Set("trade_no", "ALI-1")
 	values.Set("trade_status", alipayTradeStatusSuccess)
@@ -126,6 +128,12 @@ func TestParseNotificationParsesAmountsAndPreservesRawForm(t *testing.T) {
 	result, err := ParseNotification(values)
 	if err != nil {
 		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if result.AppID != "2026000000000000" {
+		t.Fatalf("unexpected app id: %s", result.AppID)
+	}
+	if result.SellerID != "2088000000000000" {
+		t.Fatalf("unexpected seller id: %s", result.SellerID)
 	}
 	if !result.TotalAmount.Equal(decimal.RequireFromString("7.20")) {
 		t.Fatalf("unexpected total amount: %s", result.TotalAmount)
@@ -339,6 +347,8 @@ func TestClientQueryOrderReturnsUpstreamError(t *testing.T) {
 func TestClientVerifyNotificationSuccess(t *testing.T) {
 	client := newTestClient(t)
 	values := url.Values{}
+	values.Set("app_id", "2026000000000000")
+	values.Set("seller_id", "2088000000000000")
 	values.Set("out_trade_no", "ORDER-2001")
 	values.Set("trade_no", "20260423000001")
 	values.Set("trade_status", alipayTradeStatusSuccess)
@@ -355,6 +365,12 @@ func TestClientVerifyNotificationSuccess(t *testing.T) {
 	}
 	if err = result.ValidatePaid(); err != nil {
 		t.Fatalf("expected paid notification, got %v", err)
+	}
+	if result.AppID != "2026000000000000" {
+		t.Fatalf("unexpected app id: %s", result.AppID)
+	}
+	if result.SellerID != "2088000000000000" {
+		t.Fatalf("unexpected seller id: %s", result.SellerID)
 	}
 	if result.OutTradeNo != "ORDER-2001" {
 		t.Fatalf("unexpected out_trade_no: %s", result.OutTradeNo)

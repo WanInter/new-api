@@ -254,6 +254,10 @@ func AlipayNotify(c *gin.Context) {
 		c.String(http.StatusBadRequest, "fail")
 		return
 	}
+	if result.AppID != "" && result.AppID != setting.AlipayAppID {
+		c.String(http.StatusBadRequest, "fail")
+		return
+	}
 	topUp := model.GetTopUpByTradeNo(result.OutTradeNo)
 	if topUp == nil || topUp.PaymentMethod != paymentMethodAlipayDirect {
 		c.String(http.StatusBadRequest, "fail")

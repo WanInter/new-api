@@ -59,6 +59,8 @@ type QueryOrderResult struct {
 }
 
 type NotificationResult struct {
+	AppID          string
+	SellerID       string
 	OutTradeNo     string
 	TradeNo        string
 	TradeStatus    string
