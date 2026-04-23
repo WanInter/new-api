@@ -234,6 +234,7 @@ const RechargeCard = ({
         ) : enableOnlineTopUp ||
           enableStripeTopUp ||
           enableWeChatTopUp ||
+          enableAlipayTopUp ||
           enableCreemTopUp ||
           enableWaffoTopUp ? (
           <Form
@@ -244,6 +245,7 @@ const RechargeCard = ({
               {(enableOnlineTopUp ||
                 enableStripeTopUp ||
                 enableWeChatTopUp ||
+                enableAlipayTopUp ||
                 enableWaffoTopUp) && (
                 <Row gutter={12}>
                   <Col xs={24} sm={24} md={24} lg={10} xl={10}>
@@ -254,6 +256,7 @@ const RechargeCard = ({
                         !enableOnlineTopUp &&
                         !enableStripeTopUp &&
                         !enableWeChatTopUp &&
+                        !enableAlipayTopUp &&
                         !enableWaffoTopUp
                       }
                       placeholder={
@@ -355,10 +358,12 @@ const RechargeCard = ({
                             const minTopupVal = Number(payMethod.min_topup) || 0;
                             const isStripe = payMethod.type === 'stripe';
                             const isWeChatPay = payMethod.type === 'wechat_pay';
+                            const isAlipayDirect = payMethod.type === 'alipay_direct';
                             const disabled =
                               (!enableStripeTopUp && isStripe) ||
                               (!enableWeChatTopUp && isWeChatPay) ||
-                              (!enableOnlineTopUp && !isStripe && !isWeChatPay) ||
+                              (!enableAlipayTopUp && isAlipayDirect) ||
+                              (!enableOnlineTopUp && !isStripe && !isWeChatPay && !isAlipayDirect) ||
                               minTopupVal > Number(topUpCount || 0);
 
                             const buttonEl = (
@@ -424,6 +429,7 @@ const RechargeCard = ({
               {(enableOnlineTopUp ||
                 enableStripeTopUp ||
                 enableWeChatTopUp ||
+                enableAlipayTopUp ||
                 enableWaffoTopUp) && (
                 <Form.Slot
                   label={
