@@ -1,13 +1,21 @@
 package controller
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	alipaypkg "github.com/QuantumNous/new-api/pkg/alipay"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 )
 
 type alipaySettingSnapshot struct {
@@ -288,4 +296,137 @@ func TestCompleteSubscriptionOrderSyncsMetadataToExistingTopUp(t *testing.T) {
 	if topUp.ProviderPayload != orderPayload {
 		t.Fatalf("expected provider_payload %s, got %s", orderPayload, topUp.ProviderPayload)
 	}
+}
+
+type fakeAlipayClient struct {
+	createPageOrderFunc func(ctx context.Context, req alipaypkg.CreateOrderRequest) (*alipaypkg.PageOrderResponse, error)
+	createQROrderFunc   func(ctx context.Context, req alipaypkg.CreateOrderRequest) (*alipaypkg.QROrderResponse, error)
+	queryOrderFunc      func(ctx context.Context, outTradeNo string) (*alipaypkg.QueryOrderResult, error)
+	verifyNotifyFunc    func(values url.Values) (*alipaypkg.NotificationResult, error)
+}
+
+func (f fakeAlipayClient) CreatePageOrder(ctx context.Context, req alipaypkg.CreateOrderRequest) (*alipaypkg.PageOrderResponse, error) {
+	if f.createPageOrderFunc == nil {
+		return nil, fmt.Errorf("createPageOrderFunc is nil")
+	}
+	return f.createPageOrderFunc(ctx, req)
+}
+
+func (f fakeAlipayClient) CreateQROrder(ctx context.Context, req alipaypkg.CreateOrderRequest) (*alipaypkg.QROrderResponse, error) {
+	if f.createQROrderFunc == nil {
+		return nil, fmt.Errorf("createQROrderFunc is nil")
+	}
+	return f.createQROrderFunc(ctx, req)
+}
+
+func (f fakeAlipayClient) QueryOrder(ctx context.Context, outTradeNo string) (*alipaypkg.QueryOrderResult, error) {
+	if f.queryOrderFunc == nil {
+		return nil, fmt.Errorf("queryOrderFunc is nil")
+	}
+	return f.queryOrderFunc(ctx, outTradeNo)
+}
+
+func (f fakeAlipayClient) VerifyNotification(values url.Values) (*alipaypkg.NotificationResult, error) {
+	if f.verifyNotifyFunc == nil {
+		return nil, fmt.Errorf("verifyNotifyFunc is nil")
+	}
+	return f.verifyNotifyFunc(values)
+}
+
+func seedAlipayConfig() {
+	setting.AlipayEnabled = true
+	setting.AlipayAppID = "2026000000000000"
+	setting.AlipayPrivateKey = "private-key"
+	setting.AlipayPublicKey = "public-key"
+	setting.AlipayUnitPrice = 7.2
+	setting.AlipayMinTopUp = 1
+	setting.AlipayOrderDescription = "账户充值"
+}
+
+func newAlipayNotifyContext(t *testing.T, form url.Values) (*gin.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/alipay/notify", strings.NewReader(form.Encode()))
+	ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return ctx, recorder
+}
+
+func TestRequestAlipayPayReturnsPageURL(t *testing.T) {
+	setupTopupControllerTestEnv(t)
+	setupAlipaySettingIsolation(t)
+	seedTopupUser(t, 1, "default")
+	seedAlipayConfig()
+
+	originalFactory := newAlipayClient
+	newAlipayClient = func() (alipaypkg.Client, error) {
+		return fakeAlipayClient{
+			createPageOrderFunc: func(_ context.Context, req alipaypkg.CreateOrderRequest) (*alipaypkg.PageOrderResponse, error) {
+				if req.OutTradeNo == "" {
+					t.Fatal("expected out trade no")
+				}
+				return &alipaypkg.PageOrderResponse{PayURL: "https://openapi.alipay.com/gateway.do?foo=bar"}, nil
+			},
+		}, nil
+	}
+	defer func() { newAlipayClient = originalFactory }()
+
+	ctx, recorder := newTopupTestContext(t, http.MethodPost, "/api/user/alipay/pay", map[string]any{
+		"amount":         10,
+		"payment_method": "alipay_direct",
+		"pay_mode":       "page",
+	}, 1)
+	RequestAlipayPay(ctx)
+
+	if !strings.Contains(recorder.Body.String(), "pay_url") {
+		t.Fatalf("expected pay_url in response: %s", recorder.Body.String())
+	}
+}
+
+func TestQueryAlipayPayMarksSuccessAfterTradeQuery(t *testing.T) {
+	setupTopupControllerTestEnv(t)
+	setupAlipaySettingIsolation(t)
+	seedTopupUser(t, 1, "default")
+	seedAlipayConfig()
+
+	topUp := &model.TopUp{
+		UserId:        1,
+		Amount:        10,
+		Money:         72.0,
+		TradeNo:       "ALIPAY-TOPUP-Q-1",
+		PaymentMethod: "alipay_direct",
+		PaymentMode:   "qr",
+		CreateTime:    common.GetTimestamp(),
+		Status:        common.TopUpStatusPending,
+	}
+	if err := model.DB.Create(topUp).Error; err != nil {
+		t.Fatalf("failed to seed topup: %v", err)
+	}
+
+	originalFactory := newAlipayClient
+	newAlipayClient = func() (alipaypkg.Client, error) {
+		return fakeAlipayClient{
+			queryOrderFunc: func(_ context.Context, outTradeNo string) (*alipaypkg.QueryOrderResult, error) {
+				if outTradeNo != topUp.TradeNo {
+					t.Fatalf("unexpected out trade no: %s", outTradeNo)
+				}
+				return &alipaypkg.QueryOrderResult{
+					OutTradeNo:     outTradeNo,
+					TradeNo:        "ALI-QUERY-1",
+					TradeStatus:    "TRADE_SUCCESS",
+					TotalAmount:    decimal.RequireFromString("72.00"),
+					BuyerPayAmount: decimal.RequireFromString("72.00"),
+				}, nil
+			},
+		}, nil
+	}
+	defer func() { newAlipayClient = originalFactory }()
+
+	ctx, recorder := newTopupTestContext(t, http.MethodPost, "/api/user/alipay/query", map[string]any{"trade_no": topUp.TradeNo}, 1)
+	QueryAlipayPay(ctx)
+
+	if !strings.Contains(recorder.Body.String(), `"status":"success"`) {
+		t.Fatalf("expected success status in response: %s", recorder.Body.String())
+	}
+	assertTopupNotifyStatus(t, topUp.TradeNo, common.TopUpStatusSuccess)
 }
