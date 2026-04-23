@@ -97,3 +97,60 @@ func TestSubscriptionAlipayNotifyCompletesOrderOnce(t *testing.T) {
 		t.Fatal("expected provider_payload to be saved")
 	}
 }
+
+func TestSubscriptionAlipayNotifyCompletesPaidOrderEvenWhenLimitReached(t *testing.T) {
+	setupSubscriptionAlipayControllerTestEnv(t)
+	seedSubscriptionAlipayUser(t, 1)
+	plan := seedSubscriptionAlipayPlan(t, 88)
+	plan.MaxPurchasePerUser = 1
+	if err := model.DB.Save(plan).Error; err != nil {
+		t.Fatalf("failed to update plan limit: %v", err)
+	}
+	seedPendingSubscriptionAlipayOrder(t, &model.SubscriptionOrder{
+		UserId:        1,
+		PlanId:        plan.Id,
+		Money:         88,
+		TradeNo:       "ALIPAY-SUB-LIMIT-1",
+		PaymentMethod: "alipay_direct",
+		PaymentMode:   "page",
+		Status:        common.TopUpStatusPending,
+		CreateTime:    common.GetTimestamp(),
+	})
+	if _, err := model.CreateUserSubscriptionFromPlanTx(model.DB, 1, plan, "admin"); err != nil {
+		t.Fatalf("failed to seed existing subscription: %v", err)
+	}
+	seedAlipayConfig()
+
+	originalFactory := newAlipayClient
+	newAlipayClient = func() (alipaypkg.Client, error) {
+		return fakeAlipayClient{
+			verifyNotifyFunc: func(values url.Values) (*alipaypkg.NotificationResult, error) {
+				return &alipaypkg.NotificationResult{
+					AppID:          setting.AlipayAppID,
+					SellerID:       "2088000000000000",
+					OutTradeNo:     values.Get("out_trade_no"),
+					TradeNo:        "202604230199",
+					TradeStatus:    "TRADE_SUCCESS",
+					TotalAmount:    decimal.RequireFromString("88.00"),
+					BuyerPayAmount: decimal.RequireFromString("88.00"),
+					RawForm:        values.Encode(),
+				}, nil
+			},
+		}, nil
+	}
+	defer func() { newAlipayClient = originalFactory }()
+
+	ctx, recorder := newSubscriptionAlipayNotifyContext(t, url.Values{"out_trade_no": []string{"ALIPAY-SUB-LIMIT-1"}, "sign": []string{"signed"}})
+	SubscriptionAlipayNotify(ctx)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", recorder.Code)
+	}
+
+	var count int64
+	if err := model.DB.Model(&model.UserSubscription{}).Where("user_id = ? AND plan_id = ?", 1, plan.Id).Count(&count).Error; err != nil {
+		t.Fatalf("failed to count subscriptions: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("expected second paid subscription to be fulfilled, got %d", count)
+	}
+}

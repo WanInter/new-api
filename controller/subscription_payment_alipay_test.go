@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	alipaypkg "github.com/QuantumNous/new-api/pkg/alipay"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 )
@@ -145,5 +146,57 @@ func TestSubscriptionQueryAlipayPayReturnsSuccess(t *testing.T) {
 	SubscriptionQueryAlipayPay(ctx)
 	if !strings.Contains(recorder.Body.String(), `"status":"success"`) {
 		t.Fatalf("expected success response: %s", recorder.Body.String())
+	}
+}
+
+func TestSubscriptionRequestAlipayPayUsesSubscriptionNotifyURL(t *testing.T) {
+	setupSubscriptionAlipayControllerTestEnv(t)
+	seedSubscriptionAlipayUser(t, 1)
+	plan := seedSubscriptionAlipayPlan(t, 88)
+	seedAlipayConfig()
+	setting.AlipayNotifyURL = "https://example.com/api/alipay/notify"
+
+	originalFactory := newAlipayClient
+	newAlipayClient = func() (alipaypkg.Client, error) {
+		return fakeAlipayClient{
+			createQROrderFunc: func(_ context.Context, req alipaypkg.CreateOrderRequest) (*alipaypkg.QROrderResponse, error) {
+				if !strings.Contains(req.NotifyURL, "/api/subscription/alipay/notify") {
+					t.Fatalf("expected subscription notify url, got %s", req.NotifyURL)
+				}
+				if strings.Contains(req.NotifyURL, "/api/alipay/notify") && !strings.Contains(req.NotifyURL, "/api/subscription/alipay/notify") {
+					t.Fatalf("expected subscription notify url instead of topup notify url, got %s", req.NotifyURL)
+				}
+				return &alipaypkg.QROrderResponse{QRCode: "https://qr.alipay.com/test"}, nil
+			},
+		}, nil
+	}
+	defer func() { newAlipayClient = originalFactory }()
+
+	ctx, recorder := newSubscriptionAlipayTestContext(t, http.MethodPost, "/api/subscription/alipay/pay", map[string]any{
+		"plan_id":        plan.Id,
+		"payment_method": "alipay_direct",
+		"pay_mode":       "qr",
+	}, 1)
+	SubscriptionRequestAlipayPay(ctx)
+	if !strings.Contains(recorder.Body.String(), "qr_code") {
+		t.Fatalf("expected qr_code in response: %s", recorder.Body.String())
+	}
+}
+
+func TestSubscriptionRequestAlipayPayRejectsDisabledAlipay(t *testing.T) {
+	setupSubscriptionAlipayControllerTestEnv(t)
+	seedSubscriptionAlipayUser(t, 1)
+	plan := seedSubscriptionAlipayPlan(t, 88)
+	seedAlipayConfig()
+	setting.AlipayEnabled = false
+
+	ctx, recorder := newSubscriptionAlipayTestContext(t, http.MethodPost, "/api/subscription/alipay/pay", map[string]any{
+		"plan_id":        plan.Id,
+		"payment_method": "alipay_direct",
+		"pay_mode":       "qr",
+	}, 1)
+	SubscriptionRequestAlipayPay(ctx)
+	if !strings.Contains(recorder.Body.String(), "支付宝支付配置不完整") {
+		t.Fatalf("expected disabled alipay error, got: %s", recorder.Body.String())
 	}
 }

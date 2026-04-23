@@ -60,6 +60,10 @@ func SubscriptionRequestAlipayPay(c *gin.Context) {
 			return
 		}
 	}
+	if !isAlipayConfigured() {
+		common.ApiErrorMsg(c, "支付宝支付配置不完整")
+		return
+	}
 	client, err := newAlipayClient()
 	if err != nil {
 		common.ApiErrorMsg(c, "支付宝支付配置不完整")
@@ -84,7 +88,7 @@ func SubscriptionRequestAlipayPay(c *gin.Context) {
 		OutTradeNo:  tradeNo,
 		Subject:     plan.Title,
 		TotalAmount: decimal.NewFromFloat(plan.PriceAmount).Round(2),
-		NotifyURL:   firstNonEmpty(setting.AlipayNotifyURL, service.GetCallbackAddress()+"/api/subscription/alipay/notify"),
+		NotifyURL:   service.GetCallbackAddress() + "/api/subscription/alipay/notify",
 		ReturnURL:   firstNonEmpty(setting.AlipaySubscriptionReturnURL, service.GetCallbackAddress()+"/console/topup"),
 	}
 	if mode == alipaypkg.PayModePage {
