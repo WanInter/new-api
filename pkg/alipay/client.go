@@ -47,8 +47,7 @@ type PageOrderResponse struct {
 }
 
 type QROrderResponse struct {
-	QRCode  string
-	TradeNo string
+	QRCode string
 }
 
 type QueryOrderResult struct {
@@ -78,9 +77,17 @@ type Client interface {
 type sdkClient struct {
 	cfg Config
 	cli *sdk.Client
+	api alipayAPI
 }
 
 var _ Client = (*sdkClient)(nil)
+
+type alipayAPI interface {
+	TradePagePay(param sdk.TradePagePay) (*url.URL, error)
+	TradePreCreate(ctx context.Context, param sdk.TradePreCreate) (*sdk.TradePreCreateRsp, error)
+	TradeQuery(ctx context.Context, param sdk.TradeQuery) (*sdk.TradeQueryRsp, error)
+	VerifySign(ctx context.Context, values url.Values) error
+}
 
 func (c Config) Validate() error {
 	if strings.TrimSpace(c.AppID) == "" || strings.TrimSpace(c.PrivateKey) == "" || strings.TrimSpace(c.PublicKey) == "" {
@@ -111,7 +118,7 @@ func NewClient(cfg Config) (Client, error) {
 	if err := cli.LoadAliPayPublicKey(cfg.PublicKey); err != nil {
 		return nil, err
 	}
-	return &sdkClient{cfg: cfg, cli: cli}, nil
+	return &sdkClient{cfg: cfg, cli: cli, api: cli}, nil
 }
 
 func (c *sdkClient) CreatePageOrder(ctx context.Context, req CreateOrderRequest) (*PageOrderResponse, error) {
@@ -126,7 +133,7 @@ func (c *sdkClient) CreatePageOrder(ctx context.Context, req CreateOrderRequest)
 		return nil, err
 	}
 
-	payURL, err := c.cli.TradePagePay(sdk.TradePagePay{
+	payURL, err := c.api.TradePagePay(sdk.TradePagePay{
 		Trade: sdk.Trade{
 			Subject:     resolvedReq.Subject,
 			OutTradeNo:  resolvedReq.OutTradeNo,
@@ -157,7 +164,7 @@ func (c *sdkClient) CreateQROrder(ctx context.Context, req CreateOrderRequest) (
 		return nil, err
 	}
 
-	result, err := c.cli.TradePreCreate(ctx, sdk.TradePreCreate{
+	result, err := c.api.TradePreCreate(ctx, sdk.TradePreCreate{
 		Trade: sdk.Trade{
 			Subject:     resolvedReq.Subject,
 			OutTradeNo:  resolvedReq.OutTradeNo,
@@ -194,7 +201,7 @@ func (c *sdkClient) QueryOrder(ctx context.Context, outTradeNo string) (*QueryOr
 		return nil, fmt.Errorf("alipay out_trade_no is required")
 	}
 
-	result, err := c.cli.TradeQuery(ctx, sdk.TradeQuery{OutTradeNo: strings.TrimSpace(outTradeNo)})
+	result, err := c.api.TradeQuery(ctx, sdk.TradeQuery{OutTradeNo: strings.TrimSpace(outTradeNo)})
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +238,7 @@ func (c *sdkClient) VerifyNotification(values url.Values) (*NotificationResult, 
 	if err != nil {
 		return nil, err
 	}
-	if err = c.cli.VerifySign(context.Background(), values); err != nil {
+	if err = c.api.VerifySign(context.Background(), values); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -245,7 +252,7 @@ func (c *sdkClient) validateContext(ctx context.Context) error {
 }
 
 func (c *sdkClient) ensureReady() error {
-	if c == nil || c.cli == nil {
+	if c == nil || c.api == nil {
 		return fmt.Errorf("alipay client is not initialized")
 	}
 	return nil

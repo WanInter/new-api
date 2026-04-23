@@ -7,12 +7,14 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"net/url"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/shopspring/decimal"
+	sdk "github.com/smartwalle/alipay/v3"
 	"github.com/smartwalle/nsign"
 )
 
@@ -22,6 +24,41 @@ var (
 	testPublicKey   string
 	testKeyPairErr  error
 )
+
+type fakeAlipayAPI struct {
+	tradePagePayFn   func(param sdk.TradePagePay) (*url.URL, error)
+	tradePreCreateFn func(ctx context.Context, param sdk.TradePreCreate) (*sdk.TradePreCreateRsp, error)
+	tradeQueryFn     func(ctx context.Context, param sdk.TradeQuery) (*sdk.TradeQueryRsp, error)
+	verifySignFn     func(ctx context.Context, values url.Values) error
+}
+
+func (f fakeAlipayAPI) TradePagePay(param sdk.TradePagePay) (*url.URL, error) {
+	if f.tradePagePayFn == nil {
+		return nil, nil
+	}
+	return f.tradePagePayFn(param)
+}
+
+func (f fakeAlipayAPI) TradePreCreate(ctx context.Context, param sdk.TradePreCreate) (*sdk.TradePreCreateRsp, error) {
+	if f.tradePreCreateFn == nil {
+		return nil, nil
+	}
+	return f.tradePreCreateFn(ctx, param)
+}
+
+func (f fakeAlipayAPI) TradeQuery(ctx context.Context, param sdk.TradeQuery) (*sdk.TradeQueryRsp, error) {
+	if f.tradeQueryFn == nil {
+		return nil, nil
+	}
+	return f.tradeQueryFn(ctx, param)
+}
+
+func (f fakeAlipayAPI) VerifySign(ctx context.Context, values url.Values) error {
+	if f.verifySignFn == nil {
+		return nil
+	}
+	return f.verifySignFn(ctx, values)
+}
 
 func TestConfigValidateRequiresCoreKeys(t *testing.T) {
 	cfg := Config{}
@@ -154,6 +191,151 @@ func TestClientCreateQROrderAndQueryOrderValidateInput(t *testing.T) {
 	}
 }
 
+func TestClientCreateQROrderMapsSuccessResponse(t *testing.T) {
+	var capturedReq sdk.TradePreCreate
+	client := newFakeClient(fakeAlipayAPI{
+		tradePreCreateFn: func(_ context.Context, req sdk.TradePreCreate) (*sdk.TradePreCreateRsp, error) {
+			capturedReq = req
+			return &sdk.TradePreCreateRsp{
+				Error:  sdk.Error{Code: sdk.CodeSuccess},
+				QRCode: "https://qr.example.com/pay/123",
+			}, nil
+		},
+	})
+
+	response, err := client.CreateQROrder(context.Background(), CreateOrderRequest{
+		OutTradeNo:  "ORDER-QR-1001",
+		TotalAmount: decimal.RequireFromString("12.34"),
+	})
+	if err != nil {
+		t.Fatalf("unexpected create qr order error: %v", err)
+	}
+	if response.QRCode != "https://qr.example.com/pay/123" {
+		t.Fatalf("unexpected qr code: %s", response.QRCode)
+	}
+	if capturedReq.OutTradeNo != "ORDER-QR-1001" {
+		t.Fatalf("unexpected out_trade_no: %s", capturedReq.OutTradeNo)
+	}
+	if capturedReq.TotalAmount != "12.34" {
+		t.Fatalf("unexpected total_amount: %s", capturedReq.TotalAmount)
+	}
+	if capturedReq.NotifyURL != "https://example.com/notify" {
+		t.Fatalf("unexpected notify_url: %s", capturedReq.NotifyURL)
+	}
+	if capturedReq.Subject != defaultAlipayOrderDescription {
+		t.Fatalf("unexpected subject: %s", capturedReq.Subject)
+	}
+	if capturedReq.ProductCode != alipayProductCodePreCreate {
+		t.Fatalf("unexpected product_code: %s", capturedReq.ProductCode)
+	}
+}
+
+func TestClientCreateQROrderReturnsUpstreamFailure(t *testing.T) {
+	client := newFakeClient(fakeAlipayAPI{
+		tradePreCreateFn: func(_ context.Context, _ sdk.TradePreCreate) (*sdk.TradePreCreateRsp, error) {
+			return &sdk.TradePreCreateRsp{
+				Error: sdk.Error{
+					Code:   sdk.CodeBusinessFailed,
+					SubMsg: "order denied",
+				},
+			}, nil
+		},
+	})
+
+	_, err := client.CreateQROrder(context.Background(), CreateOrderRequest{
+		OutTradeNo:  "ORDER-QR-FAIL",
+		TotalAmount: decimal.RequireFromString("7.00"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "trade precreate failed") {
+		t.Fatalf("expected trade precreate failed error, got %v", err)
+	}
+}
+
+func TestClientCreateQROrderReturnsUpstreamError(t *testing.T) {
+	client := newFakeClient(fakeAlipayAPI{
+		tradePreCreateFn: func(_ context.Context, _ sdk.TradePreCreate) (*sdk.TradePreCreateRsp, error) {
+			return nil, errors.New("upstream unavailable")
+		},
+	})
+
+	_, err := client.CreateQROrder(context.Background(), CreateOrderRequest{
+		OutTradeNo:  "ORDER-QR-ERR",
+		TotalAmount: decimal.RequireFromString("8.00"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "upstream unavailable") {
+		t.Fatalf("expected upstream unavailable error, got %v", err)
+	}
+}
+
+func TestClientQueryOrderMapsSuccessResponse(t *testing.T) {
+	client := newFakeClient(fakeAlipayAPI{
+		tradeQueryFn: func(_ context.Context, req sdk.TradeQuery) (*sdk.TradeQueryRsp, error) {
+			if req.OutTradeNo != "ORDER-Q-1001" {
+				t.Fatalf("unexpected query out_trade_no: %s", req.OutTradeNo)
+			}
+			return &sdk.TradeQueryRsp{
+				Error:          sdk.Error{Code: sdk.CodeSuccess},
+				OutTradeNo:     "ORDER-Q-1001",
+				TradeNo:        "ALIPAY-TRADE-1001",
+				TradeStatus:    sdk.TradeStatusFinished,
+				TotalAmount:    "18.90",
+				BuyerPayAmount: "18.80",
+			}, nil
+		},
+	})
+
+	result, err := client.QueryOrder(context.Background(), "ORDER-Q-1001")
+	if err != nil {
+		t.Fatalf("unexpected query order error: %v", err)
+	}
+	if result.OutTradeNo != "ORDER-Q-1001" {
+		t.Fatalf("unexpected out_trade_no: %s", result.OutTradeNo)
+	}
+	if result.TradeNo != "ALIPAY-TRADE-1001" {
+		t.Fatalf("unexpected trade_no: %s", result.TradeNo)
+	}
+	if result.TradeStatus != string(sdk.TradeStatusFinished) {
+		t.Fatalf("unexpected trade_status: %s", result.TradeStatus)
+	}
+	if !result.TotalAmount.Equal(decimal.RequireFromString("18.90")) {
+		t.Fatalf("unexpected total amount: %s", result.TotalAmount)
+	}
+	if !result.BuyerPayAmount.Equal(decimal.RequireFromString("18.80")) {
+		t.Fatalf("unexpected buyer pay amount: %s", result.BuyerPayAmount)
+	}
+}
+
+func TestClientQueryOrderReturnsUpstreamFailure(t *testing.T) {
+	client := newFakeClient(fakeAlipayAPI{
+		tradeQueryFn: func(_ context.Context, _ sdk.TradeQuery) (*sdk.TradeQueryRsp, error) {
+			return &sdk.TradeQueryRsp{
+				Error: sdk.Error{
+					Code:   sdk.CodeBusinessFailed,
+					SubMsg: "order not found",
+				},
+			}, nil
+		},
+	})
+
+	_, err := client.QueryOrder(context.Background(), "ORDER-Q-FAIL")
+	if err == nil || !strings.Contains(err.Error(), "trade query failed") {
+		t.Fatalf("expected trade query failed error, got %v", err)
+	}
+}
+
+func TestClientQueryOrderReturnsUpstreamError(t *testing.T) {
+	client := newFakeClient(fakeAlipayAPI{
+		tradeQueryFn: func(_ context.Context, _ sdk.TradeQuery) (*sdk.TradeQueryRsp, error) {
+			return nil, errors.New("query upstream down")
+		},
+	})
+
+	_, err := client.QueryOrder(context.Background(), "ORDER-Q-ERR")
+	if err == nil || !strings.Contains(err.Error(), "query upstream down") {
+		t.Fatalf("expected query upstream down error, got %v", err)
+	}
+}
+
 func TestClientVerifyNotificationSuccess(t *testing.T) {
 	client := newTestClient(t)
 	values := url.Values{}
@@ -194,6 +376,17 @@ func TestNewClientReturnsSDKErrorOnInvalidKey(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected sdk init error")
+	}
+}
+
+func newFakeClient(api alipayAPI) *sdkClient {
+	return &sdkClient{
+		cfg: Config{
+			DefaultNotifyURL:        "https://example.com/notify",
+			DefaultReturnURL:        "https://example.com/return",
+			DefaultOrderDescription: defaultAlipayOrderDescription,
+		},
+		api: api,
 	}
 }
 
