@@ -163,7 +163,8 @@ func SubscriptionQueryAlipayPay(c *gin.Context) {
 		common.ApiErrorMsg(c, "支付金额校验失败")
 		return
 	}
-	if result.TradeStatus == "TRADE_SUCCESS" || result.TradeStatus == "TRADE_FINISHED" {
+	switch result.TradeStatus {
+	case "TRADE_SUCCESS", "TRADE_FINISHED":
 		LockOrder(req.TradeNo)
 		defer UnlockOrder(req.TradeNo)
 		if err := model.CompleteSubscriptionOrder(req.TradeNo, common.GetJsonString(result)); err != nil {
@@ -172,8 +173,16 @@ func SubscriptionQueryAlipayPay(c *gin.Context) {
 		}
 		common.ApiSuccess(c, gin.H{"status": "success"})
 		return
+	case "WAIT_BUYER_PAY":
+		common.ApiSuccess(c, gin.H{"status": "pending"})
+		return
+	case "TRADE_CLOSED":
+		common.ApiErrorMsg(c, "订单已关闭")
+		return
+	default:
+		common.ApiErrorMsg(c, "订单状态异常")
+		return
 	}
-	common.ApiSuccess(c, gin.H{"status": "pending"})
 }
 
 func SubscriptionAlipayNotify(c *gin.Context) {

@@ -505,3 +505,47 @@ func TestRequestAlipayPayKeepsPendingWhenCreatePageOrderFails(t *testing.T) {
 	}
 	assertTopupPending(t, "alipay_direct")
 }
+
+func TestQueryAlipayPayReturnsErrorWhenTradeClosed(t *testing.T) {
+	setupTopupControllerTestEnv(t)
+	setupAlipaySettingIsolation(t)
+	seedTopupUser(t, 1, "default")
+	seedAlipayConfig()
+
+	topUp := &model.TopUp{
+		UserId:        1,
+		Amount:        10,
+		Money:         72.0,
+		TradeNo:       "ALIPAY-TOPUP-Q-CLOSED",
+		PaymentMethod: "alipay_direct",
+		PaymentMode:   "qr",
+		CreateTime:    common.GetTimestamp(),
+		Status:        common.TopUpStatusPending,
+	}
+	if err := model.DB.Create(topUp).Error; err != nil {
+		t.Fatalf("failed to seed topup: %v", err)
+	}
+
+	originalFactory := newAlipayClient
+	newAlipayClient = func() (alipaypkg.Client, error) {
+		return fakeAlipayClient{
+			queryOrderFunc: func(_ context.Context, outTradeNo string) (*alipaypkg.QueryOrderResult, error) {
+				return &alipaypkg.QueryOrderResult{
+					OutTradeNo:     outTradeNo,
+					TradeNo:        "ALI-QUERY-CLOSED",
+					TradeStatus:    "TRADE_CLOSED",
+					TotalAmount:    decimal.RequireFromString("72.00"),
+					BuyerPayAmount: decimal.RequireFromString("0.00"),
+				}, nil
+			},
+		}, nil
+	}
+	defer func() { newAlipayClient = originalFactory }()
+
+	ctx, recorder := newTopupTestContext(t, http.MethodPost, "/api/user/alipay/query", map[string]any{"trade_no": topUp.TradeNo}, 1)
+	QueryAlipayPay(ctx)
+	if !strings.Contains(recorder.Body.String(), "订单已关闭") {
+		t.Fatalf("expected closed-order error, got: %s", recorder.Body.String())
+	}
+	assertTopupNotifyStatus(t, topUp.TradeNo, common.TopUpStatusPending)
+}

@@ -222,7 +222,8 @@ func QueryAlipayPay(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "支付金额校验失败"})
 		return
 	}
-	if result.TradeStatus == "TRADE_SUCCESS" || result.TradeStatus == "TRADE_FINISHED" {
+	switch result.TradeStatus {
+	case "TRADE_SUCCESS", "TRADE_FINISHED":
 		LockOrder(req.TradeNo)
 		defer UnlockOrder(req.TradeNo)
 		if err := model.RechargeAlipay(req.TradeNo, common.GetJsonString(result)); err != nil {
@@ -231,8 +232,16 @@ func QueryAlipayPay(c *gin.Context) {
 		}
 		common.ApiSuccess(c, gin.H{"status": "success"})
 		return
+	case "WAIT_BUYER_PAY":
+		common.ApiSuccess(c, gin.H{"status": "pending"})
+		return
+	case "TRADE_CLOSED":
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "订单已关闭"})
+		return
+	default:
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "订单状态异常"})
+		return
 	}
-	common.ApiSuccess(c, gin.H{"status": "pending"})
 }
 
 func AlipayNotify(c *gin.Context) {

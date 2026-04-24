@@ -240,3 +240,42 @@ func TestSubscriptionRequestAlipayPayConvertsUSDPlanPriceToCNY(t *testing.T) {
 		t.Fatalf("expected amount_yuan %s in response: %s", expectedAmount, recorder.Body.String())
 	}
 }
+
+func TestSubscriptionQueryAlipayPayReturnsErrorWhenTradeClosed(t *testing.T) {
+	setupSubscriptionAlipayControllerTestEnv(t)
+	seedSubscriptionAlipayUser(t, 1)
+	seedAlipayConfig()
+	plan := seedSubscriptionAlipayPlan(t, 88)
+	seedPendingSubscriptionAlipayOrder(t, &model.SubscriptionOrder{
+		UserId:        1,
+		PlanId:        plan.Id,
+		Money:         88,
+		TradeNo:       "ALIPAY-SUB-Q-CLOSED",
+		PaymentMethod: "alipay_direct",
+		PaymentMode:   "qr",
+		Status:        common.TopUpStatusPending,
+		CreateTime:    common.GetTimestamp(),
+	})
+
+	originalFactory := newAlipayClient
+	newAlipayClient = func() (alipaypkg.Client, error) {
+		return fakeAlipayClient{
+			queryOrderFunc: func(_ context.Context, outTradeNo string) (*alipaypkg.QueryOrderResult, error) {
+				return &alipaypkg.QueryOrderResult{
+					OutTradeNo:     outTradeNo,
+					TradeNo:        "ALI-SUB-CLOSED",
+					TradeStatus:    "TRADE_CLOSED",
+					TotalAmount:    decimal.RequireFromString("88.00"),
+					BuyerPayAmount: decimal.RequireFromString("0.00"),
+				}, nil
+			},
+		}, nil
+	}
+	defer func() { newAlipayClient = originalFactory }()
+
+	ctx, recorder := newSubscriptionAlipayTestContext(t, http.MethodPost, "/api/subscription/alipay/query", map[string]any{"trade_no": "ALIPAY-SUB-Q-CLOSED"}, 1)
+	SubscriptionQueryAlipayPay(ctx)
+	if !strings.Contains(recorder.Body.String(), "订单已关闭") {
+		t.Fatalf("expected closed-order error, got: %s", recorder.Body.String())
+	}
+}
