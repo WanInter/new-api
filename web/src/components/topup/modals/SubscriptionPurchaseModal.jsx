@@ -64,8 +64,10 @@ const SubscriptionPurchaseModal = ({
   const { symbol, rate } = getCurrencyConfig();
   const price = plan ? Number(plan.price_amount || 0) : 0;
   const convertedPrice = price * rate;
-  const displayPrice = convertedPrice.toFixed(
-    Number.isInteger(convertedPrice) ? 0 : 2,
+  const displayPriceValue = enableAlipayTopUp ? price : convertedPrice;
+  const displaySymbol = enableAlipayTopUp ? '¥' : symbol;
+  const displayPrice = displayPriceValue.toFixed(
+    Number.isInteger(displayPriceValue) ? 0 : 2,
   );
   // 只有当管理员开启支付网关 AND 套餐配置了对应的支付ID时才显示
   const hasStripe = enableStripeTopUp && !!plan?.stripe_price_id;
@@ -167,7 +169,7 @@ const SubscriptionPurchaseModal = ({
                   {t('应付金额')}：
                 </Text>
                 <Text strong className='text-xl text-purple-600'>
-                  {symbol}
+                  {displaySymbol}
                   {displayPrice}
                 </Text>
               </div>

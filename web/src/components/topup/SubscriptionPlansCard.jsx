@@ -580,8 +580,10 @@ const SubscriptionPlansCard = ({
                 const { symbol, rate } = getCurrencyConfig();
                 const price = Number(plan?.price_amount || 0);
                 const convertedPrice = price * rate;
-                const displayPrice = convertedPrice.toFixed(
-                  Number.isInteger(convertedPrice) ? 0 : 2,
+                const displayPriceValue = enableAlipayTopUp ? price : convertedPrice;
+                const displaySymbol = enableAlipayTopUp ? '¥' : symbol;
+                const displayPrice = displayPriceValue.toFixed(
+                  Number.isInteger(displayPriceValue) ? 0 : 2,
                 );
                 const isPopular = index === 0 && plans.length > 1;
                 const limit = Number(plan?.max_purchase_per_user || 0);
@@ -655,7 +657,7 @@ const SubscriptionPlansCard = ({
                       <div className='py-2'>
                         <div className='flex items-baseline justify-start'>
                           <span className='text-xl font-bold text-purple-600'>
-                            {symbol}
+                            {displaySymbol}
                           </span>
                           <span className='text-3xl font-bold text-purple-600'>
                             {displayPrice}
