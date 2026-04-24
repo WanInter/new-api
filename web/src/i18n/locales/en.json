@@ -3567,6 +3567,8 @@
     "管理员未开启支付宝支付！": "Alipay is not enabled by the administrator!",
     "支付宝（易支付）": "Alipay (EPay)",
     "订阅支付宝支付": "Subscription Alipay Payment",
-    "请选择套餐": "Please select a plan"
+    "请选择套餐": "Please select a plan",
+    "待支付": "Pending Payment",
+    "查单失败": "Failed to query payment status"
   }
 }
