@@ -171,6 +171,7 @@ func GetTopUpInfo(c *gin.Context) {
 		"waffo_min_topup":  setting.WaffoMinTopUp,
 		"wechat_min_topup": wechatMinTopup,
 		"alipay_min_topup": alipayMinTopup,
+		"alipay_pay_mode": getConfiguredAlipayPayMode(),
 		"amount_options":   operation_setting.GetPaymentSetting().AmountOptions,
 		"discount":         operation_setting.GetPaymentSetting().AmountDiscount,
 	}

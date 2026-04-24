@@ -97,6 +97,7 @@ const SubscriptionPlansCard = ({
   enableStripeTopUp = false,
   enableCreemTopUp = false,
   enableAlipayTopUp = false,
+  alipayPayMode = 'page',
   billingPreference,
   onChangeBillingPreference,
   activeSubscriptions = [],
@@ -224,7 +225,7 @@ const SubscriptionPlansCard = ({
     }
   };
 
-  const openAlipay = () => {
+  const openAlipay = async () => {
     if (!selectedPlan?.plan) {
       showError(t('请选择套餐'));
       return;
@@ -234,9 +235,9 @@ const SubscriptionPlansCard = ({
       tradeNo: '',
       qrCode: '',
       amount: getAlipayCNYAmount(selectedPlan.plan.price_amount, selectedPlan.plan.currency).toFixed(2),
-      payMode: '',
+      payMode: alipayPayMode,
     });
-    setAlipayOpen(true);
+    await createSubscriptionAlipay(alipayPayMode);
   };
 
   const createSubscriptionAlipay = async (payMode) => {
@@ -256,9 +257,13 @@ const SubscriptionPlansCard = ({
           payMode: data.pay_mode || payMode,
         });
         if (data.pay_url) {
+          setAlipayOpen(false);
           window.open(data.pay_url, '_blank');
           showSuccess(t('已打开支付页面'));
+          closeBuy();
+          return;
         }
+        setAlipayOpen(true);
       } else {
         showError(res.data?.message || res.data?.data || t('支付失败'));
       }
@@ -807,9 +812,7 @@ const SubscriptionPlansCard = ({
         checking={alipayChecking}
         onClose={() => {
           setAlipayOpen(false);
-          setOpen(true);
         }}
-        onCreate={createSubscriptionAlipay}
         onCheck={() => querySubscriptionAlipay(true)}
       />
     </>

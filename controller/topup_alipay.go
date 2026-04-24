@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -49,6 +50,14 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func getConfiguredAlipayPayMode() string {
+	mode, err := alipaypkg.NormalizePayMode(strings.TrimSpace(setting.AlipayPayMode))
+	if err != nil {
+		return alipaypkg.PayModePage
+	}
+	return mode
 }
 
 func getAlipayMinTopup() int64 {
@@ -115,11 +124,11 @@ func RequestAlipayPay(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "参数错误"})
 		return
 	}
-	mode, err := alipaypkg.NormalizePayMode(req.PayMode)
-	if err != nil || req.PaymentMethod != paymentMethodAlipayDirect {
+	if req.PaymentMethod != paymentMethodAlipayDirect {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "不支持的支付渠道"})
 		return
 	}
+	mode := getConfiguredAlipayPayMode()
 	if !isAlipayConfigured() {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "管理员未开启支付宝支付"})
 		return

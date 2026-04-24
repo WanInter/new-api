@@ -8,6 +8,7 @@ var (
 	AlipayPublicKey             string
 	AlipayUnitPrice             float64 = 1.0
 	AlipayMinTopUp              int     = 1
+	AlipayPayMode               string  = "page"
 	AlipayNotifyURL             string
 	AlipayReturnURL             string
 	AlipaySubscriptionReturnURL string

@@ -93,6 +93,7 @@ func InitOptionMap() {
 	common.OptionMap["AlipayPublicKey"] = setting.AlipayPublicKey
 	common.OptionMap["AlipayUnitPrice"] = strconv.FormatFloat(setting.AlipayUnitPrice, 'f', -1, 64)
 	common.OptionMap["AlipayMinTopUp"] = strconv.Itoa(setting.AlipayMinTopUp)
+	common.OptionMap["AlipayPayMode"] = setting.AlipayPayMode
 	common.OptionMap["AlipayNotifyURL"] = setting.AlipayNotifyURL
 	common.OptionMap["AlipayReturnURL"] = setting.AlipayReturnURL
 	common.OptionMap["AlipaySubscriptionReturnURL"] = setting.AlipaySubscriptionReturnURL
@@ -406,6 +407,8 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.AlipayUnitPrice, _ = strconv.ParseFloat(value, 64)
 	case "AlipayMinTopUp":
 		setting.AlipayMinTopUp, _ = strconv.Atoi(value)
+	case "AlipayPayMode":
+		setting.AlipayPayMode = value
 	case "AlipayNotifyURL":
 		setting.AlipayNotifyURL = value
 	case "AlipayReturnURL":

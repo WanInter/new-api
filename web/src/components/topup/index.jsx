@@ -82,6 +82,7 @@ const TopUp = () => {
   const [enableAlipayTopUp, setEnableAlipayTopUp] = useState(false);
   const [wechatMinTopUp, setWechatMinTopUp] = useState(1);
   const [alipayMinTopUp, setAlipayMinTopUp] = useState(1);
+  const [alipayPayMode, setAlipayPayMode] = useState('page');
   const [wechatPayOpen, setWechatPayOpen] = useState(false);
   const [alipayPayOpen, setAlipayPayOpen] = useState(false);
   const [wechatPayData, setWechatPayData] = useState({
@@ -220,13 +221,7 @@ const TopUp = () => {
           showError(t('充值数量不能小于') + alipayMinTopUp);
           return;
         }
-        setAlipayPayData({
-          tradeNo: '',
-          qrCode: '',
-          amount: Number(resolvedAmount || 0).toFixed(2),
-          payMode: '',
-        });
-        setAlipayPayOpen(true);
+        await createAlipayTopup(alipayPayMode, resolvedAmount);
         return;
       }
 
@@ -297,9 +292,6 @@ const TopUp = () => {
         }
         return;
       } else if (payWay === 'alipay_direct') {
-        setOpen(false);
-        setAlipayPayOpen(true);
-        await createAlipayTopup('page');
         return;
       } else if (payWay === 'stripe') {
         // Stripe 支付请求
@@ -607,6 +599,7 @@ const TopUp = () => {
           setEnableWeChatTopUp(enableWeChatTopUp);
           setWechatMinTopUp(data.wechat_min_topup || 1);
           setAlipayMinTopUp(data.alipay_min_topup || 1);
+          setAlipayPayMode(data.alipay_pay_mode || 'page');
           setEnableWaffoTopUp(enableWaffoTopUp);
           setEnableAlipayTopUp(enableAlipayTopUp);
           setWaffoPayMethods(data.waffo_pay_methods || []);
@@ -843,7 +836,7 @@ const TopUp = () => {
     }
   };
 
-  const createAlipayTopup = async (payMode) => {
+  const createAlipayTopup = async (payMode, resolvedAmount) => {
     setAlipayCreating(true);
     try {
       const res = await API.post('/api/user/alipay/pay', {
@@ -856,13 +849,16 @@ const TopUp = () => {
         setAlipayPayData({
           tradeNo: data.trade_no || '',
           qrCode: data.qr_code || '',
-          amount: data.amount_yuan || Number(amount || 0).toFixed(2),
+          amount: data.amount_yuan || Number(resolvedAmount || amount || 0).toFixed(2),
           payMode: data.pay_mode || payMode,
         });
         if (data.pay_url) {
+          setAlipayPayOpen(false);
           window.open(data.pay_url, '_blank');
           showSuccess(t('已打开支付页面'));
+          return;
         }
+        setAlipayPayOpen(true);
       } else {
         showError(res.data?.data || t('支付请求失败'));
       }
@@ -1029,11 +1025,8 @@ const TopUp = () => {
         amount={alipayPayData.amount}
         tradeNo={alipayPayData.tradeNo}
         qrCode={alipayPayData.qrCode}
-        payMode={alipayPayData.payMode}
-        creating={alipayCreating}
         checking={alipayChecking}
         onClose={() => setAlipayPayOpen(false)}
-        onCreate={createAlipayTopup}
         onCheck={() => queryAlipayTopup(true)}
       />
 
@@ -1073,7 +1066,7 @@ const TopUp = () => {
           enableStripeTopUp={enableStripeTopUp}
           enableWeChatTopUp={enableWeChatTopUp}
           enableAlipayTopUp={enableAlipayTopUp}
-          // 继续透传给订阅购买链路
+          alipayPayMode={alipayPayMode}
           enableCreemTopUp={enableCreemTopUp}
           creemProducts={creemProducts}
           creemPreTopUp={creemPreTopUp}

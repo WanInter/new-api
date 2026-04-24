@@ -85,6 +85,7 @@ func TestSubscriptionRequestAlipayPayReturnsQRCode(t *testing.T) {
 	seedSubscriptionAlipayUser(t, 1)
 	plan := seedSubscriptionAlipayPlan(t, 88)
 	seedAlipayConfig()
+	setting.AlipayPayMode = "qr"
 
 	originalFactory := newAlipayClient
 	newAlipayClient = func() (alipaypkg.Client, error) {
@@ -155,6 +156,7 @@ func TestSubscriptionRequestAlipayPayUsesSubscriptionNotifyURL(t *testing.T) {
 	seedSubscriptionAlipayUser(t, 1)
 	plan := seedSubscriptionAlipayPlan(t, 88)
 	seedAlipayConfig()
+	setting.AlipayPayMode = "qr"
 	setting.AlipayNotifyURL = "https://example.com/api/alipay/notify"
 
 	originalFactory := newAlipayClient
@@ -212,6 +214,7 @@ func TestSubscriptionRequestAlipayPayConvertsUSDPlanPriceToCNY(t *testing.T) {
 	}
 	model.InvalidateSubscriptionPlanCache(plan.Id)
 	seedAlipayConfig()
+	setting.AlipayPayMode = "qr"
 	expectedAmount := decimal.NewFromFloat(plan.PriceAmount).
 		Mul(decimal.NewFromFloat(operation_setting.USDExchangeRate)).
 		Round(2).
@@ -277,5 +280,42 @@ func TestSubscriptionQueryAlipayPayReturnsErrorWhenTradeClosed(t *testing.T) {
 	SubscriptionQueryAlipayPay(ctx)
 	if !strings.Contains(recorder.Body.String(), "订单已关闭") {
 		t.Fatalf("expected closed-order error, got: %s", recorder.Body.String())
+	}
+}
+
+func TestSubscriptionRequestAlipayPayUsesConfiguredMode(t *testing.T) {
+	setupSubscriptionAlipayControllerTestEnv(t)
+	seedSubscriptionAlipayUser(t, 1)
+	plan := seedSubscriptionAlipayPlan(t, 88)
+	seedAlipayConfig()
+	setting.AlipayPayMode = "page"
+
+	pageCalled := false
+	originalFactory := newAlipayClient
+	newAlipayClient = func() (alipaypkg.Client, error) {
+		return fakeAlipayClient{
+			createPageOrderFunc: func(_ context.Context, req alipaypkg.CreateOrderRequest) (*alipaypkg.PageOrderResponse, error) {
+				pageCalled = true
+				return &alipaypkg.PageOrderResponse{PayURL: "https://openapi.alipay.com/gateway.do?foo=bar"}, nil
+			},
+			createQROrderFunc: func(_ context.Context, req alipaypkg.CreateOrderRequest) (*alipaypkg.QROrderResponse, error) {
+				t.Fatal("should not call QR order when AlipayPayMode=page")
+				return nil, nil
+			},
+		}, nil
+	}
+	defer func() { newAlipayClient = originalFactory }()
+
+	ctx, recorder := newSubscriptionAlipayTestContext(t, http.MethodPost, "/api/subscription/alipay/pay", map[string]any{
+		"plan_id":        plan.Id,
+		"payment_method": "alipay_direct",
+		"pay_mode":       "qr",
+	}, 1)
+	SubscriptionRequestAlipayPay(ctx)
+	if !pageCalled {
+		t.Fatal("expected page order to be used from configured mode")
+	}
+	if !strings.Contains(recorder.Body.String(), `"pay_mode":"page"`) {
+		t.Fatalf("expected response pay_mode=page, got %s", recorder.Body.String())
 	}
 }

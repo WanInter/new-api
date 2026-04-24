@@ -71,6 +71,7 @@ const PaymentSetting = () => {
     AlipayPublicKey: '',
     AlipayUnitPrice: 1,
     AlipayMinTopUp: 1,
+    AlipayPayMode: 'page',
     AlipayNotifyURL: '',
     AlipayReturnURL: '',
     AlipaySubscriptionReturnURL: '',

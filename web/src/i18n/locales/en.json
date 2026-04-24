@@ -3569,6 +3569,9 @@
     "订阅支付宝支付": "Subscription Alipay Payment",
     "请选择套餐": "Please select a plan",
     "待支付": "Pending Payment",
-    "查单失败": "Failed to query payment status"
+    "查单失败": "Failed to query payment status",
+    "支付宝支付模式": "Alipay Payment Mode",
+    "收银台支付": "Checkout Payment",
+    "扫码支付": "QR Payment"
   }
 }

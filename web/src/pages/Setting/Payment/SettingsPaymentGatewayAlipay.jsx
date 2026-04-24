@@ -39,6 +39,7 @@ export default function SettingsPaymentGatewayAlipay(props) {
     AlipayPublicKey: '',
     AlipayUnitPrice: 1,
     AlipayMinTopUp: 1,
+    AlipayPayMode: 'page',
     AlipayNotifyURL: '',
     AlipayReturnURL: '',
     AlipaySubscriptionReturnURL: '',
@@ -59,6 +60,7 @@ export default function SettingsPaymentGatewayAlipay(props) {
         AlipayPublicKey: props.options.AlipayPublicKey || '',
         AlipayUnitPrice: parseFloat(props.options.AlipayUnitPrice || 1),
         AlipayMinTopUp: parseFloat(props.options.AlipayMinTopUp || 1),
+        AlipayPayMode: props.options.AlipayPayMode || 'page',
         AlipayNotifyURL: props.options.AlipayNotifyURL || '',
         AlipayReturnURL: props.options.AlipayReturnURL || '',
         AlipaySubscriptionReturnURL:
@@ -85,6 +87,7 @@ export default function SettingsPaymentGatewayAlipay(props) {
         { key: 'AlipayAppID', value: inputs.AlipayAppID || '' },
         { key: 'AlipayUnitPrice', value: String(inputs.AlipayUnitPrice || 1) },
         { key: 'AlipayMinTopUp', value: String(inputs.AlipayMinTopUp || 1) },
+        { key: 'AlipayPayMode', value: inputs.AlipayPayMode || 'page' },
         {
           key: 'AlipayNotifyURL',
           value: removeTrailingSlash(inputs.AlipayNotifyURL || ''),
@@ -201,7 +204,17 @@ export default function SettingsPaymentGatewayAlipay(props) {
                 step={1}
               />
             </Col>
-            <Col xs={24} sm={24} md={12}>
+            <Col xs={24} sm={12} md={6}>
+              <Form.Select
+                field='AlipayPayMode'
+                label={t('支付宝支付模式')}
+                optionList={[
+                  { label: t('收银台支付'), value: 'page' },
+                  { label: t('扫码支付'), value: 'qr' },
+                ]}
+              />
+            </Col>
+            <Col xs={24} sm={24} md={6}>
               <Form.Input
                 field='AlipayOrderDescription'
                 label={t('订单描述')}

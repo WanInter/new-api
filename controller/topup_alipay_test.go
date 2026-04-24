@@ -30,6 +30,7 @@ type alipaySettingSnapshot struct {
 	ReturnURL             string
 	SubscriptionReturnURL string
 	OrderDescription      string
+	PayMode               string
 }
 
 func snapshotAlipaySettings() alipaySettingSnapshot {
@@ -45,6 +46,7 @@ func snapshotAlipaySettings() alipaySettingSnapshot {
 		ReturnURL:             setting.AlipayReturnURL,
 		SubscriptionReturnURL: setting.AlipaySubscriptionReturnURL,
 		OrderDescription:      setting.AlipayOrderDescription,
+		PayMode:               setting.AlipayPayMode,
 	}
 }
 
@@ -60,6 +62,7 @@ func restoreAlipaySettings(snapshot alipaySettingSnapshot) {
 	setting.AlipayReturnURL = snapshot.ReturnURL
 	setting.AlipaySubscriptionReturnURL = snapshot.SubscriptionReturnURL
 	setting.AlipayOrderDescription = snapshot.OrderDescription
+	setting.AlipayPayMode = snapshot.PayMode
 }
 
 func setupAlipaySettingIsolation(t *testing.T) {
@@ -548,4 +551,54 @@ func TestQueryAlipayPayReturnsErrorWhenTradeClosed(t *testing.T) {
 		t.Fatalf("expected closed-order error, got: %s", recorder.Body.String())
 	}
 	assertTopupNotifyStatus(t, topUp.TradeNo, common.TopUpStatusPending)
+}
+
+func TestRequestAlipayPayUsesConfiguredMode(t *testing.T) {
+	setupTopupControllerTestEnv(t)
+	setupAlipaySettingIsolation(t)
+	seedTopupUser(t, 1, "default")
+	seedAlipayConfig()
+	setting.AlipayPayMode = "page"
+
+	pageCalled := false
+	originalFactory := newAlipayClient
+	newAlipayClient = func() (alipaypkg.Client, error) {
+		return fakeAlipayClient{
+			createPageOrderFunc: func(_ context.Context, req alipaypkg.CreateOrderRequest) (*alipaypkg.PageOrderResponse, error) {
+				pageCalled = true
+				return &alipaypkg.PageOrderResponse{PayURL: "https://openapi.alipay.com/gateway.do?foo=bar"}, nil
+			},
+			createQROrderFunc: func(_ context.Context, req alipaypkg.CreateOrderRequest) (*alipaypkg.QROrderResponse, error) {
+				t.Fatal("should not call QR order when AlipayPayMode=page")
+				return nil, nil
+			},
+		}, nil
+	}
+	defer func() { newAlipayClient = originalFactory }()
+
+	ctx, recorder := newTopupTestContext(t, http.MethodPost, "/api/user/alipay/pay", map[string]any{
+		"amount":         10,
+		"payment_method": "alipay_direct",
+		"pay_mode":       "qr",
+	}, 1)
+	RequestAlipayPay(ctx)
+	if !pageCalled {
+		t.Fatal("expected page order to be used from configured mode")
+	}
+	if !strings.Contains(recorder.Body.String(), `"pay_mode":"page"`) {
+		t.Fatalf("expected response pay_mode=page, got %s", recorder.Body.String())
+	}
+}
+
+func TestGetTopUpInfoIncludesAlipayPayMode(t *testing.T) {
+	setupTopupControllerTestEnv(t)
+	setupAlipaySettingIsolation(t)
+	seedAlipayConfig()
+	setting.AlipayPayMode = "qr"
+
+	ctx, recorder := newTopupTestContext(t, http.MethodGet, "/api/user/topup/info", nil, 1)
+	GetTopUpInfo(ctx)
+	if !strings.Contains(recorder.Body.String(), `"alipay_pay_mode":"qr"`) {
+		t.Fatalf("expected alipay_pay_mode=qr, got %s", recorder.Body.String())
+	}
 }

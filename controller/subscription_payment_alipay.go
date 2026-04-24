@@ -55,11 +55,11 @@ func SubscriptionRequestAlipayPay(c *gin.Context) {
 		common.ApiErrorMsg(c, "参数错误")
 		return
 	}
-	mode, err := alipaypkg.NormalizePayMode(req.PayMode)
-	if err != nil || req.PaymentMethod != paymentMethodAlipayDirect {
+	if req.PaymentMethod != paymentMethodAlipayDirect {
 		common.ApiErrorMsg(c, "不支持的支付渠道")
 		return
 	}
+	mode := getConfiguredAlipayPayMode()
 	plan, err := model.GetSubscriptionPlanById(req.PlanId)
 	if err != nil {
 		common.ApiError(c, err)
