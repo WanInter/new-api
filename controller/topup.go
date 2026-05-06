@@ -22,9 +22,64 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+func isWeChatPayConfigured() bool {
+	return setting.WeChatPayEnabled &&
+		setting.WeChatPayMchID != "" &&
+		setting.WeChatPayAppID != "" &&
+		setting.WeChatPayAPIv3Key != "" &&
+		setting.WeChatPayPrivateKey != "" &&
+		setting.WeChatPayMerchantSerialNo != "" &&
+		setting.WeChatPayPublicKeyID != "" &&
+		setting.WeChatPayPublicKey != ""
+}
+
+func isAlipayConfigured() bool {
+	return setting.AlipayEnabled &&
+		setting.AlipayAppID != "" &&
+		setting.AlipayPrivateKey != "" &&
+		setting.AlipayPublicKey != ""
+}
+
+func clonePayMethods(methods []map[string]string) []map[string]string {
+	result := make([]map[string]string, 0, len(methods))
+	for _, method := range methods {
+		cloned := make(map[string]string, len(method))
+		for key, value := range method {
+			cloned[key] = value
+		}
+		result = append(result, cloned)
+	}
+	return result
+}
+
 func GetTopUpInfo(c *gin.Context) {
 	// 获取支付方式
-	payMethods := operation_setting.PayMethods
+	payMethods := clonePayMethods(operation_setting.PayMethods)
+	wechatMinTopup := getWeChatPayMinTopup()
+	alipayMinTopup := getAlipayMinTopup()
+	alipayConfigured := isAlipayConfigured()
+	if alipayConfigured {
+		filtered := make([]map[string]string, 0, len(payMethods))
+		hasAlipayDirect := false
+		for _, method := range payMethods {
+			if method["type"] == "alipay" {
+				continue
+			}
+			if method["type"] == "alipay_direct" {
+				hasAlipayDirect = true
+			}
+			filtered = append(filtered, method)
+		}
+		payMethods = filtered
+		if !hasAlipayDirect {
+			payMethods = append(payMethods, map[string]string{
+				"name":      "支付宝",
+				"type":      "alipay_direct",
+				"color":     "rgba(var(--semi-blue-5), 1)",
+				"min_topup": strconv.FormatInt(alipayMinTopup, 10),
+			})
+		}
+	}
 
 	// 如果启用了 Stripe 支付，添加到支付方法列表
 	if isStripeTopUpEnabled() {
@@ -70,6 +125,24 @@ func GetTopUpInfo(c *gin.Context) {
 		}
 	}
 
+	if isWeChatPayConfigured() {
+		hasWeChatPay := false
+		for _, method := range payMethods {
+			if method["type"] == "wechat_pay" {
+				hasWeChatPay = true
+				break
+			}
+		}
+		if !hasWeChatPay {
+			payMethods = append(payMethods, map[string]string{
+				"name":      "微信支付",
+				"type":      "wechat_pay",
+				"color":     "rgba(var(--semi-green-5), 1)",
+				"min_topup": strconv.FormatInt(wechatMinTopup, 10),
+			})
+		}
+	}
+
 	enableWaffoPancake := isWaffoPancakeTopUpEnabled()
 	if enableWaffoPancake {
 		hasWaffoPancake := false
@@ -96,6 +169,8 @@ func GetTopUpInfo(c *gin.Context) {
 		"enable_creem_topup":         isCreemTopUpEnabled(),
 		"enable_waffo_topup":         enableWaffo,
 		"enable_waffo_pancake_topup": enableWaffoPancake,
+		"enable_wechat_topup":        isWeChatPayConfigured(),
+		"enable_alipay_topup":        alipayConfigured,
 		"waffo_pay_methods": func() interface{} {
 			if enableWaffo {
 				return setting.GetWaffoPayMethods()
@@ -108,6 +183,9 @@ func GetTopUpInfo(c *gin.Context) {
 		"stripe_min_topup":        setting.StripeMinTopUp,
 		"waffo_min_topup":         setting.WaffoMinTopUp,
 		"waffo_pancake_min_topup": setting.WaffoPancakeMinTopUp,
+		"wechat_min_topup":        wechatMinTopup,
+		"alipay_min_topup":        alipayMinTopup,
+		"alipay_pay_mode":         getConfiguredAlipayPayMode(),
 		"amount_options":          operation_setting.GetPaymentSetting().AmountOptions,
 		"discount":                operation_setting.GetPaymentSetting().AmountDiscount,
 	}

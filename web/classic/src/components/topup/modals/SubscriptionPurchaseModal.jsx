@@ -29,7 +29,7 @@ import {
   Tooltip,
 } from '@douyinfe/semi-ui';
 import { Crown, CalendarClock, Package } from 'lucide-react';
-import { SiStripe } from 'react-icons/si';
+import { SiAlipay, SiStripe } from 'react-icons/si';
 import { IconCreditCard } from '@douyinfe/semi-icons';
 import { renderQuota } from '../../../helpers';
 import { getCurrencyConfig } from '../../../helpers/render';
@@ -39,6 +39,24 @@ import {
 } from '../../../helpers/subscriptionFormat';
 
 const { Text } = Typography;
+
+
+function getAlipayCNYAmount(price, currency) {
+  const normalizedPrice = Number(price || 0);
+  if (!Number.isFinite(normalizedPrice)) return 0;
+  if ((currency || 'USD').toUpperCase() === 'CNY') {
+    return normalizedPrice;
+  }
+  const statusStr = localStorage.getItem('status');
+  let usdRate = 7;
+  try {
+    if (statusStr) {
+      const status = JSON.parse(statusStr);
+      usdRate = Number(status?.usd_exchange_rate) || 7;
+    }
+  } catch (e) {}
+  return normalizedPrice * usdRate;
+}
 
 const SubscriptionPurchaseModal = ({
   t,
@@ -52,28 +70,35 @@ const SubscriptionPurchaseModal = ({
   enableOnlineTopUp = false,
   enableStripeTopUp = false,
   enableCreemTopUp = false,
+  enableAlipayTopUp = false,
   purchaseLimitInfo = null,
   onPayStripe,
   onPayCreem,
   onPayEpay,
+  onPayAlipay,
 }) => {
   const plan = selectedPlan?.plan;
   const totalAmount = Number(plan?.total_amount || 0);
   const { symbol, rate } = getCurrencyConfig();
   const price = plan ? Number(plan.price_amount || 0) : 0;
   const convertedPrice = price * rate;
-  const displayPrice = convertedPrice.toFixed(
-    Number.isInteger(convertedPrice) ? 0 : 2,
+  const alipayCNYAmount = getAlipayCNYAmount(price, plan?.currency);
+  const displayPriceValue = enableAlipayTopUp ? alipayCNYAmount : convertedPrice;
+  const displaySymbol = enableAlipayTopUp ? '¥' : symbol;
+  const displayPrice = displayPriceValue.toFixed(
+    Number.isInteger(displayPriceValue) ? 0 : 2,
   );
   // 只有当管理员开启支付网关 AND 套餐配置了对应的支付ID时才显示
   const hasStripe = enableStripeTopUp && !!plan?.stripe_price_id;
   const hasCreem = enableCreemTopUp && !!plan?.creem_product_id;
   const hasEpay = enableOnlineTopUp && epayMethods.length > 0;
-  const hasAnyPayment = hasStripe || hasCreem || hasEpay;
+  const hasAlipay = enableAlipayTopUp;
+  const hasAnyPayment = hasStripe || hasCreem || hasEpay || hasAlipay;
   const purchaseLimit = Number(purchaseLimitInfo?.limit || 0);
   const purchaseCount = Number(purchaseLimitInfo?.count || 0);
   const purchaseLimitReached =
     purchaseLimit > 0 && purchaseCount >= purchaseLimit;
+  const closeDisabled = paying;
 
   return (
     <Modal
@@ -84,10 +109,11 @@ const SubscriptionPurchaseModal = ({
         </div>
       }
       visible={visible}
-      onCancel={onCancel}
+      onCancel={closeDisabled ? undefined : onCancel}
       footer={null}
       size='small'
       centered
+      maskClosable={!closeDisabled}
     >
       {plan ? (
         <div className='space-y-4 pb-10'>
@@ -162,7 +188,7 @@ const SubscriptionPurchaseModal = ({
                   {t('应付金额')}：
                 </Text>
                 <Text strong className='text-xl text-purple-600'>
-                  {symbol}
+                  {displaySymbol}
                   {displayPrice}
                 </Text>
               </div>
@@ -186,7 +212,7 @@ const SubscriptionPurchaseModal = ({
               </Text>
 
               {/* Stripe / Creem */}
-              {(hasStripe || hasCreem) && (
+              {(hasStripe || hasCreem || hasAlipay) && (
                 <div className='flex gap-2'>
                   {hasStripe && (
                     <Button
@@ -195,7 +221,7 @@ const SubscriptionPurchaseModal = ({
                       icon={<SiStripe size={14} color='#635BFF' />}
                       onClick={onPayStripe}
                       loading={paying}
-                      disabled={purchaseLimitReached}
+                      disabled={purchaseLimitReached || paying}
                     >
                       Stripe
                     </Button>
@@ -207,9 +233,21 @@ const SubscriptionPurchaseModal = ({
                       icon={<IconCreditCard />}
                       onClick={onPayCreem}
                       loading={paying}
-                      disabled={purchaseLimitReached}
+                      disabled={purchaseLimitReached || paying}
                     >
                       Creem
+                    </Button>
+                  )}
+                  {hasAlipay && (
+                    <Button
+                      theme='light'
+                      className='flex-1'
+                      icon={<SiAlipay size={14} color='#1677FF' />}
+                      onClick={onPayAlipay}
+                      loading={paying}
+                      disabled={purchaseLimitReached || paying}
+                    >
+                      {t('支付宝')}
                     </Button>
                   )}
                 </div>
@@ -228,14 +266,14 @@ const SubscriptionPurchaseModal = ({
                       value: m.type,
                       label: m.name || m.type,
                     }))}
-                    disabled={purchaseLimitReached}
+                    disabled={purchaseLimitReached || paying}
                   />
                   <Button
                     theme='solid'
                     type='primary'
                     onClick={onPayEpay}
                     loading={paying}
-                    disabled={!selectedEpayMethod || purchaseLimitReached}
+                    disabled={!selectedEpayMethod || purchaseLimitReached || paying}
                   >
                     {t('支付')}
                   </Button>

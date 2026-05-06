@@ -35,6 +35,7 @@ import {
 import { Coins } from 'lucide-react';
 import { IconSearch } from '@douyinfe/semi-icons';
 import { API, timestamp2string } from '../../../helpers';
+import { getCurrencyConfig } from '../../../helpers/render';
 import { isAdmin } from '../../../helpers/utils';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
 const { Text } = Typography;
@@ -52,8 +53,10 @@ const PAYMENT_METHOD_MAP = {
   stripe: 'Stripe',
   creem: 'Creem',
   waffo: 'Waffo',
-  alipay: '支付宝',
+  alipay: '支付宝（易支付）',
+  alipay_direct: '支付宝',
   wxpay: '微信',
+  wechat_pay: '微信支付',
 };
 
 const TopupHistoryModal = ({ visible, onCancel, t }) => {
@@ -64,6 +67,7 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
   const [pageSize, setPageSize] = useState(10);
   const [keyword, setKeyword] = useState('');
   const isMobile = useIsMobile();
+  const { symbol } = getCurrencyConfig();
 
   const loadTopups = async (currentPage, currentPageSize) => {
     setLoading(true);
@@ -161,16 +165,6 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
 
   const columns = useMemo(() => {
     const baseColumns = [
-      ...(userIsAdmin
-        ? [
-            {
-              title: t('用户ID'),
-              dataIndex: 'user_id',
-              key: 'user_id',
-              render: (userId) => <Text>{userId ?? '-'}</Text>,
-            },
-          ]
-        : []),
       {
         title: t('订单号'),
         dataIndex: 'trade_no',
@@ -207,7 +201,7 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
         title: t('支付金额'),
         dataIndex: 'money',
         key: 'money',
-        render: (money) => <Text type='danger'>¥{money.toFixed(2)}</Text>,
+        render: (money) => <Text type='danger'>{symbol}{money.toFixed(2)}</Text>,
       },
       {
         title: t('状态'),

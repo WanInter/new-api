@@ -86,6 +86,30 @@ func InitOptionMap() {
 	common.OptionMap["StripePriceId"] = setting.StripePriceId
 	common.OptionMap["StripeUnitPrice"] = strconv.FormatFloat(setting.StripeUnitPrice, 'f', -1, 64)
 	common.OptionMap["StripePromotionCodesEnabled"] = strconv.FormatBool(setting.StripePromotionCodesEnabled)
+	common.OptionMap["AlipayEnabled"] = strconv.FormatBool(setting.AlipayEnabled)
+	common.OptionMap["AlipaySandbox"] = strconv.FormatBool(setting.AlipaySandbox)
+	common.OptionMap["AlipayAppID"] = setting.AlipayAppID
+	common.OptionMap["AlipayPrivateKey"] = setting.AlipayPrivateKey
+	common.OptionMap["AlipayPublicKey"] = setting.AlipayPublicKey
+	common.OptionMap["AlipayUnitPrice"] = strconv.FormatFloat(setting.AlipayUnitPrice, 'f', -1, 64)
+	common.OptionMap["AlipayMinTopUp"] = strconv.Itoa(setting.AlipayMinTopUp)
+	common.OptionMap["AlipayPayMode"] = setting.AlipayPayMode
+	common.OptionMap["AlipayNotifyURL"] = setting.AlipayNotifyURL
+	common.OptionMap["AlipayReturnURL"] = setting.AlipayReturnURL
+	common.OptionMap["AlipaySubscriptionReturnURL"] = setting.AlipaySubscriptionReturnURL
+	common.OptionMap["AlipayOrderDescription"] = setting.AlipayOrderDescription
+	common.OptionMap["WeChatPayEnabled"] = strconv.FormatBool(setting.WeChatPayEnabled)
+	common.OptionMap["WeChatPayMchID"] = setting.WeChatPayMchID
+	common.OptionMap["WeChatPayAppID"] = setting.WeChatPayAppID
+	common.OptionMap["WeChatPayAPIv3Key"] = setting.WeChatPayAPIv3Key
+	common.OptionMap["WeChatPayPrivateKey"] = setting.WeChatPayPrivateKey
+	common.OptionMap["WeChatPayMerchantSerialNo"] = setting.WeChatPayMerchantSerialNo
+	common.OptionMap["WeChatPayPublicKeyID"] = setting.WeChatPayPublicKeyID
+	common.OptionMap["WeChatPayPublicKey"] = setting.WeChatPayPublicKey
+	common.OptionMap["WeChatPayUnitPrice"] = strconv.FormatFloat(setting.WeChatPayUnitPrice, 'f', -1, 64)
+	common.OptionMap["WeChatPayMinTopUp"] = strconv.Itoa(setting.WeChatPayMinTopUp)
+	common.OptionMap["WeChatPayNotifyUrl"] = setting.WeChatPayNotifyUrl
+	common.OptionMap["WeChatPayOrderDescription"] = setting.WeChatPayOrderDescription
 	common.OptionMap["CreemApiKey"] = setting.CreemApiKey
 	common.OptionMap["CreemProducts"] = setting.CreemProducts
 	common.OptionMap["CreemTestMode"] = strconv.FormatBool(setting.CreemTestMode)
@@ -381,6 +405,54 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.StripeMinTopUp, _ = strconv.Atoi(value)
 	case "StripePromotionCodesEnabled":
 		setting.StripePromotionCodesEnabled = value == "true"
+	case "AlipayEnabled":
+		setting.AlipayEnabled = value == "true"
+	case "AlipaySandbox":
+		setting.AlipaySandbox = value == "true"
+	case "AlipayAppID":
+		setting.AlipayAppID = value
+	case "AlipayPrivateKey":
+		setting.AlipayPrivateKey = value
+	case "AlipayPublicKey":
+		setting.AlipayPublicKey = value
+	case "AlipayUnitPrice":
+		setting.AlipayUnitPrice, _ = strconv.ParseFloat(value, 64)
+	case "AlipayMinTopUp":
+		setting.AlipayMinTopUp, _ = strconv.Atoi(value)
+	case "AlipayPayMode":
+		setting.AlipayPayMode = value
+	case "AlipayNotifyURL":
+		setting.AlipayNotifyURL = value
+	case "AlipayReturnURL":
+		setting.AlipayReturnURL = value
+	case "AlipaySubscriptionReturnURL":
+		setting.AlipaySubscriptionReturnURL = value
+	case "AlipayOrderDescription":
+		setting.AlipayOrderDescription = value
+	case "WeChatPayEnabled":
+		setting.WeChatPayEnabled = value == "true"
+	case "WeChatPayMchID":
+		setting.WeChatPayMchID = value
+	case "WeChatPayAppID":
+		setting.WeChatPayAppID = value
+	case "WeChatPayAPIv3Key":
+		setting.WeChatPayAPIv3Key = value
+	case "WeChatPayPrivateKey":
+		setting.WeChatPayPrivateKey = value
+	case "WeChatPayMerchantSerialNo":
+		setting.WeChatPayMerchantSerialNo = value
+	case "WeChatPayPublicKeyID":
+		setting.WeChatPayPublicKeyID = value
+	case "WeChatPayPublicKey":
+		setting.WeChatPayPublicKey = value
+	case "WeChatPayUnitPrice":
+		setting.WeChatPayUnitPrice, _ = strconv.ParseFloat(value, 64)
+	case "WeChatPayMinTopUp":
+		setting.WeChatPayMinTopUp, _ = strconv.Atoi(value)
+	case "WeChatPayNotifyUrl":
+		setting.WeChatPayNotifyUrl = value
+	case "WeChatPayOrderDescription":
+		setting.WeChatPayOrderDescription = value
 	case "CreemApiKey":
 		setting.CreemApiKey = value
 	case "CreemProducts":

@@ -29,6 +29,7 @@ import {
   copy,
   getQuotaPerUnit,
 } from '../../helpers';
+import { getCurrencyConfig } from '../../helpers/render';
 import { Modal, Toast } from '@douyinfe/semi-ui';
 import { useTranslation } from 'react-i18next';
 import { UserContext } from '../../context/User';
@@ -39,6 +40,8 @@ import InvitationCard from './InvitationCard';
 import TransferModal from './modals/TransferModal';
 import PaymentConfirmModal from './modals/PaymentConfirmModal';
 import TopupHistoryModal from './modals/TopupHistoryModal';
+import WeChatPayModal from './modals/WeChatPayModal';
+import AlipayCheckoutModal from './modals/AlipayCheckoutModal';
 
 const TopUp = () => {
   const { t } = useTranslation();
@@ -75,8 +78,24 @@ const TopUp = () => {
   const [enableWaffoTopUp, setEnableWaffoTopUp] = useState(false);
   const [waffoPayMethods, setWaffoPayMethods] = useState([]);
   const [waffoMinTopUp, setWaffoMinTopUp] = useState(1);
-  const [enableWaffoPancakeTopUp, setEnableWaffoPancakeTopUp] = useState(false);
-  const [waffoPancakeMinTopUp, setWaffoPancakeMinTopUp] = useState(1);
+  const [enableWeChatTopUp, setEnableWeChatTopUp] = useState(false);
+  const [enableAlipayTopUp, setEnableAlipayTopUp] = useState(false);
+  const [wechatMinTopUp, setWechatMinTopUp] = useState(1);
+  const [alipayMinTopUp, setAlipayMinTopUp] = useState(1);
+  const [alipayPayMode, setAlipayPayMode] = useState('page');
+  const [wechatPayOpen, setWechatPayOpen] = useState(false);
+  const [alipayPayOpen, setAlipayPayOpen] = useState(false);
+  const [wechatPayData, setWechatPayData] = useState({
+    tradeNo: '',
+    codeUrl: '',
+    amount: '0.00',
+  });
+  const [alipayPayData, setAlipayPayData] = useState({
+    tradeNo: '',
+    qrCode: '',
+    amount: '0.00',
+    payMode: '',
+  });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [open, setOpen] = useState(false);
@@ -84,6 +103,8 @@ const TopUp = () => {
   const [amountLoading, setAmountLoading] = useState(false);
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [confirmLoading, setConfirmLoading] = useState(false);
+  const [alipayCreating, setAlipayCreating] = useState(false);
+  const [alipayChecking, setAlipayChecking] = useState(false);
   const [payMethods, setPayMethods] = useState([]);
 
   const affFetchedRef = useRef(false);
@@ -113,39 +134,6 @@ const TopUp = () => {
     amount_options: [],
     discount: {},
   });
-
-  const confirmPayMethods = [
-    ...payMethods,
-    ...waffoPayMethods.map((method, index) => ({
-      ...method,
-      type: `waffo:${index}`,
-      min_topup: waffoMinTopUp,
-      color: method.color || 'rgba(var(--semi-primary-5), 1)',
-    })),
-  ];
-
-  const getPayMethodConfig = (payment) =>
-    confirmPayMethods.find((method) => method.type === payment);
-
-  const getPaymentMinTopUp = (payment) => {
-    const configuredMinTopUp = Number(getPayMethodConfig(payment)?.min_topup);
-    return Number.isFinite(configuredMinTopUp) && configuredMinTopUp > 0
-      ? configuredMinTopUp
-      : minTopUp;
-  };
-
-  const requestAmountByPayment = async (payment, value) => {
-    if (payment === 'stripe') {
-      return getStripeAmount(value);
-    }
-    if (payment === 'waffo_pancake') {
-      return getWaffoPancakeAmount(value);
-    }
-    if (typeof payment === 'string' && payment.startsWith('waffo:')) {
-      return getWaffoAmount(value);
-    }
-    return getAmount(value);
-  };
 
   const topUp = async () => {
     if (redemptionCode === '') {
@@ -197,14 +185,14 @@ const TopUp = () => {
         showError(t('管理员未开启Stripe充值！'));
         return;
       }
-    } else if (payment === 'waffo_pancake') {
-      if (!enableWaffoPancakeTopUp) {
-        showError(t('管理员未开启 Waffo Pancake 充值！'));
+    } else if (payment === 'wechat_pay') {
+      if (!enableWeChatTopUp) {
+        showError(t('管理员未开启微信支付！'));
         return;
       }
-    } else if (payment.startsWith('waffo:')) {
-      if (!enableWaffoTopUp) {
-        showError(t('管理员未开启 Waffo 充值！'));
+    } else if (payment === 'alipay_direct') {
+      if (!enableAlipayTopUp) {
+        showError(t('管理员未开启支付宝支付！'));
         return;
       }
     } else {
@@ -217,11 +205,34 @@ const TopUp = () => {
     setPayWay(payment);
     setPaymentLoading(true);
     try {
-      const selectedMinTopUp = getPaymentMinTopUp(payment);
-      await requestAmountByPayment(payment);
+      if (payment === 'wechat_pay') {
+        await getWeChatAmount();
+        if (topUpCount < wechatMinTopUp) {
+          showError(t('充值数量不能小于') + wechatMinTopUp);
+          return;
+        }
+        setOpen(true);
+        return;
+      }
 
-      if (topUpCount < selectedMinTopUp) {
-        showError(t('充值数量不能小于') + selectedMinTopUp);
+      if (payment === 'alipay_direct') {
+        const resolvedAmount = await getAlipayAmount();
+        if (topUpCount < alipayMinTopUp) {
+          showError(t('充值数量不能小于') + alipayMinTopUp);
+          return;
+        }
+        await createAlipayTopup(alipayPayMode, resolvedAmount);
+        return;
+      }
+
+      if (payment === 'stripe') {
+        await getStripeAmount();
+      } else {
+        await getAmount();
+      }
+
+      if (topUpCount < minTopUp) {
+        showError(t('充值数量不能小于') + minTopUp);
         return;
       }
       setOpen(true);
@@ -233,33 +244,18 @@ const TopUp = () => {
   };
 
   const onlineTopUp = async () => {
-    if (payWay === 'waffo_pancake') {
-      setConfirmLoading(true);
-      try {
-        await waffoPancakeTopUp();
-      } finally {
-        setOpen(false);
-        setConfirmLoading(false);
-      }
-      return;
-    }
-
-    if (payWay.startsWith('waffo:')) {
-      const payMethodIndex = Number(payWay.split(':')[1]);
-      setConfirmLoading(true);
-      try {
-        await waffoTopUp(Number.isFinite(payMethodIndex) ? payMethodIndex : 0);
-      } finally {
-        setOpen(false);
-        setConfirmLoading(false);
-      }
-      return;
-    }
-
     if (payWay === 'stripe') {
       // Stripe 支付处理
       if (amount === 0) {
         await getStripeAmount();
+      }
+    } else if (payWay === 'wechat_pay') {
+      if (amount === 0) {
+        await getWeChatAmount();
+      }
+    } else if (payWay === 'alipay_direct') {
+      if (amount === 0) {
+        await getAlipayAmount();
       }
     } else {
       // 普通支付处理
@@ -268,14 +264,36 @@ const TopUp = () => {
       }
     }
 
-    if (topUpCount < minTopUp) {
-      showError('充值数量不能小于' + minTopUp);
+    const currentMinTopUp = payWay === 'wechat_pay' ? wechatMinTopUp : payWay === 'alipay_direct' ? alipayMinTopUp : minTopUp;
+    if (topUpCount < currentMinTopUp) {
+      showError(t('充值数量不能小于') + currentMinTopUp);
       return;
     }
     setConfirmLoading(true);
     try {
       let res;
-      if (payWay === 'stripe') {
+      if (payWay === 'wechat_pay') {
+        res = await API.post('/api/user/wechat/pay', {
+          amount: parseInt(topUpCount),
+          payment_method: 'wechat_pay',
+        });
+        if (res?.data?.success) {
+          const paymentData = res.data.data || {};
+          const fallbackAmount = Number(amount || 0).toFixed(2);
+          setOpen(false);
+          setWechatPayData({
+            tradeNo: paymentData.trade_no || '',
+            codeUrl: paymentData.code_url || '',
+            amount: paymentData.amount_yuan || fallbackAmount,
+          });
+          setWechatPayOpen(true);
+        } else {
+          showError(res?.data?.data || t('支付请求失败'));
+        }
+        return;
+      } else if (payWay === 'alipay_direct') {
+        return;
+      } else if (payWay === 'stripe') {
         // Stripe 支付请求
         res = await API.post('/api/user/stripe/pay', {
           amount: parseInt(topUpCount),
@@ -382,122 +400,32 @@ const TopUp = () => {
 
   const waffoTopUp = async (payMethodIndex) => {
     try {
-      if (topUpCount < waffoMinTopUp) {
-        showError(t('充值数量不能小于') + waffoMinTopUp);
-        return;
-      }
-      setPaymentLoading(true);
-      const requestBody = {
-        amount: parseInt(topUpCount),
-      };
-      if (payMethodIndex != null) {
-        requestBody.pay_method_index = payMethodIndex;
-      }
-      const res = await API.post('/api/user/waffo/pay', requestBody);
-      if (res !== undefined) {
-        const { message, data } = res.data;
-        if (message === 'success' && data?.payment_url) {
-          window.open(data.payment_url, '_blank');
-        } else {
-          showError(data || t('支付请求失败'));
+        if (topUpCount < waffoMinTopUp) {
+            showError(t('充值数量不能小于') + waffoMinTopUp);
+            return;
         }
-      } else {
-        showError(res);
-      }
+        setPaymentLoading(true);
+        const requestBody = {
+            amount: parseInt(topUpCount),
+        };
+        if (payMethodIndex != null) {
+            requestBody.pay_method_index = payMethodIndex;
+        }
+        const res = await API.post('/api/user/waffo/pay', requestBody);
+        if (res !== undefined) {
+            const { message, data } = res.data;
+            if (message === 'success' && data?.payment_url) {
+                window.open(data.payment_url, '_blank');
+            } else {
+                showError(data || t('支付请求失败'));
+            }
+        } else {
+            showError(res);
+        }
     } catch (e) {
-      showError(t('支付请求失败'));
+        showError(t('支付请求失败'));
     } finally {
-      setPaymentLoading(false);
-    }
-  };
-
-  const getWaffoAmount = async (value) => {
-    if (value === undefined) {
-      value = topUpCount;
-    }
-    setAmountLoading(true);
-    try {
-      const res = await API.post('/api/user/waffo/amount', {
-        amount: parseInt(value),
-      });
-      if (res !== undefined) {
-        const { message, data } = res.data;
-        if (message === 'success') {
-          setAmount(parseFloat(data));
-        } else {
-          setAmount(0);
-          Toast.error({ content: '错误：' + data, id: 'getAmount' });
-        }
-      } else {
-        showError(res);
-      }
-    } catch (err) {
-      // amount fetch failed silently
-    } finally {
-      setAmountLoading(false);
-    }
-  };
-
-  const waffoPancakeTopUp = async () => {
-    const minTopUpValue = Number(waffoPancakeMinTopUp || 1);
-    if (topUpCount < minTopUpValue) {
-      showError(t('充值数量不能小于') + minTopUpValue);
-      return;
-    }
-
-    setPaymentLoading(true);
-    try {
-      const res = await API.post('/api/user/waffo-pancake/pay', {
-        amount: parseInt(topUpCount),
-      });
-      if (res !== undefined) {
-        const { message, data } = res.data;
-        if (message === 'success') {
-          const checkoutUrl = data?.checkout_url || '';
-          if (checkoutUrl) {
-            window.open(checkoutUrl, '_blank');
-          } else {
-            showError(t('支付请求失败'));
-          }
-        } else {
-          const errorMsg =
-            typeof data === 'string' ? data : message || t('支付请求失败');
-          showError(errorMsg);
-        }
-      } else {
-        showError(res);
-      }
-    } catch (e) {
-      showError(t('支付请求失败'));
-    } finally {
-      setPaymentLoading(false);
-    }
-  };
-
-  const getWaffoPancakeAmount = async (value) => {
-    if (value === undefined) {
-      value = topUpCount;
-    }
-    setAmountLoading(true);
-    try {
-      const res = await API.post('/api/user/waffo-pancake/amount', {
-        amount: parseInt(value),
-      });
-      if (res !== undefined) {
-        const { message, data } = res.data;
-        if (message === 'success') {
-          setAmount(parseFloat(data));
-        } else {
-          setAmount(0);
-          Toast.error({ content: '错误：' + data, id: 'getAmount' });
-        }
-      } else {
-        showError(res);
-      }
-    } catch (err) {
-      // amount fetch failed silently
-    } finally {
-      setAmountLoading(false);
+        setPaymentLoading(false);
     }
   };
 
@@ -613,9 +541,12 @@ const TopUp = () => {
               }
 
               if (!method.color) {
-                if (method.type === 'alipay') {
+                if (method.type === 'alipay' || method.type === 'alipay_direct') {
                   method.color = 'rgba(var(--semi-blue-5), 1)';
-                } else if (method.type === 'wxpay') {
+                } else if (
+                  method.type === 'wxpay' ||
+                  method.type === 'wechat_pay'
+                ) {
                   method.color = 'rgba(var(--semi-green-5), 1)';
                 } else if (method.type === 'stripe') {
                   method.color = 'rgba(var(--semi-purple-5), 1)';
@@ -636,26 +567,43 @@ const TopUp = () => {
           const enableStripeTopUp = data.enable_stripe_topup || false;
           const enableOnlineTopUp = data.enable_online_topup || false;
           const enableCreemTopUp = data.enable_creem_topup || false;
+          const enableWeChatTopUp = data.enable_wechat_topup || false;
           const enableWaffoTopUp = data.enable_waffo_topup || false;
-          const enableWaffoPancakeTopUp =
-            data.enable_waffo_pancake_topup || false;
+          const enableAlipayTopUp = data.enable_alipay_topup || false;
+          const isWeChatOnlyTopUp =
+            enableWeChatTopUp &&
+            !enableOnlineTopUp &&
+            !enableStripeTopUp &&
+            !enableWaffoTopUp &&
+            !enableAlipayTopUp;
+          const isAlipayOnlyTopUp =
+            enableAlipayTopUp &&
+            !enableOnlineTopUp &&
+            !enableStripeTopUp &&
+            !enableWaffoTopUp &&
+            !enableWeChatTopUp;
           const minTopUpValue = enableOnlineTopUp
             ? data.min_topup
             : enableStripeTopUp
               ? data.stripe_min_topup
-              : enableWaffoTopUp
-                ? data.waffo_min_topup
-                : enableWaffoPancakeTopUp
-                  ? data.waffo_pancake_min_topup
-                : 1;
+              : enableWeChatTopUp
+                ? data.wechat_min_topup
+                : enableAlipayTopUp
+                  ? data.alipay_min_topup
+                  : enableWaffoTopUp
+                    ? data.waffo_min_topup
+                    : 1;
           setEnableOnlineTopUp(enableOnlineTopUp);
           setEnableStripeTopUp(enableStripeTopUp);
           setEnableCreemTopUp(enableCreemTopUp);
+          setEnableWeChatTopUp(enableWeChatTopUp);
+          setWechatMinTopUp(data.wechat_min_topup || 1);
+          setAlipayMinTopUp(data.alipay_min_topup || 1);
+          setAlipayPayMode(data.alipay_pay_mode || 'page');
           setEnableWaffoTopUp(enableWaffoTopUp);
+          setEnableAlipayTopUp(enableAlipayTopUp);
           setWaffoPayMethods(data.waffo_pay_methods || []);
           setWaffoMinTopUp(data.waffo_min_topup || 1);
-          setEnableWaffoPancakeTopUp(enableWaffoPancakeTopUp);
-          setWaffoPancakeMinTopUp(data.waffo_pancake_min_topup || 1);
           setMinTopUp(minTopUpValue);
           setTopUpCount(minTopUpValue);
 
@@ -673,7 +621,13 @@ const TopUp = () => {
           }
 
           // 初始化显示实付金额
-          getAmount(minTopUpValue);
+          if (isWeChatOnlyTopUp) {
+            getWeChatAmount(minTopUpValue);
+          } else if (isAlipayOnlyTopUp) {
+            getAlipayAmount(minTopUpValue);
+          } else {
+            getAmount(minTopUpValue);
+          }
         } catch (e) {
           setPayMethods([]);
         }
@@ -760,6 +714,14 @@ const TopUp = () => {
   }, []);
 
   useEffect(() => {
+    if (!alipayPayOpen || !alipayPayData.tradeNo) return;
+    const timer = setInterval(() => {
+      queryAlipayTopup();
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [alipayPayOpen, alipayPayData.tradeNo]);
+
+  useEffect(() => {
     if (statusState?.status) {
       // const minTopUpValue = statusState.status.min_topup || 1;
       // setMinTopUp(minTopUpValue);
@@ -772,7 +734,8 @@ const TopUp = () => {
   }, [statusState?.status]);
 
   const renderAmount = () => {
-    return amount + ' ' + t('元');
+    const { symbol } = getCurrencyConfig();
+    return `${symbol}${amount}`;
   };
 
   const getAmount = async (value) => {
@@ -828,6 +791,112 @@ const TopUp = () => {
     }
   };
 
+  const getWeChatAmount = async (value) => {
+    const target = value === undefined ? topUpCount : value;
+    setAmountLoading(true);
+    try {
+      const res = await API.post('/api/user/wechat/amount', {
+        amount: parseFloat(target),
+      });
+      if (res?.data?.success) {
+        setAmount(parseFloat(res.data.data));
+      } else {
+        setAmount(0);
+        showError(res?.data?.data || t('获取金额失败'));
+      }
+    } catch (err) {
+      setAmount(0);
+      showError(t('获取金额失败'));
+    } finally {
+      setAmountLoading(false);
+    }
+  };
+
+  const getAlipayAmount = async (value) => {
+    const target = value === undefined ? topUpCount : value;
+    setAmountLoading(true);
+    try {
+      const res = await API.post('/api/user/alipay/amount', {
+        amount: parseFloat(target),
+      });
+      if (res?.data?.success) {
+        const resolvedAmount = parseFloat(res.data.data);
+        setAmount(resolvedAmount);
+        return resolvedAmount;
+      }
+      setAmount(0);
+      showError(res?.data?.data || t('获取金额失败'));
+      return 0;
+    } catch (err) {
+      setAmount(0);
+      showError(t('获取金额失败'));
+      return 0;
+    } finally {
+      setAmountLoading(false);
+    }
+  };
+
+  const createAlipayTopup = async (payMode, resolvedAmount) => {
+    setAlipayCreating(true);
+    try {
+      const res = await API.post('/api/user/alipay/pay', {
+        amount: parseInt(topUpCount),
+        payment_method: 'alipay_direct',
+        pay_mode: payMode,
+      });
+      if (res.data?.success) {
+        const data = res.data.data || {};
+        setAlipayPayData({
+          tradeNo: data.trade_no || '',
+          qrCode: data.qr_code || '',
+          amount: data.amount_yuan || Number(resolvedAmount || amount || 0).toFixed(2),
+          payMode: data.pay_mode || payMode,
+        });
+        if (data.pay_url) {
+          setAlipayPayOpen(false);
+          window.open(data.pay_url, '_blank');
+          showSuccess(t('已打开支付页面'));
+          return;
+        }
+        setAlipayPayOpen(true);
+      } else {
+        showError(res.data?.data || t('支付请求失败'));
+      }
+    } catch (error) {
+      showError(t('支付请求失败'));
+    } finally {
+      setAlipayCreating(false);
+    }
+  };
+
+  const queryAlipayTopup = async (showPendingMessage = false) => {
+    if (!alipayPayData.tradeNo) return;
+    setAlipayChecking(true);
+    try {
+      const res = await API.post('/api/user/alipay/query', {
+        trade_no: alipayPayData.tradeNo,
+      });
+      if (res.data?.success && res.data?.data?.status === 'success') {
+        showSuccess(t('支付成功'));
+        setAlipayPayOpen(false);
+        await getUserQuota();
+        setOpenHistory(true);
+        return;
+      }
+      if (res.data?.success && res.data?.data?.status === 'pending') {
+        if (showPendingMessage) {
+          showInfo(t('等待支付中'));
+        }
+        return;
+      }
+      showError(res.data?.message || res.data?.data || t('查单失败'));
+    } catch (error) {
+      showError(t('查单失败'));
+    } finally {
+      setAlipayChecking(false);
+    }
+  };
+
   const handleCancel = () => {
     setOpen(false);
   };
@@ -853,6 +922,27 @@ const TopUp = () => {
   const selectPresetAmount = (preset) => {
     setTopUpCount(preset.value);
     setSelectedPreset(preset.value);
+
+    const isWeChatOnlyTopUp =
+      enableWeChatTopUp &&
+      !enableOnlineTopUp &&
+      !enableStripeTopUp &&
+      !enableWaffoTopUp &&
+      !enableAlipayTopUp;
+    if (isWeChatOnlyTopUp) {
+      getWeChatAmount(preset.value);
+      return;
+    }
+    const isAlipayOnlyTopUp =
+      enableAlipayTopUp &&
+      !enableOnlineTopUp &&
+      !enableStripeTopUp &&
+      !enableWaffoTopUp &&
+      !enableWeChatTopUp;
+    if (isAlipayOnlyTopUp) {
+      getAlipayAmount(preset.value);
+      return;
+    }
 
     // 计算实际支付金额，考虑折扣
     const discount = preset.discount || topupInfo.discount[preset.value] || 1.0;
@@ -900,7 +990,7 @@ const TopUp = () => {
         amountLoading={amountLoading}
         renderAmount={renderAmount}
         payWay={payWay}
-        payMethods={confirmPayMethods}
+        payMethods={payMethods}
         amountNumber={amount}
         discountRate={topupInfo?.discount?.[topUpCount] || 1.0}
       />
@@ -910,6 +1000,34 @@ const TopUp = () => {
         visible={openHistory}
         onCancel={handleHistoryCancel}
         t={t}
+      />
+
+      {/* 微信支付二维码模态框 */}
+      <WeChatPayModal
+        visible={wechatPayOpen}
+        codeUrl={wechatPayData.codeUrl}
+        amount={wechatPayData.amount}
+        tradeNo={wechatPayData.tradeNo}
+        onClose={() => setWechatPayOpen(false)}
+        onCopy={async () => {
+          await copy(wechatPayData.codeUrl);
+          showSuccess(t('支付链接已复制到剪切板'));
+        }}
+        onOpenHistory={() => {
+          setWechatPayOpen(false);
+          setOpenHistory(true);
+        }}
+      />
+
+      <AlipayCheckoutModal
+        visible={alipayPayOpen}
+        title={t('支付宝支付')}
+        amount={alipayPayData.amount}
+        tradeNo={alipayPayData.tradeNo}
+        qrCode={alipayPayData.qrCode}
+        checking={alipayChecking}
+        onClose={() => setAlipayPayOpen(false)}
+        onCheck={() => queryAlipayTopup(true)}
       />
 
       {/* Creem 充值确认模态框 */}
@@ -946,11 +1064,15 @@ const TopUp = () => {
           t={t}
           enableOnlineTopUp={enableOnlineTopUp}
           enableStripeTopUp={enableStripeTopUp}
+          enableWeChatTopUp={enableWeChatTopUp}
+          enableAlipayTopUp={enableAlipayTopUp}
+          alipayPayMode={alipayPayMode}
           enableCreemTopUp={enableCreemTopUp}
           creemProducts={creemProducts}
           creemPreTopUp={creemPreTopUp}
           enableWaffoTopUp={enableWaffoTopUp}
-          enableWaffoPancakeTopUp={enableWaffoPancakeTopUp}
+          waffoTopUp={waffoTopUp}
+          waffoPayMethods={waffoPayMethods}
           presetAmounts={presetAmounts}
           selectedPreset={selectedPreset}
           selectPresetAmount={selectPresetAmount}
@@ -960,11 +1082,13 @@ const TopUp = () => {
           minTopUp={minTopUp}
           renderQuotaWithAmount={renderQuotaWithAmount}
           getAmount={getAmount}
+          getWeChatAmount={getWeChatAmount}
+          getAlipayAmount={getAlipayAmount}
           setTopUpCount={setTopUpCount}
           setSelectedPreset={setSelectedPreset}
           renderAmount={renderAmount}
           amountLoading={amountLoading}
-          payMethods={confirmPayMethods}
+          payMethods={payMethods}
           preTopUp={preTopUp}
           paymentLoading={paymentLoading}
           payWay={payWay}
