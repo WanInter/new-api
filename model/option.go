@@ -247,6 +247,10 @@ func UpdateOption(key string, value string) error {
 }
 
 func updateOptionMap(key string, value string) (err error) {
+	if setting.ShouldIgnoreEmptyPaymentSensitiveOption(key, value) {
+		return nil
+	}
+
 	common.OptionMapRWMutex.Lock()
 	defer common.OptionMapRWMutex.Unlock()
 	common.OptionMap[key] = value
