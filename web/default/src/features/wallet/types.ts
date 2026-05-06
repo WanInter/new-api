@@ -101,12 +101,22 @@ export interface TopupInfo {
   enable_online_topup: boolean
   /** Whether Stripe topup is enabled */
   enable_stripe_topup: boolean
+  /** Whether WeChat topup is enabled */
+  enable_wechat_topup?: boolean
+  /** Whether Alipay direct topup is enabled */
+  enable_alipay_topup?: boolean
   /** Available payment methods */
   pay_methods: PaymentMethod[]
   /** Minimum topup amount for online topup */
   min_topup: number
   /** Minimum topup amount for Stripe */
   stripe_min_topup: number
+  /** Minimum topup amount for WeChat */
+  wechat_min_topup?: number
+  /** Minimum topup amount for Alipay */
+  alipay_min_topup?: number
+  /** Alipay payment mode */
+  alipay_pay_mode?: 'page' | 'qr'
   /** Preset amount options */
   amount_options: number[]
   /** Discount rates by amount */

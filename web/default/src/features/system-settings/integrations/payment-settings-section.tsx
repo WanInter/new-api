@@ -15,6 +15,13 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
@@ -91,6 +98,30 @@ const paymentSchema = z.object({
   StripeUnitPrice: z.coerce.number().min(0),
   StripeMinTopUp: z.coerce.number().min(0),
   StripePromotionCodesEnabled: z.boolean(),
+  AlipayEnabled: z.boolean(),
+  AlipaySandbox: z.boolean(),
+  AlipayAppID: z.string(),
+  AlipayPrivateKey: z.string(),
+  AlipayPublicKey: z.string(),
+  AlipayUnitPrice: z.coerce.number().min(0),
+  AlipayMinTopUp: z.coerce.number().min(0),
+  AlipayPayMode: z.enum(['page', 'qr']),
+  AlipayNotifyURL: z.string(),
+  AlipayReturnURL: z.string(),
+  AlipaySubscriptionReturnURL: z.string(),
+  AlipayOrderDescription: z.string(),
+  WeChatPayEnabled: z.boolean(),
+  WeChatPayMchID: z.string(),
+  WeChatPayAppID: z.string(),
+  WeChatPayAPIv3Key: z.string(),
+  WeChatPayPrivateKey: z.string(),
+  WeChatPayMerchantSerialNo: z.string(),
+  WeChatPayPublicKeyID: z.string(),
+  WeChatPayPublicKey: z.string(),
+  WeChatPayUnitPrice: z.coerce.number().min(0),
+  WeChatPayMinTopUp: z.coerce.number().min(0),
+  WeChatPayNotifyUrl: z.string(),
+  WeChatPayOrderDescription: z.string(),
   CreemApiKey: z.string(),
   CreemWebhookSecret: z.string(),
   CreemTestMode: z.boolean(),
@@ -342,6 +373,248 @@ export function PaymentSettingsSection({
     }
   }
 
+  const saveAlipaySettings = async () => {
+    const values = form.getValues()
+    const sanitized = {
+      AlipayEnabled: values.AlipayEnabled as boolean,
+      AlipaySandbox: values.AlipaySandbox as boolean,
+      AlipayAppID: values.AlipayAppID.trim(),
+      AlipayPrivateKey: values.AlipayPrivateKey.trim(),
+      AlipayPublicKey: values.AlipayPublicKey.trim(),
+      AlipayUnitPrice: values.AlipayUnitPrice as number,
+      AlipayMinTopUp: values.AlipayMinTopUp as number,
+      AlipayPayMode: values.AlipayPayMode,
+      AlipayNotifyURL: removeTrailingSlash(values.AlipayNotifyURL),
+      AlipayReturnURL: removeTrailingSlash(values.AlipayReturnURL),
+      AlipaySubscriptionReturnURL: removeTrailingSlash(
+        values.AlipaySubscriptionReturnURL
+      ),
+      AlipayOrderDescription: values.AlipayOrderDescription.trim(),
+    }
+
+    const initial = {
+      AlipayEnabled: initialRef.current.AlipayEnabled,
+      AlipaySandbox: initialRef.current.AlipaySandbox,
+      AlipayAppID: initialRef.current.AlipayAppID.trim(),
+      AlipayPrivateKey: initialRef.current.AlipayPrivateKey.trim(),
+      AlipayPublicKey: initialRef.current.AlipayPublicKey.trim(),
+      AlipayUnitPrice: initialRef.current.AlipayUnitPrice,
+      AlipayMinTopUp: initialRef.current.AlipayMinTopUp,
+      AlipayPayMode: initialRef.current.AlipayPayMode,
+      AlipayNotifyURL: removeTrailingSlash(initialRef.current.AlipayNotifyURL),
+      AlipayReturnURL: removeTrailingSlash(initialRef.current.AlipayReturnURL),
+      AlipaySubscriptionReturnURL: removeTrailingSlash(
+        initialRef.current.AlipaySubscriptionReturnURL
+      ),
+      AlipayOrderDescription: initialRef.current.AlipayOrderDescription.trim(),
+    }
+
+    const updates: Array<{ key: string; value: string | number | boolean }> = []
+
+    if (sanitized.AlipayEnabled !== initial.AlipayEnabled) {
+      updates.push({ key: 'AlipayEnabled', value: sanitized.AlipayEnabled })
+    }
+    if (sanitized.AlipaySandbox !== initial.AlipaySandbox) {
+      updates.push({ key: 'AlipaySandbox', value: sanitized.AlipaySandbox })
+    }
+    if (sanitized.AlipayAppID !== initial.AlipayAppID) {
+      updates.push({ key: 'AlipayAppID', value: sanitized.AlipayAppID })
+    }
+    if (
+      sanitized.AlipayPrivateKey &&
+      sanitized.AlipayPrivateKey !== initial.AlipayPrivateKey
+    ) {
+      updates.push({
+        key: 'AlipayPrivateKey',
+        value: sanitized.AlipayPrivateKey,
+      })
+    }
+    if (
+      sanitized.AlipayPublicKey &&
+      sanitized.AlipayPublicKey !== initial.AlipayPublicKey
+    ) {
+      updates.push({
+        key: 'AlipayPublicKey',
+        value: sanitized.AlipayPublicKey,
+      })
+    }
+    if (sanitized.AlipayUnitPrice !== initial.AlipayUnitPrice) {
+      updates.push({
+        key: 'AlipayUnitPrice',
+        value: sanitized.AlipayUnitPrice,
+      })
+    }
+    if (sanitized.AlipayMinTopUp !== initial.AlipayMinTopUp) {
+      updates.push({
+        key: 'AlipayMinTopUp',
+        value: sanitized.AlipayMinTopUp,
+      })
+    }
+    if (sanitized.AlipayPayMode !== initial.AlipayPayMode) {
+      updates.push({ key: 'AlipayPayMode', value: sanitized.AlipayPayMode })
+    }
+    if (sanitized.AlipayNotifyURL !== initial.AlipayNotifyURL) {
+      updates.push({
+        key: 'AlipayNotifyURL',
+        value: sanitized.AlipayNotifyURL,
+      })
+    }
+    if (sanitized.AlipayReturnURL !== initial.AlipayReturnURL) {
+      updates.push({
+        key: 'AlipayReturnURL',
+        value: sanitized.AlipayReturnURL,
+      })
+    }
+    if (
+      sanitized.AlipaySubscriptionReturnURL !==
+      initial.AlipaySubscriptionReturnURL
+    ) {
+      updates.push({
+        key: 'AlipaySubscriptionReturnURL',
+        value: sanitized.AlipaySubscriptionReturnURL,
+      })
+    }
+    if (sanitized.AlipayOrderDescription !== initial.AlipayOrderDescription) {
+      updates.push({
+        key: 'AlipayOrderDescription',
+        value: sanitized.AlipayOrderDescription,
+      })
+    }
+
+    if (updates.length === 0) {
+      return
+    }
+
+    for (const update of updates) {
+      await updateOption.mutateAsync(update)
+    }
+  }
+
+  const saveWeChatSettings = async () => {
+    const values = form.getValues()
+    const sanitized = {
+      WeChatPayEnabled: values.WeChatPayEnabled as boolean,
+      WeChatPayMchID: values.WeChatPayMchID.trim(),
+      WeChatPayAppID: values.WeChatPayAppID.trim(),
+      WeChatPayAPIv3Key: values.WeChatPayAPIv3Key.trim(),
+      WeChatPayPrivateKey: values.WeChatPayPrivateKey.trim(),
+      WeChatPayMerchantSerialNo: values.WeChatPayMerchantSerialNo.trim(),
+      WeChatPayPublicKeyID: values.WeChatPayPublicKeyID.trim(),
+      WeChatPayPublicKey: values.WeChatPayPublicKey.trim(),
+      WeChatPayUnitPrice: values.WeChatPayUnitPrice as number,
+      WeChatPayMinTopUp: values.WeChatPayMinTopUp as number,
+      WeChatPayNotifyUrl: values.WeChatPayNotifyUrl.trim(),
+      WeChatPayOrderDescription: values.WeChatPayOrderDescription.trim(),
+    }
+
+    const initial = {
+      WeChatPayEnabled: initialRef.current.WeChatPayEnabled,
+      WeChatPayMchID: initialRef.current.WeChatPayMchID.trim(),
+      WeChatPayAppID: initialRef.current.WeChatPayAppID.trim(),
+      WeChatPayAPIv3Key: initialRef.current.WeChatPayAPIv3Key.trim(),
+      WeChatPayPrivateKey: initialRef.current.WeChatPayPrivateKey.trim(),
+      WeChatPayMerchantSerialNo:
+        initialRef.current.WeChatPayMerchantSerialNo.trim(),
+      WeChatPayPublicKeyID: initialRef.current.WeChatPayPublicKeyID.trim(),
+      WeChatPayPublicKey: initialRef.current.WeChatPayPublicKey.trim(),
+      WeChatPayUnitPrice: initialRef.current.WeChatPayUnitPrice,
+      WeChatPayMinTopUp: initialRef.current.WeChatPayMinTopUp,
+      WeChatPayNotifyUrl: initialRef.current.WeChatPayNotifyUrl.trim(),
+      WeChatPayOrderDescription:
+        initialRef.current.WeChatPayOrderDescription.trim(),
+    }
+
+    const updates: Array<{ key: string; value: string | number | boolean }> = []
+
+    if (sanitized.WeChatPayEnabled !== initial.WeChatPayEnabled) {
+      updates.push({
+        key: 'WeChatPayEnabled',
+        value: sanitized.WeChatPayEnabled,
+      })
+    }
+    if (sanitized.WeChatPayMchID !== initial.WeChatPayMchID) {
+      updates.push({ key: 'WeChatPayMchID', value: sanitized.WeChatPayMchID })
+    }
+    if (sanitized.WeChatPayAppID !== initial.WeChatPayAppID) {
+      updates.push({ key: 'WeChatPayAppID', value: sanitized.WeChatPayAppID })
+    }
+    if (
+      sanitized.WeChatPayAPIv3Key &&
+      sanitized.WeChatPayAPIv3Key !== initial.WeChatPayAPIv3Key
+    ) {
+      updates.push({
+        key: 'WeChatPayAPIv3Key',
+        value: sanitized.WeChatPayAPIv3Key,
+      })
+    }
+    if (
+      sanitized.WeChatPayPrivateKey &&
+      sanitized.WeChatPayPrivateKey !== initial.WeChatPayPrivateKey
+    ) {
+      updates.push({
+        key: 'WeChatPayPrivateKey',
+        value: sanitized.WeChatPayPrivateKey,
+      })
+    }
+    if (
+      sanitized.WeChatPayMerchantSerialNo !== initial.WeChatPayMerchantSerialNo
+    ) {
+      updates.push({
+        key: 'WeChatPayMerchantSerialNo',
+        value: sanitized.WeChatPayMerchantSerialNo,
+      })
+    }
+    if (sanitized.WeChatPayPublicKeyID !== initial.WeChatPayPublicKeyID) {
+      updates.push({
+        key: 'WeChatPayPublicKeyID',
+        value: sanitized.WeChatPayPublicKeyID,
+      })
+    }
+    if (
+      sanitized.WeChatPayPublicKey &&
+      sanitized.WeChatPayPublicKey !== initial.WeChatPayPublicKey
+    ) {
+      updates.push({
+        key: 'WeChatPayPublicKey',
+        value: sanitized.WeChatPayPublicKey,
+      })
+    }
+    if (sanitized.WeChatPayUnitPrice !== initial.WeChatPayUnitPrice) {
+      updates.push({
+        key: 'WeChatPayUnitPrice',
+        value: sanitized.WeChatPayUnitPrice,
+      })
+    }
+    if (sanitized.WeChatPayMinTopUp !== initial.WeChatPayMinTopUp) {
+      updates.push({
+        key: 'WeChatPayMinTopUp',
+        value: sanitized.WeChatPayMinTopUp,
+      })
+    }
+    if (sanitized.WeChatPayNotifyUrl !== initial.WeChatPayNotifyUrl) {
+      updates.push({
+        key: 'WeChatPayNotifyUrl',
+        value: sanitized.WeChatPayNotifyUrl,
+      })
+    }
+    if (
+      sanitized.WeChatPayOrderDescription !== initial.WeChatPayOrderDescription
+    ) {
+      updates.push({
+        key: 'WeChatPayOrderDescription',
+        value: sanitized.WeChatPayOrderDescription,
+      })
+    }
+
+    if (updates.length === 0) {
+      return
+    }
+
+    for (const update of updates) {
+      await updateOption.mutateAsync(update)
+    }
+  }
+
   const saveCreemSettings = async () => {
     const values = form.getValues()
     const sanitized = {
@@ -397,144 +670,13 @@ export function PaymentSettingsSection({
     }
   }
 
-  const onSubmit = async (values: PaymentFormValues) => {
-    const sanitized = {
-      PayAddress: removeTrailingSlash(values.PayAddress),
-      EpayId: values.EpayId.trim(),
-      EpayKey: values.EpayKey.trim(),
-      Price: values.Price,
-      MinTopUp: values.MinTopUp,
-      CustomCallbackAddress: removeTrailingSlash(values.CustomCallbackAddress),
-      PayMethods: values.PayMethods.trim(),
-      AmountOptions: values.AmountOptions.trim(),
-      AmountDiscount: values.AmountDiscount.trim(),
-      StripeApiSecret: values.StripeApiSecret.trim(),
-      StripeWebhookSecret: values.StripeWebhookSecret.trim(),
-      StripePriceId: values.StripePriceId.trim(),
-      StripeUnitPrice: values.StripeUnitPrice,
-      StripeMinTopUp: values.StripeMinTopUp,
-      StripePromotionCodesEnabled: values.StripePromotionCodesEnabled,
-    }
-
-    const initial = {
-      PayAddress: removeTrailingSlash(initialRef.current.PayAddress),
-      EpayId: initialRef.current.EpayId.trim(),
-      EpayKey: initialRef.current.EpayKey.trim(),
-      Price: initialRef.current.Price,
-      MinTopUp: initialRef.current.MinTopUp,
-      CustomCallbackAddress: removeTrailingSlash(
-        initialRef.current.CustomCallbackAddress
-      ),
-      PayMethods: initialRef.current.PayMethods.trim(),
-      AmountOptions: initialRef.current.AmountOptions.trim(),
-      AmountDiscount: initialRef.current.AmountDiscount.trim(),
-      StripeApiSecret: initialRef.current.StripeApiSecret.trim(),
-      StripeWebhookSecret: initialRef.current.StripeWebhookSecret.trim(),
-      StripePriceId: initialRef.current.StripePriceId.trim(),
-      StripeUnitPrice: initialRef.current.StripeUnitPrice,
-      StripeMinTopUp: initialRef.current.StripeMinTopUp,
-      StripePromotionCodesEnabled:
-        initialRef.current.StripePromotionCodesEnabled,
-    }
-
-    const updates: Array<{ key: string; value: string | number | boolean }> = []
-
-    if (sanitized.PayAddress !== initial.PayAddress) {
-      updates.push({ key: 'PayAddress', value: sanitized.PayAddress })
-    }
-
-    if (sanitized.EpayId !== initial.EpayId) {
-      updates.push({ key: 'EpayId', value: sanitized.EpayId })
-    }
-
-    if (sanitized.EpayKey && sanitized.EpayKey !== initial.EpayKey) {
-      updates.push({ key: 'EpayKey', value: sanitized.EpayKey })
-    }
-
-    if (sanitized.Price !== initial.Price) {
-      updates.push({ key: 'Price', value: sanitized.Price })
-    }
-
-    if (sanitized.MinTopUp !== initial.MinTopUp) {
-      updates.push({ key: 'MinTopUp', value: sanitized.MinTopUp })
-    }
-
-    if (sanitized.CustomCallbackAddress !== initial.CustomCallbackAddress) {
-      updates.push({
-        key: 'CustomCallbackAddress',
-        value: sanitized.CustomCallbackAddress,
-      })
-    }
-
-    if (
-      normalizeJsonForComparison(sanitized.PayMethods) !==
-      normalizeJsonForComparison(initial.PayMethods)
-    ) {
-      updates.push({ key: 'PayMethods', value: sanitized.PayMethods })
-    }
-
-    if (
-      normalizeJsonForComparison(sanitized.AmountOptions) !==
-      normalizeJsonForComparison(initial.AmountOptions)
-    ) {
-      updates.push({
-        key: 'payment_setting.amount_options',
-        value: sanitized.AmountOptions,
-      })
-    }
-
-    if (
-      normalizeJsonForComparison(sanitized.AmountDiscount) !==
-      normalizeJsonForComparison(initial.AmountDiscount)
-    ) {
-      updates.push({
-        key: 'payment_setting.amount_discount',
-        value: sanitized.AmountDiscount,
-      })
-    }
-
-    if (
-      sanitized.StripeApiSecret &&
-      sanitized.StripeApiSecret !== initial.StripeApiSecret
-    ) {
-      updates.push({ key: 'StripeApiSecret', value: sanitized.StripeApiSecret })
-    }
-
-    if (
-      sanitized.StripeWebhookSecret &&
-      sanitized.StripeWebhookSecret !== initial.StripeWebhookSecret
-    ) {
-      updates.push({
-        key: 'StripeWebhookSecret',
-        value: sanitized.StripeWebhookSecret,
-      })
-    }
-
-    if (sanitized.StripePriceId !== initial.StripePriceId) {
-      updates.push({ key: 'StripePriceId', value: sanitized.StripePriceId })
-    }
-
-    if (sanitized.StripeUnitPrice !== initial.StripeUnitPrice) {
-      updates.push({ key: 'StripeUnitPrice', value: sanitized.StripeUnitPrice })
-    }
-
-    if (sanitized.StripeMinTopUp !== initial.StripeMinTopUp) {
-      updates.push({ key: 'StripeMinTopUp', value: sanitized.StripeMinTopUp })
-    }
-
-    if (
-      sanitized.StripePromotionCodesEnabled !==
-      initial.StripePromotionCodesEnabled
-    ) {
-      updates.push({
-        key: 'StripePromotionCodesEnabled',
-        value: sanitized.StripePromotionCodesEnabled,
-      })
-    }
-
-    for (const update of updates) {
-      await updateOption.mutateAsync(update)
-    }
+  const onSubmit = async () => {
+    await saveGeneralSettings()
+    await saveEpaySettings()
+    await saveStripeSettings()
+    await saveAlipaySettings()
+    await saveWeChatSettings()
+    await saveCreemSettings()
   }
 
   return (
@@ -1112,6 +1254,537 @@ export function PaymentSettingsSection({
               {updateOption.isPending
                 ? t('Saving...')
                 : t('Save Stripe settings')}
+            </Button>
+          </div>
+
+          <Separator />
+
+          <div className='space-y-4'>
+            <div>
+              <h3 className='text-lg font-medium'>{t('Alipay Gateway')}</h3>
+              <p className='text-muted-foreground text-sm'>
+                {t('Configuration for direct Alipay integration')}
+              </p>
+            </div>
+
+            <div className='grid gap-6 md:grid-cols-3'>
+              <FormField
+                control={form.control}
+                name='AlipayEnabled'
+                render={({ field }) => (
+                  <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
+                    <div className='space-y-0.5'>
+                      <FormLabel className='text-base'>
+                        {t('Enable Alipay')}
+                      </FormLabel>
+                      <FormDescription>
+                        {t('Enable official Alipay direct recharge')}
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='AlipaySandbox'
+                render={({ field }) => (
+                  <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
+                    <div className='space-y-0.5'>
+                      <FormLabel className='text-base'>
+                        {t('Sandbox Mode')}
+                      </FormLabel>
+                      <FormDescription>
+                        {t('Use Alipay sandbox for testing')}
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='AlipayAppID'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Alipay AppID')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder='2026xxxxxxxxxxxx'
+                        {...field}
+                        onChange={(event) => field.onChange(event.target.value)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <div className='grid gap-6 md:grid-cols-2'>
+              <FormField
+                control={form.control}
+                name='AlipayPrivateKey'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Application Private Key')}</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        rows={5}
+                        placeholder={t('Leave blank unless updating')}
+                        {...field}
+                        onChange={(event) => field.onChange(event.target.value)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='AlipayPublicKey'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Alipay Public Key')}</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        rows={5}
+                        placeholder={t('Leave blank unless updating')}
+                        {...field}
+                        onChange={(event) => field.onChange(event.target.value)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <div className='grid gap-6 md:grid-cols-3'>
+              <FormField
+                control={form.control}
+                name='AlipayUnitPrice'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Unit price (CNY)')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        step='0.01'
+                        min={0}
+                        value={(field.value ?? 0) as number}
+                        onChange={(event) =>
+                          field.onChange(event.target.valueAsNumber)
+                        }
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='AlipayMinTopUp'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Minimum Top-up')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        step='1'
+                        min={1}
+                        value={(field.value ?? 0) as number}
+                        onChange={(event) =>
+                          field.onChange(event.target.valueAsNumber)
+                        }
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='AlipayPayMode'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Payment Mode')}</FormLabel>
+                    <FormControl>
+                      <Select
+                        value={field.value}
+                        onValueChange={field.onChange}
+                      >
+                        <SelectTrigger className='w-full'>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value='page'>
+                            {t('Checkout Page')}
+                          </SelectItem>
+                          <SelectItem value='qr'>{t('QR Code')}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <div className='grid gap-6 md:grid-cols-3'>
+              <FormField
+                control={form.control}
+                name='AlipayNotifyURL'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Notify URL')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder='https://example.com/api/alipay/notify'
+                        {...field}
+                        onChange={(event) => field.onChange(event.target.value)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='AlipayReturnURL'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Return URL')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder='https://example.com/console/topup'
+                        {...field}
+                        onChange={(event) => field.onChange(event.target.value)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='AlipaySubscriptionReturnURL'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Subscription Return URL')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder='https://example.com/console/topup'
+                        {...field}
+                        onChange={(event) => field.onChange(event.target.value)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <FormField
+              control={form.control}
+              name='AlipayOrderDescription'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Order Description')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder={t('Account top-up')}
+                      {...field}
+                      onChange={(event) => field.onChange(event.target.value)}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <Button
+              type='button'
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                saveAlipaySettings()
+              }}
+              disabled={updateOption.isPending}
+            >
+              {updateOption.isPending
+                ? t('Saving...')
+                : t('Save Alipay settings')}
+            </Button>
+          </div>
+
+          <Separator />
+
+          <div className='space-y-4'>
+            <div>
+              <h3 className='text-lg font-medium'>{t('WeChat Pay Gateway')}</h3>
+              <p className='text-muted-foreground text-sm'>
+                {t('Configuration for WeChat native payment integration')}
+              </p>
+            </div>
+
+            <FormField
+              control={form.control}
+              name='WeChatPayEnabled'
+              render={({ field }) => (
+                <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
+                  <div className='space-y-0.5'>
+                    <FormLabel className='text-base'>
+                      {t('Enable WeChat Pay')}
+                    </FormLabel>
+                    <FormDescription>
+                      {t('Enable WeChat native recharge')}
+                    </FormDescription>
+                  </div>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <div className='grid gap-6 md:grid-cols-4'>
+              <FormField
+                control={form.control}
+                name='WeChatPayMchID'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Merchant ID')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        onChange={(event) => field.onChange(event.target.value)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='WeChatPayAppID'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('App ID')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        onChange={(event) => field.onChange(event.target.value)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='WeChatPayMerchantSerialNo'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Merchant Serial No')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        onChange={(event) => field.onChange(event.target.value)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='WeChatPayPublicKeyID'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Platform Public Key ID')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        onChange={(event) => field.onChange(event.target.value)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <div className='grid gap-6 md:grid-cols-3'>
+              <FormField
+                control={form.control}
+                name='WeChatPayAPIv3Key'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('APIv3 Key')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='password'
+                        autoComplete='new-password'
+                        placeholder={t('Leave blank unless updating')}
+                        {...field}
+                        onChange={(event) => field.onChange(event.target.value)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='WeChatPayPrivateKey'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Merchant Private Key')}</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        rows={5}
+                        placeholder={t('Leave blank unless updating')}
+                        {...field}
+                        onChange={(event) => field.onChange(event.target.value)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='WeChatPayPublicKey'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Platform Public Key')}</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        rows={5}
+                        placeholder={t('Leave blank unless updating')}
+                        {...field}
+                        onChange={(event) => field.onChange(event.target.value)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <div className='grid gap-6 md:grid-cols-3'>
+              <FormField
+                control={form.control}
+                name='WeChatPayUnitPrice'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Unit price (CNY)')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        step='0.01'
+                        min={0}
+                        value={(field.value ?? 0) as number}
+                        onChange={(event) =>
+                          field.onChange(event.target.valueAsNumber)
+                        }
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='WeChatPayMinTopUp'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Minimum Top-up')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        step='1'
+                        min={1}
+                        value={(field.value ?? 0) as number}
+                        onChange={(event) =>
+                          field.onChange(event.target.valueAsNumber)
+                        }
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='WeChatPayNotifyUrl'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Notify URL')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder='https://example.com/api/wechat/notify'
+                        {...field}
+                        onChange={(event) => field.onChange(event.target.value)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+
+            <FormField
+              control={form.control}
+              name='WeChatPayOrderDescription'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Order Description')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder={t('Account top-up')}
+                      {...field}
+                      onChange={(event) => field.onChange(event.target.value)}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <Button
+              type='button'
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                saveWeChatSettings()
+              }}
+              disabled={updateOption.isPending}
+            >
+              {updateOption.isPending
+                ? t('Saving...')
+                : t('Save WeChat settings')}
             </Button>
           </div>
 

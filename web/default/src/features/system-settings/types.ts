@@ -168,6 +168,30 @@ export type IntegrationSettings = {
   StripeUnitPrice: number
   StripeMinTopUp: number
   StripePromotionCodesEnabled: boolean
+  AlipayEnabled: boolean
+  AlipaySandbox: boolean
+  AlipayAppID: string
+  AlipayPrivateKey: string
+  AlipayPublicKey: string
+  AlipayUnitPrice: number
+  AlipayMinTopUp: number
+  AlipayPayMode: string
+  AlipayNotifyURL: string
+  AlipayReturnURL: string
+  AlipaySubscriptionReturnURL: string
+  AlipayOrderDescription: string
+  WeChatPayEnabled: boolean
+  WeChatPayMchID: string
+  WeChatPayAppID: string
+  WeChatPayAPIv3Key: string
+  WeChatPayPrivateKey: string
+  WeChatPayMerchantSerialNo: string
+  WeChatPayPublicKeyID: string
+  WeChatPayPublicKey: string
+  WeChatPayUnitPrice: number
+  WeChatPayMinTopUp: number
+  WeChatPayNotifyUrl: string
+  WeChatPayOrderDescription: string
   CreemApiKey: string
   CreemWebhookSecret: string
   CreemTestMode: boolean

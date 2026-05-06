@@ -76,6 +76,30 @@ export async function calculateStripeAmount(
 }
 
 /**
+ * Calculate payment amount for WeChat payment
+ */
+export async function calculateWeChatAmount(
+  request: AmountRequest
+): Promise<AmountResponse> {
+  const res = await api.post('/api/user/wechat/amount', request, {
+    skipBusinessError: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
+/**
+ * Calculate payment amount for Alipay direct payment
+ */
+export async function calculateAlipayAmount(
+  request: AmountRequest
+): Promise<AmountResponse> {
+  const res = await api.post('/api/user/alipay/amount', request, {
+    skipBusinessError: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
+/**
  * Request regular payment
  */
 export async function requestPayment(
@@ -97,6 +121,42 @@ export async function requestStripePayment(
   request: PaymentRequest
 ): Promise<StripePaymentResponse> {
   const res = await api.post('/api/user/stripe/pay', request, {
+    skipBusinessError: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
+/**
+ * Request WeChat payment
+ */
+export async function requestWeChatPayment(
+  request: PaymentRequest
+): Promise<ApiResponse<Record<string, unknown>>> {
+  const res = await api.post('/api/user/wechat/pay', request, {
+    skipBusinessError: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
+/**
+ * Request Alipay payment
+ */
+export async function requestAlipayPayment(
+  request: PaymentRequest & { pay_mode?: string }
+): Promise<ApiResponse<Record<string, unknown>>> {
+  const res = await api.post('/api/user/alipay/pay', request, {
+    skipBusinessError: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
+/**
+ * Query Alipay payment status
+ */
+export async function queryAlipayPayment(
+  tradeNo: string
+): Promise<ApiResponse<Record<string, unknown>>> {
+  const res = await api.post('/api/user/alipay/query', { trade_no: tradeNo }, {
     skipBusinessError: true,
   } as Record<string, unknown>)
   return res.data

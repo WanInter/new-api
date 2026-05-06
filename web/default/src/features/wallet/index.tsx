@@ -1,14 +1,17 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { getSelf } from '@/lib/api'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { SectionPageLayout } from '@/components/layout'
 import { AffiliateRewardsCard } from './components/affiliate-rewards-card'
+import { AlipayCheckoutDialog } from './components/dialogs/alipay-checkout-dialog'
 import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
 import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
 import { PaymentConfirmDialog } from './components/dialogs/payment-confirm-dialog'
 import { TransferDialog } from './components/dialogs/transfer-dialog'
+import { WeChatPayDialog } from './components/dialogs/wechat-pay-dialog'
 import { RechargeFormCard } from './components/recharge-form-card'
 import { SubscriptionPlansCard } from './components/subscription-plans-card'
 import { WalletStatsCard } from './components/wallet-stats-card'
@@ -16,16 +19,22 @@ import { DEFAULT_DISCOUNT_RATE } from './constants'
 import {
   useTopupInfo,
   usePayment,
+  useAlipayPayment,
   useAffiliate,
   useRedemption,
   useCreemPayment,
+  useWeChatPayment,
+  type AlipayPaymentData,
+  type WeChatPaymentData,
   useWaffoPayment,
   useWaffoPancakePayment,
 } from './hooks'
 import {
   getDefaultPaymentType,
   getMinTopupAmount,
+  isAlipayPayment,
   isWaffoPancakePayment,
+  isWeChatPayment,
 } from './lib'
 import type {
   UserWalletData,
@@ -55,6 +64,12 @@ export function Wallet(props: WalletProps) {
   const [selectedCreemProduct, setSelectedCreemProduct] =
     useState<CreemProduct | null>(null)
   const [showSubscriptionPanel, setShowSubscriptionPanel] = useState(true)
+  const [weChatDialogOpen, setWeChatDialogOpen] = useState(false)
+  const [weChatPaymentData, setWeChatPaymentData] =
+    useState<WeChatPaymentData | null>(null)
+  const [alipayDialogOpen, setAlipayDialogOpen] = useState(false)
+  const [alipayPaymentData, setAlipayPaymentData] =
+    useState<AlipayPaymentData | null>(null)
 
   const { status } = useStatus()
   const { currency } = useSystemConfig()
@@ -81,6 +96,14 @@ export function Wallet(props: WalletProps) {
   } = useAffiliate()
   const { redeeming, redeemCode } = useRedemption()
   const { processing: creemProcessing, processCreemPayment } = useCreemPayment()
+  const { processing: weChatProcessing, processWeChatPayment } =
+    useWeChatPayment()
+  const {
+    creating: alipayCreating,
+    checking: alipayChecking,
+    createAlipayPayment,
+    checkAlipayPayment,
+  } = useAlipayPayment()
   const { processWaffoPayment } = useWaffoPayment()
   const { processing: pancakeProcessing, processWaffoPancakePayment } =
     useWaffoPancakePayment()
@@ -167,6 +190,46 @@ export function Wallet(props: WalletProps) {
   const handlePaymentConfirm = async () => {
     if (!selectedPaymentMethod) return
 
+    if (isWeChatPayment(selectedPaymentMethod.type)) {
+      const result = await processWeChatPayment(topupAmount)
+      if (result) {
+        setConfirmDialogOpen(false)
+        setWeChatPaymentData(result)
+        setWeChatDialogOpen(true)
+      }
+      return
+    }
+
+    if (isAlipayPayment(selectedPaymentMethod.type)) {
+      const result = await createAlipayPayment(
+        topupAmount,
+        topupInfo?.alipay_pay_mode || 'page'
+      )
+      if (!result) {
+        return
+      }
+
+      setConfirmDialogOpen(false)
+
+      if (result.payMode === 'page' && result.payUrl) {
+        try {
+          const url = new URL(result.payUrl)
+          if (url.protocol === 'http:' || url.protocol === 'https:') {
+            window.open(result.payUrl, '_blank', 'noopener,noreferrer')
+            toast.success(t('Redirecting to payment page...'))
+            return
+          }
+        } catch {
+          toast.error(t('Invalid payment redirect URL'))
+          return
+        }
+      }
+
+      setAlipayPaymentData(result)
+      setAlipayDialogOpen(true)
+      return
+    }
+
     const isPancake = isWaffoPancakePayment(selectedPaymentMethod.type)
     const success = isPancake
       ? await processWaffoPancakePayment(topupAmount)
@@ -175,6 +238,24 @@ export function Wallet(props: WalletProps) {
     if (success) {
       setConfirmDialogOpen(false)
       await fetchUser()
+    }
+  }
+
+  const handleAlipayStatusCheck = async () => {
+    if (!alipayPaymentData?.tradeNo) {
+      return
+    }
+
+    const status = await checkAlipayPayment(alipayPaymentData.tradeNo)
+    if (status === 'success') {
+      toast.success(t('Payment successful'))
+      setAlipayDialogOpen(false)
+      await fetchUser()
+      return
+    }
+
+    if (status === 'pending') {
+      toast.info(t('Payment is still pending'))
     }
   }
 
@@ -315,7 +396,9 @@ export function Wallet(props: WalletProps) {
         paymentAmount={paymentAmount}
         paymentMethod={selectedPaymentMethod}
         calculating={calculating}
-        processing={processing || pancakeProcessing}
+        processing={
+          processing || pancakeProcessing || weChatProcessing || alipayCreating
+        }
         discountRate={getDiscountRate()}
         usdExchangeRate={effectiveUsdExchangeRate}
       />
@@ -339,6 +422,25 @@ export function Wallet(props: WalletProps) {
         onConfirm={handleCreemConfirm}
         product={selectedCreemProduct}
         processing={creemProcessing}
+      />
+
+      <WeChatPayDialog
+        open={weChatDialogOpen}
+        onOpenChange={setWeChatDialogOpen}
+        codeUrl={weChatPaymentData?.codeUrl || ''}
+        amount={weChatPaymentData?.amount || ''}
+        tradeNo={weChatPaymentData?.tradeNo || ''}
+        onOpenBilling={() => setBillingDialogOpen(true)}
+      />
+
+      <AlipayCheckoutDialog
+        open={alipayDialogOpen}
+        onOpenChange={setAlipayDialogOpen}
+        amount={alipayPaymentData?.amount || ''}
+        tradeNo={alipayPaymentData?.tradeNo || ''}
+        qrCode={alipayPaymentData?.qrCode}
+        checking={alipayChecking}
+        onCheck={handleAlipayStatusCheck}
       />
     </>
   )

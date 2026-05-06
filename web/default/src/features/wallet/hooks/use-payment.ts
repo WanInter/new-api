@@ -3,14 +3,18 @@ import i18next from 'i18next'
 import { toast } from 'sonner'
 import {
   calculateAmount,
+  calculateAlipayAmount,
   calculateStripeAmount,
+  calculateWeChatAmount,
   calculateWaffoPancakeAmount,
   requestPayment,
   requestStripePayment,
   isApiSuccess,
 } from '../api'
 import {
+  isAlipayPayment,
   isStripePayment,
+  isWeChatPayment,
   isWaffoPancakePayment,
   submitPaymentForm,
 } from '../lib'
@@ -32,11 +36,17 @@ export function usePayment() {
 
         const isStripe = isStripePayment(paymentType)
         const isPancake = isWaffoPancakePayment(paymentType)
+        const isAlipay = isAlipayPayment(paymentType)
+        const isWeChat = isWeChatPayment(paymentType)
         const response = isStripe
           ? await calculateStripeAmount({ amount: topupAmount })
           : isPancake
             ? await calculateWaffoPancakeAmount({ amount: topupAmount })
-            : await calculateAmount({ amount: topupAmount })
+            : isAlipay
+              ? await calculateAlipayAmount({ amount: topupAmount })
+              : isWeChat
+                ? await calculateWeChatAmount({ amount: topupAmount })
+                : await calculateAmount({ amount: topupAmount })
 
         if (isApiSuccess(response) && response.data) {
           const calculatedAmount = parseFloat(response.data)
@@ -64,6 +74,8 @@ export function usePayment() {
         setProcessing(true)
 
         const isStripe = isStripePayment(paymentType)
+        const isDedicated =
+          isAlipayPayment(paymentType) || isWeChatPayment(paymentType)
         const amount = Math.floor(topupAmount)
 
         const response = isStripe
@@ -88,8 +100,8 @@ export function usePayment() {
           return true
         }
 
-        // Handle non-Stripe payment
-        if (!isStripe && response.data) {
+        // Handle generic form-based payment
+        if (!isStripe && !isDedicated && response.data) {
           const url = (response as unknown as { url?: string }).url
           if (url) {
             submitPaymentForm(url, response.data)

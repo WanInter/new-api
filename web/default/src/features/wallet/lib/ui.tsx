@@ -2,6 +2,7 @@ import { type ReactNode } from 'react'
 import { CreditCard, Landmark } from 'lucide-react'
 import { SiAlipay, SiWechat, SiStripe } from 'react-icons/si'
 import { PAYMENT_TYPES, PAYMENT_ICON_COLORS } from '../constants'
+import { isAlipayPayment, isWeChatPayment } from './payment'
 
 // ============================================================================
 // UI Helper Functions
@@ -68,6 +69,7 @@ export function getPaymentIcon(
 
   switch (paymentType) {
     case PAYMENT_TYPES.ALIPAY:
+    case 'alipay_direct':
       return (
         <SiAlipay
           className={className}
@@ -75,6 +77,7 @@ export function getPaymentIcon(
         />
       )
     case PAYMENT_TYPES.WECHAT:
+    case 'wechat_pay':
       return (
         <SiWechat
           className={className}
@@ -110,6 +113,24 @@ export function getPaymentIcon(
         />
       )
     default:
+      if (isAlipayPayment(paymentType)) {
+        return (
+          <SiAlipay
+            className={className}
+            style={{ color: PAYMENT_ICON_COLORS[PAYMENT_TYPES.ALIPAY] }}
+          />
+        )
+      }
+
+      if (isWeChatPayment(paymentType)) {
+        return (
+          <SiWechat
+            className={className}
+            style={{ color: PAYMENT_ICON_COLORS[PAYMENT_TYPES.WECHAT] }}
+          />
+        )
+      }
+
       return <CreditCard className={className} />
   }
 }
