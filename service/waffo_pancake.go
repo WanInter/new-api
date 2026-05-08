@@ -63,6 +63,11 @@ type waffoPancakeCreateSessionResponse struct {
 	Errors []waffoPancakeAPIError       `json:"errors"`
 }
 
+type WaffoPancakeTopUpProviderPayload struct {
+	OrderID   string `json:"waffo_pancake_order_id"`
+	SessionID string `json:"waffo_pancake_session_id"`
+}
+
 type waffoPancakeWebhookData struct {
 	ID          string          `json:"id"`
 	OrderID     string          `json:"orderId"`
@@ -170,10 +175,40 @@ func ResolveWaffoPancakeTradeNo(event *waffoPancakeWebhookEvent) (string, error)
 		if topUp != nil && topUp.PaymentMethod == model.PaymentMethodWaffoPancake {
 			return tradeNo, nil
 		}
+		mappedTopUp, err := findWaffoPancakeTopUpByProviderOrderID(tradeNo)
+		if err == nil {
+			return mappedTopUp.TradeNo, nil
+		}
 		return "", fmt.Errorf("waffo pancake order not found for webhook orderId=%s", tradeNo)
 	}
 
 	return "", fmt.Errorf("missing webhook orderId")
+}
+
+func findWaffoPancakeTopUpByProviderOrderID(providerOrderID string) (*model.TopUp, error) {
+	const maxProviderPayloadCandidates = 20
+
+	var candidates []model.TopUp
+	err := model.DB.
+		Where("payment_method = ? AND provider_payload LIKE ?", model.PaymentMethodWaffoPancake, "%"+providerOrderID+"%").
+		Order("id desc").
+		Limit(maxProviderPayloadCandidates).
+		Find(&candidates).Error
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range candidates {
+		var payload WaffoPancakeTopUpProviderPayload
+		if err := common.Unmarshal([]byte(candidates[i].ProviderPayload), &payload); err != nil {
+			continue
+		}
+		if payload.OrderID == providerOrderID {
+			return &candidates[i], nil
+		}
+	}
+
+	return nil, fmt.Errorf("waffo pancake provider order not mapped")
 }
 
 func normalizeRSAPrivateKey(raw string) (string, error) {

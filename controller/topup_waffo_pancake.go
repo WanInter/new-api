@@ -196,6 +196,33 @@ func RequestWaffoPancakePay(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "拉起支付失败"})
 		return
 	}
+
+	providerPayload, err := common.Marshal(service.WaffoPancakeTopUpProviderPayload{
+		OrderID:   strings.TrimSpace(session.OrderID),
+		SessionID: strings.TrimSpace(session.SessionID),
+	})
+	if err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 创建订单映射失败 user_id=%d trade_no=%s session_id=%s order_id=%s error=%q", id, tradeNo, session.SessionID, session.OrderID, err.Error()))
+		topUp.Status = common.TopUpStatusFailed
+		_ = topUp.Update()
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "创建订单映射失败"})
+		return
+	}
+	if strings.TrimSpace(session.OrderID) == "" {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 创建订单缺少上游订单号 user_id=%d trade_no=%s session_id=%s", id, tradeNo, session.SessionID))
+		topUp.Status = common.TopUpStatusFailed
+		_ = topUp.Update()
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "创建订单缺少上游订单号"})
+		return
+	}
+	topUp.ProviderPayload = string(providerPayload)
+	if err := topUp.Update(); err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 保存订单映射失败 user_id=%d trade_no=%s session_id=%s order_id=%s error=%q", id, tradeNo, session.SessionID, session.OrderID, err.Error()))
+		topUp.Status = common.TopUpStatusFailed
+		_ = topUp.Update()
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "保存订单映射失败"})
+		return
+	}
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo Pancake 充值订单创建成功 user_id=%d trade_no=%s session_id=%s amount=%d money=%.2f", id, tradeNo, session.SessionID, req.Amount, payMoney))
 
 	c.JSON(http.StatusOK, gin.H{
