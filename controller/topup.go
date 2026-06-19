@@ -52,8 +52,15 @@ func clonePayMethods(methods []map[string]string) []map[string]string {
 }
 
 func GetTopUpInfo(c *gin.Context) {
-	// 获取支付方式
+	complianceConfirmed := operation_setting.IsPaymentComplianceConfirmed()
+
+	// 获取支付方式。Clone first so dynamic filtering/appending below never mutates
+	// operation_setting.PayMethods in-place.
 	payMethods := clonePayMethods(operation_setting.PayMethods)
+	if !complianceConfirmed {
+		payMethods = []map[string]string{}
+	}
+
 	wechatMinTopup := getWeChatPayMinTopup()
 	alipayMinTopup := getAlipayMinTopup()
 	alipayConfigured := isAlipayConfigured()
@@ -64,7 +71,7 @@ func GetTopUpInfo(c *gin.Context) {
 			if method["type"] == "alipay" {
 				continue
 			}
-			if method["type"] == "alipay_direct" {
+			if method["type"] == model.PaymentMethodAlipayDirect {
 				hasAlipayDirect = true
 			}
 			filtered = append(filtered, method)
@@ -73,7 +80,7 @@ func GetTopUpInfo(c *gin.Context) {
 		if !hasAlipayDirect {
 			payMethods = append(payMethods, map[string]string{
 				"name":      "支付宝",
-				"type":      "alipay_direct",
+				"type":      model.PaymentMethodAlipayDirect,
 				"color":     "rgba(var(--semi-blue-5), 1)",
 				"min_topup": strconv.FormatInt(alipayMinTopup, 10),
 			})
@@ -85,7 +92,7 @@ func GetTopUpInfo(c *gin.Context) {
 		// 检查是否已经包含 Stripe
 		hasStripe := false
 		for _, method := range payMethods {
-			if method["type"] == "stripe" {
+			if method["type"] == model.PaymentMethodStripe {
 				hasStripe = true
 				break
 			}
@@ -94,11 +101,32 @@ func GetTopUpInfo(c *gin.Context) {
 		if !hasStripe {
 			stripeMethod := map[string]string{
 				"name":      "Stripe",
-				"type":      "stripe",
+				"type":      model.PaymentMethodStripe,
 				"color":     "rgba(var(--semi-purple-5), 1)",
 				"min_topup": strconv.Itoa(setting.StripeMinTopUp),
 			}
 			payMethods = append(payMethods, stripeMethod)
+		}
+	}
+
+	// Waffo Pancake displayed above the legacy Waffo gateway.
+	enableWaffoPancake := isWaffoPancakeTopUpEnabled()
+	if enableWaffoPancake {
+		hasWaffoPancake := false
+		for _, method := range payMethods {
+			if method["type"] == model.PaymentMethodWaffoPancake {
+				hasWaffoPancake = true
+				break
+			}
+		}
+
+		if !hasWaffoPancake {
+			payMethods = append(payMethods, map[string]string{
+				"name":      "Waffo Pancake",
+				"type":      model.PaymentMethodWaffoPancake,
+				"color":     "rgba(var(--semi-orange-5), 1)",
+				"min_topup": strconv.Itoa(setting.WaffoPancakeMinTopUp),
+			})
 		}
 	}
 
@@ -127,7 +155,7 @@ func GetTopUpInfo(c *gin.Context) {
 	if isWeChatPayConfigured() {
 		hasWeChatPay := false
 		for _, method := range payMethods {
-			if method["type"] == "wechat_pay" {
+			if method["type"] == model.PaymentMethodWeChatPay {
 				hasWeChatPay = true
 				break
 			}
@@ -135,41 +163,24 @@ func GetTopUpInfo(c *gin.Context) {
 		if !hasWeChatPay {
 			payMethods = append(payMethods, map[string]string{
 				"name":      "微信支付",
-				"type":      "wechat_pay",
+				"type":      model.PaymentMethodWeChatPay,
 				"color":     "rgba(var(--semi-green-5), 1)",
 				"min_topup": strconv.FormatInt(wechatMinTopup, 10),
 			})
 		}
 	}
 
-	enableWaffoPancake := isWaffoPancakeTopUpEnabled()
-	if enableWaffoPancake {
-		hasWaffoPancake := false
-		for _, method := range payMethods {
-			if method["type"] == model.PaymentMethodWaffoPancake {
-				hasWaffoPancake = true
-				break
-			}
-		}
-
-		if !hasWaffoPancake {
-			payMethods = append(payMethods, map[string]string{
-				"name":      "Waffo Pancake",
-				"type":      model.PaymentMethodWaffoPancake,
-				"color":     "rgba(var(--semi-orange-5), 1)",
-				"min_topup": strconv.Itoa(setting.WaffoPancakeMinTopUp),
-			})
-		}
-	}
-
 	data := gin.H{
-		"enable_online_topup":        isEpayTopUpEnabled(),
-		"enable_stripe_topup":        isStripeTopUpEnabled(),
-		"enable_creem_topup":         isCreemTopUpEnabled(),
-		"enable_waffo_topup":         enableWaffo,
-		"enable_waffo_pancake_topup": enableWaffoPancake,
-		"enable_wechat_topup":        isWeChatPayConfigured(),
-		"enable_alipay_topup":        alipayConfigured,
+		"enable_online_topup":              isEpayTopUpEnabled(),
+		"enable_stripe_topup":              isStripeTopUpEnabled(),
+		"enable_creem_topup":               isCreemTopUpEnabled(),
+		"enable_waffo_topup":               enableWaffo,
+		"enable_waffo_pancake_topup":       enableWaffoPancake,
+		"enable_wechat_topup":              isWeChatPayConfigured(),
+		"enable_alipay_topup":              alipayConfigured,
+		"enable_redemption":                complianceConfirmed,
+		"payment_compliance_confirmed":     complianceConfirmed,
+		"payment_compliance_terms_version": operation_setting.CurrentComplianceTermsVersion,
 		"waffo_pay_methods": func() interface{} {
 			if enableWaffo {
 				return setting.GetWaffoPayMethods()

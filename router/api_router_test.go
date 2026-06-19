@@ -26,7 +26,7 @@ func TestSetApiRouterRegistersWaffoPancakeRoutes(t *testing.T) {
 		method string
 		path   string
 	}{
-		{method: "POST", path: "/api/waffo-pancake/webhook"},
+		{method: "POST", path: "/api/waffo-pancake/webhook/:env"},
 		{method: "POST", path: "/api/user/waffo-pancake/amount"},
 		{method: "POST", path: "/api/user/waffo-pancake/pay"},
 	}
