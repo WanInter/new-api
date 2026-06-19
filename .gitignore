@@ -37,3 +37,8 @@ token_estimator_test.go
 skills-lock.json
 密钥20260424121137
 .playwright-mcp
+
+# Local deployment/handoff files
+SERVER_INFO.md
+scripts/deploy-prod.sh
+scripts/build-image-k8s.sh
