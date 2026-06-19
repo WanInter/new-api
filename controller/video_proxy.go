@@ -107,11 +107,15 @@ func VideoProxy(c *gin.Context) {
 			return
 		}
 	case constant.ChannelTypeOpenAI, constant.ChannelTypeSora:
-		videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
-		req.Header.Set("Authorization", "Bearer "+channel.Key)
+		if url := extractStoredVideoURL(task); url != "" {
+			videoURL = url
+		} else {
+			videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
+			req.Header.Set("Authorization", "Bearer "+channel.Key)
+		}
 	default:
 		// Video URL is stored in PrivateData.ResultURL (fallback to FailReason for old data)
-		videoURL = task.GetResultURL()
+		videoURL = extractStoredVideoURL(task)
 	}
 
 	videoURL = strings.TrimSpace(videoURL)
@@ -169,6 +173,59 @@ func VideoProxy(c *gin.Context) {
 	if _, err = io.Copy(c.Writer, resp.Body); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to stream video content: %s", err.Error()))
 	}
+}
+
+func extractStoredVideoURL(task *model.Task) string {
+	if task == nil {
+		return ""
+	}
+	if url := extractVideoURLFromTaskData(task); url != "" {
+		return url
+	}
+	if url := strings.TrimSpace(task.GetResultURL()); url != "" && !isTaskProxyContentURL(url, task.TaskID) {
+		return url
+	}
+	return ""
+}
+
+func extractVideoURLFromTaskData(task *model.Task) string {
+	if task == nil || len(task.Data) == 0 {
+		return ""
+	}
+	var payload map[string]any
+	if err := common.Unmarshal(task.Data, &payload); err != nil {
+		return ""
+	}
+	return extractVideoURLFromMap(payload)
+}
+
+func extractVideoURLFromMap(payload map[string]any) string {
+	if payload == nil {
+		return ""
+	}
+	for _, key := range []string{"video_url", "url", "uri"} {
+		if url, ok := payload[key].(string); ok && strings.TrimSpace(url) != "" {
+			return strings.TrimSpace(url)
+		}
+	}
+	if metadata, ok := payload["metadata"].(map[string]any); ok {
+		if url := extractVideoURLFromMap(metadata); url != "" {
+			return url
+		}
+		if urls, ok := metadata["result_urls"].([]any); ok {
+			for _, item := range urls {
+				if url, ok := item.(string); ok && strings.TrimSpace(url) != "" {
+					return strings.TrimSpace(url)
+				}
+			}
+		}
+	}
+	if response, ok := payload["response"].(map[string]any); ok {
+		if url := extractVideoURLFromMap(response); url != "" {
+			return url
+		}
+	}
+	return ""
 }
 
 func writeVideoDataURL(c *gin.Context, dataURL string) error {

@@ -35,7 +35,7 @@ import {
 import { Coins } from 'lucide-react';
 import { IconSearch } from '@douyinfe/semi-icons';
 import { API, timestamp2string } from '../../../helpers';
-import { getCurrencyConfig } from '../../../helpers/render';
+import { getQuotaPerUnit, renderQuota } from '../../../helpers/render';
 import { isAdmin } from '../../../helpers/utils';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
 const { Text } = Typography;
@@ -59,6 +59,37 @@ const PAYMENT_METHOD_MAP = {
   wechat_pay: '微信支付',
 };
 
+const getPaymentCurrencySymbol = (record) => {
+  const provider = record?.payment_provider || '';
+  const method = record?.payment_method || '';
+  if (
+    provider === 'stripe' ||
+    method === 'stripe' ||
+    provider === 'waffo' ||
+    method === 'waffo'
+  ) {
+    return '$';
+  }
+  return '¥';
+};
+
+const formatPaymentMoney = (money, record) => {
+  const value = Number(money || 0);
+  if (!Number.isFinite(value)) {
+    return '-';
+  }
+  return `${getPaymentCurrencySymbol(record)}${value.toFixed(2)}`;
+};
+
+const formatTopupQuotaAmount = (amount) => {
+  const value = Number(amount || 0);
+  if (!Number.isFinite(value)) {
+    return '-';
+  }
+  const quotaPerUnit = getQuotaPerUnit() || 1;
+  return renderQuota(value * quotaPerUnit);
+};
+
 const TopupHistoryModal = ({ visible, onCancel, t }) => {
   const [loading, setLoading] = useState(false);
   const [topups, setTopups] = useState([]);
@@ -67,7 +98,6 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
   const [pageSize, setPageSize] = useState(10);
   const [keyword, setKeyword] = useState('');
   const isMobile = useIsMobile();
-  const { symbol } = getCurrencyConfig();
 
   const loadTopups = async (currentPage, currentPageSize) => {
     setLoading(true);
@@ -192,7 +222,7 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
           return (
             <span className='flex items-center gap-1'>
               <Coins size={16} />
-              <Text>{amount}</Text>
+              <Text>{formatTopupQuotaAmount(amount)}</Text>
             </span>
           );
         },
@@ -201,7 +231,9 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
         title: t('支付金额'),
         dataIndex: 'money',
         key: 'money',
-        render: (money) => <Text type='danger'>{symbol}{money.toFixed(2)}</Text>,
+        render: (money, record) => (
+          <Text type='danger'>{formatPaymentMoney(money, record)}</Text>
+        ),
       },
       {
         title: t('状态'),
@@ -221,14 +253,14 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
           if (record.status === 'pending') {
             actions.push(
               <Button
-                key="complete"
+                key='complete'
                 size='small'
                 type='primary'
                 theme='outline'
                 onClick={() => confirmAdminComplete(record.trade_no)}
               >
                 {t('补单')}
-              </Button>
+              </Button>,
             );
           }
           return actions.length > 0 ? <>{actions}</> : null;

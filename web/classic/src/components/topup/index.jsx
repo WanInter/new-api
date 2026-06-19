@@ -164,6 +164,12 @@ const TopUp = () => {
     if (payment === 'waffo_pancake') {
       return getWaffoPancakeAmount(value);
     }
+    if (payment === 'alipay_direct') {
+      return getDirectPaymentAmount('/api/user/alipay/amount', value);
+    }
+    if (payment === 'wechat_pay') {
+      return getDirectPaymentAmount('/api/user/wechat/amount', value);
+    }
     if (typeof payment === 'string' && payment.startsWith('waffo:')) {
       return getWaffoAmount(value);
     }
@@ -294,6 +300,14 @@ const TopUp = () => {
       if (amount === 0) {
         await getStripeAmount();
       }
+    } else if (payWay === 'alipay_direct') {
+      if (amount === 0) {
+        await getDirectPaymentAmount('/api/user/alipay/amount');
+      }
+    } else if (payWay === 'wechat_pay') {
+      if (amount === 0) {
+        await getDirectPaymentAmount('/api/user/wechat/amount');
+      }
     } else {
       // 普通支付处理
       if (amount === 0) {
@@ -314,6 +328,16 @@ const TopUp = () => {
           amount: parseInt(topUpCount),
           payment_method: 'stripe',
         });
+      } else if (payWay === 'alipay_direct') {
+        res = await API.post('/api/user/alipay/pay', {
+          amount: parseInt(topUpCount),
+          payment_method: 'alipay_direct',
+        });
+      } else if (payWay === 'wechat_pay') {
+        res = await API.post('/api/user/wechat/pay', {
+          amount: parseInt(topUpCount),
+          payment_method: 'wechat_pay',
+        });
       } else {
         // 普通支付请求
         res = await API.post('/api/user/pay', {
@@ -323,11 +347,29 @@ const TopUp = () => {
       }
 
       if (res !== undefined) {
-        const { message, data } = res.data;
-        if (message === 'success') {
+        const { success, message, data } = res.data;
+        if (success || message === 'success') {
           if (payWay === 'stripe') {
             // Stripe 支付回调处理
             window.open(data.pay_link, '_blank');
+          } else if (payWay === 'alipay_direct') {
+            if (data.pay_url) {
+              window.open(data.pay_url, '_blank');
+            } else if (data.qr_code) {
+              window.open(data.qr_code, '_blank');
+            } else {
+              showError(t('支付宝返回信息异常'));
+            }
+          } else if (payWay === 'wechat_pay') {
+            if (data.pay_url) {
+              window.open(data.pay_url, '_blank');
+            } else if (data.code_url) {
+              window.open(data.code_url, '_blank');
+            } else if (data.qr_code) {
+              window.open(data.qr_code, '_blank');
+            } else {
+              showError(t('微信支付返回信息异常'));
+            }
           } else {
             // 普通支付表单提交
             let params = data;
@@ -394,8 +436,8 @@ const TopUp = () => {
         payment_method: 'creem',
       });
       if (res !== undefined) {
-        const { message, data } = res.data;
-        if (message === 'success') {
+        const { success, message, data } = res.data;
+        if (success || message === 'success') {
           processCreemCallback(data);
         } else {
           const errorMsg =
@@ -454,8 +496,8 @@ const TopUp = () => {
         amount: parseInt(value),
       });
       if (res !== undefined) {
-        const { message, data } = res.data;
-        if (message === 'success') {
+        const { success, message, data } = res.data;
+        if (success || message === 'success') {
           setAmount(parseFloat(data));
         } else {
           setAmount(0);
@@ -484,8 +526,8 @@ const TopUp = () => {
         amount: parseInt(topUpCount),
       });
       if (res !== undefined) {
-        const { message, data } = res.data;
-        if (message === 'success') {
+        const { success, message, data } = res.data;
+        if (success || message === 'success') {
           const checkoutUrl = data?.checkout_url || '';
           if (checkoutUrl && isSafeHttpCheckoutUrl(checkoutUrl)) {
             // In-tab redirect (not window.open) — popup blocker fires after
@@ -521,8 +563,8 @@ const TopUp = () => {
         amount: parseInt(value),
       });
       if (res !== undefined) {
-        const { message, data } = res.data;
-        if (message === 'success') {
+        const { success, message, data } = res.data;
+        if (success || message === 'success') {
           setAmount(parseFloat(data));
         } else {
           setAmount(0);
@@ -828,6 +870,33 @@ const TopUp = () => {
     return amount + ' ' + t('元');
   };
 
+  const getDirectPaymentAmount = async (endpoint, value) => {
+    if (value === undefined) {
+      value = topUpCount;
+    }
+    setAmountLoading(true);
+    try {
+      const res = await API.post(endpoint, {
+        amount: parseFloat(value),
+      });
+      if (res !== undefined) {
+        const { success, message, data } = res.data;
+        if (success || message === 'success') {
+          setAmount(parseFloat(data));
+        } else {
+          setAmount(0);
+          Toast.error({ content: '错误：' + data, id: 'getDirectPaymentAmount' });
+        }
+      } else {
+        showError(res);
+      }
+    } catch (err) {
+      // amount fetch failed silently
+    } finally {
+      setAmountLoading(false);
+    }
+  };
+
   const getAmount = async (value) => {
     if (value === undefined) {
       value = topUpCount;
@@ -838,8 +907,8 @@ const TopUp = () => {
         amount: parseFloat(value),
       });
       if (res !== undefined) {
-        const { message, data } = res.data;
-        if (message === 'success') {
+        const { success, message, data } = res.data;
+        if (success || message === 'success') {
           setAmount(parseFloat(data));
         } else {
           setAmount(0);
@@ -864,8 +933,8 @@ const TopUp = () => {
         amount: parseFloat(value),
       });
       if (res !== undefined) {
-        const { message, data } = res.data;
-        if (message === 'success') {
+        const { success, message, data } = res.data;
+        if (success || message === 'success') {
           setAmount(parseFloat(data));
         } else {
           setAmount(0);

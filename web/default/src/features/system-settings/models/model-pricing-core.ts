@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import * as z from 'zod'
 import { combineBillingExpr } from '@/features/pricing/lib/billing-expr'
+import { getCurrencyDisplay } from '@/lib/currency'
 import { formatPricingNumber } from './pricing-format'
 
 export const createModelPricingSchema = (t: (key: string) => string) =>
@@ -154,10 +155,46 @@ export function toNumberOrNull(value: unknown): number | null {
   return Number.isFinite(num) ? num : null
 }
 
-function ratioToBasePrice(ratio: unknown): string {
+function getPricingUnits() {
+  const { meta } = getCurrencyDisplay()
+
+  return {
+    prefix: meta.kind === 'tokens' ? '' : meta.symbol,
+    suffix: meta.kind === 'tokens' ? ' credits/1M' : '/1M',
+  }
+}
+
+export function systemPriceToDisplayAmount(price: unknown): string {
+  const num = toNumberOrNull(price)
+  if (num === null) return ''
+  return formatPricingNumber(num)
+}
+
+export function displayAmountToSystemPrice(price: unknown): string {
+  const num = toNumberOrNull(price)
+  if (num === null) return ''
+  return formatPricingNumber(num)
+}
+
+export function ratioToDisplayPrice(ratio: unknown): string {
   const num = toNumberOrNull(ratio)
   if (num === null) return ''
-  return formatPricingNumber(num * 2)
+  return formatPricingNumber(num * 1_000_000)
+}
+
+export function displayPriceToRatio(price: unknown): string {
+  const num = toNumberOrNull(price)
+  if (num === null) return ''
+  return formatPricingNumber(num / 1_000_000)
+}
+
+export function getPricingUnitAffixes() {
+  const { prefix, suffix } = getPricingUnits()
+  return { prefix, suffix }
+}
+
+function ratioToBasePrice(ratio: unknown): string {
+  return ratioToDisplayPrice(ratio)
 }
 
 function deriveLanePrice(

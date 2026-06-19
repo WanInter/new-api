@@ -42,3 +42,7 @@ skills-lock.json
 SERVER_INFO.md
 scripts/deploy-prod.sh
 scripts/build-image-k8s.sh
+scripts/test_nano_banana_images.sh
+scripts/test_video_generation.sh
+waninter_api_doc.xml
+

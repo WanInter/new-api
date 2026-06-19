@@ -84,7 +84,8 @@ function calculateTokenPrice(
   type: PriceType,
   ratio: number
 ): number {
-  const base = model.model_ratio * 2 * ratio
+  const { config } = getCurrencyDisplay()
+  const base = ((model.model_ratio * 1_000_000) / config.quotaPerUnit) * ratio
 
   switch (type) {
     case 'input':
