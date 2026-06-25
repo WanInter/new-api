@@ -971,11 +971,75 @@ function evalExprLocally(exprStr, p, c, extraTokenValues) {
       matchedTier = name;
       return value;
     };
+    const headerFn = () => '';
+    const paramFn = () => null;
+    const hasFn = (source, substr) => {
+      if (source == null || !substr) return false;
+      return String(source).includes(String(substr));
+    };
+    const timeNow = (tz) => {
+      try {
+        const timezone = tz || 'UTC';
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: timezone,
+          hour12: false,
+          weekday: 'short',
+          month: 'numeric',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: 'numeric',
+        }).formatToParts(new Date());
+        const part = (type) => parts.find((item) => item.type === type)?.value;
+        const weekdayMap = {
+          Sun: 0,
+          Mon: 1,
+          Tue: 2,
+          Wed: 3,
+          Thu: 4,
+          Fri: 5,
+          Sat: 6,
+        };
+        return {
+          hour: Number(part('hour')) || 0,
+          minute: Number(part('minute')) || 0,
+          weekday: weekdayMap[part('weekday')] ?? 0,
+          month: Number(part('month')) || 1,
+          day: Number(part('day')) || 1,
+        };
+      } catch {
+        const now = new Date();
+        return {
+          hour: now.getUTCHours(),
+          minute: now.getUTCMinutes(),
+          weekday: now.getUTCDay(),
+          month: now.getUTCMonth() + 1,
+          day: now.getUTCDate(),
+        };
+      }
+    };
     const cacheReadTokens = extraTokenValues.cacheReadTokens || 0;
     const cacheCreateTokens = extraTokenValues.cacheCreateTokens || 0;
     const cacheCreate1hTokens = extraTokenValues.cacheCreate1hTokens || 0;
     const len = p + cacheReadTokens + cacheCreateTokens + cacheCreate1hTokens;
-    const env = { p, c, len, tier: tierFn, max: Math.max, min: Math.min, abs: Math.abs, ceil: Math.ceil, floor: Math.floor };
+    const env = {
+      p,
+      c,
+      len,
+      tier: tierFn,
+      header: headerFn,
+      param: paramFn,
+      has: hasFn,
+      hour: (tz) => timeNow(tz).hour,
+      minute: (tz) => timeNow(tz).minute,
+      weekday: (tz) => timeNow(tz).weekday,
+      month: (tz) => timeNow(tz).month,
+      day: (tz) => timeNow(tz).day,
+      max: Math.max,
+      min: Math.min,
+      abs: Math.abs,
+      ceil: Math.ceil,
+      floor: Math.floor,
+    };
     for (const field of EXTRA_ESTIMATOR_FIELDS) {
       env[field.var] = extraTokenValues[field.stateKey] || 0;
     }

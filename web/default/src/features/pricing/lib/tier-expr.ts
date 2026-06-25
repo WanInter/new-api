@@ -283,6 +283,53 @@ export function evalExprLocally(
       matchedTier = name
       return value
     }
+    const headerFn = () => ''
+    const paramFn = () => null
+    const hasFn = (source: unknown, substr: string) => {
+      if (source == null || !substr) return false
+      return String(source).includes(String(substr))
+    }
+    const timeNow = (tz?: string) => {
+      try {
+        const timezone = tz || 'UTC'
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: timezone,
+          hour12: false,
+          weekday: 'short',
+          month: 'numeric',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: 'numeric',
+        }).formatToParts(new Date())
+        const part = (type: Intl.DateTimeFormatPartTypes) =>
+          parts.find((item) => item.type === type)?.value
+        const weekdayMap: Record<string, number> = {
+          Sun: 0,
+          Mon: 1,
+          Tue: 2,
+          Wed: 3,
+          Thu: 4,
+          Fri: 5,
+          Sat: 6,
+        }
+        return {
+          hour: Number(part('hour')) || 0,
+          minute: Number(part('minute')) || 0,
+          weekday: weekdayMap[part('weekday') || 'Sun'] ?? 0,
+          month: Number(part('month')) || 1,
+          day: Number(part('day')) || 1,
+        }
+      } catch {
+        const now = new Date()
+        return {
+          hour: now.getUTCHours(),
+          minute: now.getUTCMinutes(),
+          weekday: now.getUTCDay(),
+          month: now.getUTCMonth() + 1,
+          day: now.getUTCDate(),
+        }
+      }
+    }
     const cacheReadTokens = extraTokenValues.cacheReadTokens || 0
     const cacheCreateTokens = extraTokenValues.cacheCreateTokens || 0
     const cacheCreate1hTokens = extraTokenValues.cacheCreate1hTokens || 0
@@ -293,6 +340,14 @@ export function evalExprLocally(
       c: completionTokens,
       len,
       tier: tierFn,
+      header: headerFn,
+      param: paramFn,
+      has: hasFn,
+      hour: (tz?: string) => timeNow(tz).hour,
+      minute: (tz?: string) => timeNow(tz).minute,
+      weekday: (tz?: string) => timeNow(tz).weekday,
+      month: (tz?: string) => timeNow(tz).month,
+      day: (tz?: string) => timeNow(tz).day,
       max: Math.max,
       min: Math.min,
       abs: Math.abs,
