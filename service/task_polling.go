@@ -443,8 +443,21 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			// data: URI (e.g. Vertex base64 encoded video) — keep in Data, not in ResultURL
 			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 		} else if taskResult.Url != "" {
-			// Direct upstream URL (e.g. Kling, Ali, Doubao, etc.)
-			task.PrivateData.ResultURL = taskResult.Url
+			// Direct upstream URL (e.g. Kling, Ali, Doubao, etc.).
+			// Some providers return URLs that are not reachable by clients (e.g. vidgen.x.ai),
+			// so optionally rehost them to our configured object storage.
+			resultURL := taskResult.Url
+			if TaskResultRehostEnabledForURL(resultURL) {
+				rehostedURL, err := RehostTaskResultURL(ctx, task, resultURL, proxy)
+				if err != nil {
+					logger.LogError(ctx, fmt.Sprintf("Task %s result rehost failed: %s", task.TaskID, err.Error()))
+				} else if strings.TrimSpace(rehostedURL) != "" {
+					task.Data = replaceRehostedURLInJSON(task.Data, resultURL, rehostedURL)
+					taskResult.Url = rehostedURL
+					resultURL = rehostedURL
+				}
+			}
+			task.PrivateData.ResultURL = resultURL
 		} else {
 			// No URL from adaptor — construct proxy URL using public task ID
 			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
@@ -499,6 +512,57 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 
 	return nil
+}
+
+func replaceRehostedURLInJSON(data []byte, oldURL, newURL string) []byte {
+	if len(data) == 0 || strings.TrimSpace(oldURL) == "" || strings.TrimSpace(newURL) == "" {
+		return data
+	}
+	var payload any
+	if err := common.Unmarshal(data, &payload); err != nil {
+		return data
+	}
+	changed := replaceURLValue(&payload, oldURL, newURL)
+	if !changed {
+		return data
+	}
+	updated, err := common.Marshal(payload)
+	if err != nil {
+		return data
+	}
+	return updated
+}
+
+func replaceURLValue(value *any, oldURL, newURL string) bool {
+	if value == nil {
+		return false
+	}
+	switch v := (*value).(type) {
+	case string:
+		if strings.TrimSpace(v) == oldURL {
+			*value = newURL
+			return true
+		}
+	case []any:
+		changed := false
+		for i := range v {
+			if replaceURLValue(&v[i], oldURL, newURL) {
+				changed = true
+			}
+		}
+		return changed
+	case map[string]any:
+		changed := false
+		for k := range v {
+			item := v[k]
+			if replaceURLValue(&item, oldURL, newURL) {
+				v[k] = item
+				changed = true
+			}
+		}
+		return changed
+	}
+	return false
 }
 
 func redactVideoResponseBody(body []byte) []byte {

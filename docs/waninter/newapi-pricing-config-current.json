@@ -1,6 +1,6 @@
 {
-  "captured_at": "2026-06-26T15:33:00+08:00",
-  "note": "当前线上全量价格相关配置快照；Seedance2.0-fast 已按上游 xinghe-fast 对齐。",
+  "captured_at": "2026-06-26T16:30:00+08:00",
+  "note": "当前线上全量价格相关配置快照；grok-image-video/grok-video-1.5 已按上游 fixed credits 10/15 配置为 ModelPrice 0.5/0.75。",
   "settings": {
     "AlipayUnitPrice": 1,
     "AudioCompletionRatio": {},
@@ -28,6 +28,10 @@
         "locked": false,
         "ratio": 1
       },
+      "sora-2-12s": {
+        "locked": false,
+        "ratio": 1
+      },
       "veo-omni-flash": {
         "locked": false,
         "ratio": 1
@@ -51,10 +55,11 @@
     "ImageRatio": {},
     "ModelPrice": {
       "dream-sd2": 6.5,
-      "grok-image-video": 20,
-      "grok-video-1.5": 20,
+      "grok-image-video": 0.5,
+      "grok-video-1.5": 0.75,
       "sd-2.0 Fast": 5,
       "seedance-2-0-15s-high": 11.25,
+      "sora-2-12s": 1.1,
       "veo-omni-flash": 1
     },
     "ModelRatio": {},
@@ -86,6 +91,7 @@
       "gpt-image-2-vibe-4k": "param(\"size\") == \"2880x2880\" || param(\"size\") == \"3840x2160\" || param(\"size\") == \"2160x3840\" || param(\"size\") == \"2160x2880\" || param(\"size\") == \"4096x3072\" || param(\"size\") == \"3072x4096\" ? (param(\"quality\") == \"high\" ? tier(\"4k_high\", 400000) : param(\"quality\") == \"medium\" ? tier(\"4k_medium\", 350000) : tier(\"4k_low\", 300000)) : param(\"size\") == \"2048x2048\" || param(\"size\") == \"2048x1536\" || param(\"size\") == \"1536x2048\" || param(\"size\") == \"2560x1440\" || param(\"size\") == \"1440x2560\" || param(\"size\") == \"1920x2560\" || param(\"size\") == \"2560x1920\" ? (param(\"quality\") == \"high\" ? tier(\"2k_high\", 300000) : param(\"quality\") == \"medium\" ? tier(\"2k_medium\", 200000) : tier(\"2k_low\", 200000)) : (param(\"quality\") == \"high\" ? tier(\"1k_high\", 200000) : param(\"quality\") == \"medium\" ? tier(\"1k_medium\", 100000) : tier(\"1k_low\", 100000))",
       "nano-banana": "tier(\"1K\", 100000)",
       "nano-banana-2": "param(\"imageSize\") == \"4K\" ? tier(\"4K\", 300000) : param(\"imageSize\") == \"2K\" ? tier(\"2K\", 200000) : tier(\"1K\", 150000)",
+      "omni_flash-10s": "(param(\"resolution\") == \"4k\" ? tier(\"4k\", ((((param(\"duration\") == \"15\" ? 15 : param(\"duration\") == \"12\" ? 12 : param(\"duration\") == \"10\" ? 10 : param(\"duration\") == \"8\" ? 8 : param(\"duration\") == \"5\" ? 5 : param(\"duration\") == \"4\" ? 4 : 10)) * 4) * 4 * 50000)) : param(\"resolution\") == \"1080p\" ? tier(\"1080p\", ((((param(\"duration\") == \"15\" ? 15 : param(\"duration\") == \"12\" ? 12 : param(\"duration\") == \"10\" ? 10 : param(\"duration\") == \"8\" ? 8 : param(\"duration\") == \"5\" ? 5 : param(\"duration\") == \"4\" ? 4 : 10)) * 4) * 1.5 * 50000)) : tier(\"720p\", ((((param(\"duration\") == \"15\" ? 15 : param(\"duration\") == \"12\" ? 12 : param(\"duration\") == \"10\" ? 10 : param(\"duration\") == \"8\" ? 8 : param(\"duration\") == \"5\" ? 5 : param(\"duration\") == \"4\" ? 4 : 10)) * 4) * 1 * 50000)))",
       "seedance2.0-720p": "(param(\"resolution\") == \"4k\" ? tier(\"4k\", (((param(\"duration\") == \"15\" ? 15 : param(\"duration\") == \"14\" ? 14 : param(\"duration\") == \"13\" ? 13 : param(\"duration\") == \"12\" ? 12 : param(\"duration\") == \"11\" ? 11 : param(\"duration\") == \"10\" ? 10 : param(\"duration\") == \"9\" ? 9 : param(\"duration\") == \"8\" ? 8 : param(\"duration\") == \"7\" ? 7 : param(\"duration\") == \"6\" ? 6 : param(\"duration\") == \"5\" ? 5 : 5) * 18) * 4 * 50000)) : param(\"resolution\") == \"1080p\" ? tier(\"1080p\", (((param(\"duration\") == \"15\" ? 15 : param(\"duration\") == \"14\" ? 14 : param(\"duration\") == \"13\" ? 13 : param(\"duration\") == \"12\" ? 12 : param(\"duration\") == \"11\" ? 11 : param(\"duration\") == \"10\" ? 10 : param(\"duration\") == \"9\" ? 9 : param(\"duration\") == \"8\" ? 8 : param(\"duration\") == \"7\" ? 7 : param(\"duration\") == \"6\" ? 6 : param(\"duration\") == \"5\" ? 5 : 5) * 18) * 2.1 * 50000)) : tier(\"720p\", (((param(\"duration\") == \"15\" ? 15 : param(\"duration\") == \"14\" ? 14 : param(\"duration\") == \"13\" ? 13 : param(\"duration\") == \"12\" ? 12 : param(\"duration\") == \"11\" ? 11 : param(\"duration\") == \"10\" ? 10 : param(\"duration\") == \"9\" ? 9 : param(\"duration\") == \"8\" ? 8 : param(\"duration\") == \"7\" ? 7 : param(\"duration\") == \"6\" ? 6 : param(\"duration\") == \"5\" ? 5 : 5) * 18) * 1 * 50000)))"
     },
     "billing_setting.billing_mode": {
@@ -99,6 +105,7 @@
       "gpt-image-2-vibe-4k": "tiered_expr",
       "nano-banana": "tiered_expr",
       "nano-banana-2": "tiered_expr",
+      "omni_flash-10s": "tiered_expr",
       "seedance2.0-720p": "tiered_expr"
     },
     "checkin_setting.max_quota": 10000,

@@ -495,3 +495,38 @@ go test ./relay/helper ./relay ./constant
 ```bash
 cd web/default && bun run build
 ```
+
+## 14. Grok 视频结果自动转存配置
+
+`grok-image-video` / `grok-video-1.5` 上游可能返回 `https://vidgen.x.ai/...mp4`，部分用户或服务器无法直接访问。NewAPI 支持通过环境变量把命中的远程结果 URL 自动下载并转存到 OSS。
+
+关键配置：
+
+```env
+TASK_RESULT_REHOST_ENABLED=true
+TASK_RESULT_REHOST_DOMAINS=vidgen.x.ai
+TASK_RESULT_REHOST_BACKEND=aliyun_oss
+TASK_RESULT_REHOST_ENDPOINT=https://oss-cn-shanghai.aliyuncs.com
+TASK_RESULT_REHOST_UPLOAD_ENDPOINT=https://oss-cn-shanghai.aliyuncs.com
+TASK_RESULT_REHOST_BUCKET=your-bucket
+TASK_RESULT_REHOST_REGION=cn-shanghai
+TASK_RESULT_REHOST_PUBLIC_BASE_URL=https://your-bucket.oss-cn-shanghai.aliyuncs.com
+TASK_RESULT_REHOST_PREFIX=generated/newapi/videos
+TASK_RESULT_REHOST_ACCESS_KEY_ID=***
+TASK_RESULT_REHOST_ACCESS_KEY_SECRET=***
+TASK_RESULT_REHOST_MAX_MB=512
+TASK_RESULT_REHOST_TIMEOUT_SECONDS=180
+
+# 可选：转存下载源文件时专用代理。配置后命中 TASK_RESULT_REHOST_DOMAINS 的下载会优先走该代理；未配置则回退渠道 proxy。
+TASK_RESULT_REHOST_PROXY=http://host:port
+```
+
+注意：
+
+- 自动转存只在任务轮询到成功时触发。已经完成的历史任务不会自动补转存。
+- 如果服务器无法访问 `vidgen.x.ai`，必须配置 `TASK_RESULT_REHOST_PROXY` 或渠道 proxy。
+- 成功后会替换任务 `PrivateData.ResultURL`，并把任务 Data 中相同的源 URL 一并替换为 OSS URL，因此 `/v1/videos/{task_id}` 返回应不再出现 `vidgen.x.ai`。
+
+## 15. 已清理/不再跟随的上游 Provider
+
+- `www.vjimeng.vip`：该 provider 已下线/禁用，相关 `sd2-*` 模型不再保留在本地上游价格快照中，也不配置 NewAPI 价格。线上渠道和价格配置当前无残留。
