@@ -144,6 +144,19 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models: 'Models exposed by this channel',
     },
   },
+  60: {
+    id: 60,
+    name: CHANNEL_TYPES[60],
+    icon: 'video',
+    defaultBaseUrl: 'http://113.207.49.151:8045',
+    supportedModels: ['xinghe-mini', 'xinghe-fast', 'xinghe-2.0'],
+    hints: {
+      baseUrl: 'Default: http://113.207.49.151:8045',
+      key: 'Xinghe API Key',
+      models: 'xinghe-mini,xinghe-fast,xinghe-2.0',
+      other: 'Video endpoint: POST /api/generate-video; requires at least one reference asset.',
+    },
+  },
 }
 
 /**

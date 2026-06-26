@@ -1,0 +1,139 @@
+{
+  "captured_at": "2026-06-26T15:26:00+08:00",
+  "note": "保留这一份作为当前线上全量价格配置快照；过程备份已清理。",
+  "settings": {
+    "AlipayUnitPrice": 1,
+    "AudioCompletionRatio": {},
+    "AudioRatio": {},
+    "CacheRatio": {},
+    "CompletionRatio": {},
+    "CompletionRatioMeta": {
+      "dream-sd2": {
+        "locked": false,
+        "ratio": 1
+      },
+      "grok-image-video": {
+        "locked": false,
+        "ratio": 1
+      },
+      "grok-video-1.5": {
+        "locked": false,
+        "ratio": 1
+      },
+      "sd-2.0 Fast": {
+        "locked": false,
+        "ratio": 1
+      },
+      "seedance-2-0-15s-high": {
+        "locked": false,
+        "ratio": 1
+      },
+      "veo-omni-flash": {
+        "locked": false,
+        "ratio": 1
+      }
+    },
+    "CreateCacheRatio": {},
+    "ExposeRatioEnabled": false,
+    "GroupGroupRatio": {
+      "vip_veo": {
+        "vip_veo": 0.8
+      }
+    },
+    "GroupRatio": {
+      "auto": 1,
+      "creative-image": 1,
+      "creative-premium": 1,
+      "creative-video": 1,
+      "default": 1,
+      "vip_veo": 1
+    },
+    "ImageRatio": {},
+    "ModelPrice": {
+      "dream-sd2": 6.5,
+      "grok-image-video": 20,
+      "grok-video-1.5": 20,
+      "sd-2.0 Fast": 5,
+      "seedance-2-0-15s-high": 11.25,
+      "veo-omni-flash": 1
+    },
+    "ModelRatio": {},
+    "ModelRequestRateLimitDurationMinutes": 1,
+    "PreConsumedQuota": 500000,
+    "Price": 1,
+    "QuotaForInvitee": 0,
+    "QuotaForInviter": 0,
+    "QuotaForNewUser": 0,
+    "QuotaPerUnit": 20,
+    "QuotaRemindThreshold": 1000,
+    "StripePriceId": "",
+    "StripeUnitPrice": 1,
+    "TopupGroupRatio": {
+      "creative-image": 1,
+      "creative-video": 1
+    },
+    "WaffoPancakeUnitPrice": 1,
+    "WaffoUnitPrice": 1,
+    "WeChatPayUnitPrice": 1,
+    "billing_setting.billing_expr": {
+      "Seedance2.0-fast": "(param(\"resolution\") == \"4k\" ? tier(\"4k\", (((param(\"duration\") == \"15\" ? 15 : param(\"duration\") == \"14\" ? 14 : param(\"duration\") == \"13\" ? 13 : param(\"duration\") == \"12\" ? 12 : param(\"duration\") == \"11\" ? 11 : param(\"duration\") == \"10\" ? 10 : param(\"duration\") == \"9\" ? 9 : param(\"duration\") == \"8\" ? 8 : param(\"duration\") == \"7\" ? 7 : param(\"duration\") == \"6\" ? 6 : param(\"duration\") == \"5\" ? 5 : 5) * 18) * 4 * 50000)) : param(\"resolution\") == \"1080p\" ? tier(\"1080p\", (((param(\"duration\") == \"15\" ? 15 : param(\"duration\") == \"14\" ? 14 : param(\"duration\") == \"13\" ? 13 : param(\"duration\") == \"12\" ? 12 : param(\"duration\") == \"11\" ? 11 : param(\"duration\") == \"10\" ? 10 : param(\"duration\") == \"9\" ? 9 : param(\"duration\") == \"8\" ? 8 : param(\"duration\") == \"7\" ? 7 : param(\"duration\") == \"6\" ? 6 : param(\"duration\") == \"5\" ? 5 : 5) * 18) * 2.1 * 50000)) : tier(\"720p\", (((param(\"duration\") == \"15\" ? 15 : param(\"duration\") == \"14\" ? 14 : param(\"duration\") == \"13\" ? 13 : param(\"duration\") == \"12\" ? 12 : param(\"duration\") == \"11\" ? 11 : param(\"duration\") == \"10\" ? 10 : param(\"duration\") == \"9\" ? 9 : param(\"duration\") == \"8\" ? 8 : param(\"duration\") == \"7\" ? 7 : param(\"duration\") == \"6\" ? 6 : param(\"duration\") == \"5\" ? 5 : 5) * 18) * 1 * 50000)))",
+      "Seedance2.0-jimeng": "(param(\"resolution\") == \"4k\" ? tier(\"4k\", (((param(\"duration\") == \"15\" ? 15 : param(\"duration\") == \"14\" ? 14 : param(\"duration\") == \"13\" ? 13 : param(\"duration\") == \"12\" ? 12 : param(\"duration\") == \"11\" ? 11 : param(\"duration\") == \"10\" ? 10 : param(\"duration\") == \"9\" ? 9 : param(\"duration\") == \"8\" ? 8 : param(\"duration\") == \"7\" ? 7 : param(\"duration\") == \"6\" ? 6 : param(\"duration\") == \"5\" ? 5 : 5) * 18) * 4 * 50000)) : param(\"resolution\") == \"1080p\" ? tier(\"1080p\", (((param(\"duration\") == \"15\" ? 15 : param(\"duration\") == \"14\" ? 14 : param(\"duration\") == \"13\" ? 13 : param(\"duration\") == \"12\" ? 12 : param(\"duration\") == \"11\" ? 11 : param(\"duration\") == \"10\" ? 10 : param(\"duration\") == \"9\" ? 9 : param(\"duration\") == \"8\" ? 8 : param(\"duration\") == \"7\" ? 7 : param(\"duration\") == \"6\" ? 6 : param(\"duration\") == \"5\" ? 5 : 5) * 18) * 2.1 * 50000)) : tier(\"720p\", (((param(\"duration\") == \"15\" ? 15 : param(\"duration\") == \"14\" ? 14 : param(\"duration\") == \"13\" ? 13 : param(\"duration\") == \"12\" ? 12 : param(\"duration\") == \"11\" ? 11 : param(\"duration\") == \"10\" ? 10 : param(\"duration\") == \"9\" ? 9 : param(\"duration\") == \"8\" ? 8 : param(\"duration\") == \"7\" ? 7 : param(\"duration\") == \"6\" ? 6 : param(\"duration\") == \"5\" ? 5 : 5) * 18) * 1 * 50000)))",
+      "gpt-image-2": "param(\"size\") == \"2880x2880\" || param(\"size\") == \"3840x2160\" || param(\"size\") == \"2160x3840\" || param(\"size\") == \"2160x2880\" || param(\"size\") == \"4096x3072\" || param(\"size\") == \"3072x4096\" ? (param(\"quality\") == \"high\" ? tier(\"4k_high\", 500000) : param(\"quality\") == \"medium\" ? tier(\"4k_medium\", 400000) : tier(\"4k_low\", 300000)) : param(\"size\") == \"2048x2048\" || param(\"size\") == \"2048x1536\" || param(\"size\") == \"1536x2048\" || param(\"size\") == \"2560x1440\" || param(\"size\") == \"1440x2560\" || param(\"size\") == \"1920x2560\" || param(\"size\") == \"2560x1920\" ? (param(\"quality\") == \"high\" ? tier(\"2k_high\", 400000) : param(\"quality\") == \"medium\" ? tier(\"2k_medium\", 300000) : tier(\"2k_low\", 200000)) : (param(\"quality\") == \"high\" ? tier(\"1k_high\", 300000) : param(\"quality\") == \"medium\" ? tier(\"1k_medium\", 200000) : tier(\"1k_low\", 100000))",
+      "gpt-image-2-4k": "param(\"quality\") == \"high\" ? tier(\"4k_high\", 400000) : param(\"quality\") == \"medium\" ? tier(\"4k_medium\", 350000) : tier(\"4k_low\", 300000)",
+      "gpt-image-2-nio": "param(\"size\") == \"2880x2880\" || param(\"size\") == \"3840x2160\" || param(\"size\") == \"2160x3840\" || param(\"size\") == \"2160x2880\" || param(\"size\") == \"4096x3072\" || param(\"size\") == \"3072x4096\" ? (param(\"quality\") == \"high\" ? tier(\"4k_high\", 400000) : param(\"quality\") == \"medium\" ? tier(\"4k_medium\", 300000) : tier(\"4k_low\", 200000)) : param(\"size\") == \"2048x2048\" || param(\"size\") == \"2048x1536\" || param(\"size\") == \"1536x2048\" || param(\"size\") == \"2560x1440\" || param(\"size\") == \"1440x2560\" || param(\"size\") == \"1920x2560\" || param(\"size\") == \"2560x1920\" ? (param(\"quality\") == \"high\" ? tier(\"2k_high\", 300000) : param(\"quality\") == \"medium\" ? tier(\"2k_medium\", 200000) : tier(\"2k_low\", 200000)) : (param(\"quality\") == \"high\" ? tier(\"1k_high\", 200000) : param(\"quality\") == \"medium\" ? tier(\"1k_medium\", 100000) : tier(\"1k_low\", 100000))",
+      "gpt-image-2-nio-4k": "param(\"quality\") == \"high\" ? tier(\"4k_high\", 400000) : param(\"quality\") == \"medium\" ? tier(\"4k_medium\", 350000) : tier(\"4k_low\", 300000)",
+      "gpt-image-2-vibe": "param(\"quality\") == \"high\" ? tier(\"1k_high\", 200000) : tier(\"1k_low_medium\", 100000)",
+      "gpt-image-2-vibe-4k": "param(\"size\") == \"2880x2880\" || param(\"size\") == \"3840x2160\" || param(\"size\") == \"2160x3840\" || param(\"size\") == \"2160x2880\" || param(\"size\") == \"4096x3072\" || param(\"size\") == \"3072x4096\" ? (param(\"quality\") == \"high\" ? tier(\"4k_high\", 400000) : param(\"quality\") == \"medium\" ? tier(\"4k_medium\", 350000) : tier(\"4k_low\", 300000)) : param(\"size\") == \"2048x2048\" || param(\"size\") == \"2048x1536\" || param(\"size\") == \"1536x2048\" || param(\"size\") == \"2560x1440\" || param(\"size\") == \"1440x2560\" || param(\"size\") == \"1920x2560\" || param(\"size\") == \"2560x1920\" ? (param(\"quality\") == \"high\" ? tier(\"2k_high\", 300000) : param(\"quality\") == \"medium\" ? tier(\"2k_medium\", 200000) : tier(\"2k_low\", 200000)) : (param(\"quality\") == \"high\" ? tier(\"1k_high\", 200000) : param(\"quality\") == \"medium\" ? tier(\"1k_medium\", 100000) : tier(\"1k_low\", 100000))",
+      "nano-banana": "tier(\"1K\", 100000)",
+      "nano-banana-2": "param(\"imageSize\") == \"4K\" ? tier(\"4K\", 300000) : param(\"imageSize\") == \"2K\" ? tier(\"2K\", 200000) : tier(\"1K\", 150000)",
+      "seedance2.0-720p": "(param(\"resolution\") == \"4k\" ? tier(\"4k\", (((param(\"duration\") == \"15\" ? 15 : param(\"duration\") == \"14\" ? 14 : param(\"duration\") == \"13\" ? 13 : param(\"duration\") == \"12\" ? 12 : param(\"duration\") == \"11\" ? 11 : param(\"duration\") == \"10\" ? 10 : param(\"duration\") == \"9\" ? 9 : param(\"duration\") == \"8\" ? 8 : param(\"duration\") == \"7\" ? 7 : param(\"duration\") == \"6\" ? 6 : param(\"duration\") == \"5\" ? 5 : 5) * 18) * 4 * 50000)) : param(\"resolution\") == \"1080p\" ? tier(\"1080p\", (((param(\"duration\") == \"15\" ? 15 : param(\"duration\") == \"14\" ? 14 : param(\"duration\") == \"13\" ? 13 : param(\"duration\") == \"12\" ? 12 : param(\"duration\") == \"11\" ? 11 : param(\"duration\") == \"10\" ? 10 : param(\"duration\") == \"9\" ? 9 : param(\"duration\") == \"8\" ? 8 : param(\"duration\") == \"7\" ? 7 : param(\"duration\") == \"6\" ? 6 : param(\"duration\") == \"5\" ? 5 : 5) * 18) * 2.1 * 50000)) : tier(\"720p\", (((param(\"duration\") == \"15\" ? 15 : param(\"duration\") == \"14\" ? 14 : param(\"duration\") == \"13\" ? 13 : param(\"duration\") == \"12\" ? 12 : param(\"duration\") == \"11\" ? 11 : param(\"duration\") == \"10\" ? 10 : param(\"duration\") == \"9\" ? 9 : param(\"duration\") == \"8\" ? 8 : param(\"duration\") == \"7\" ? 7 : param(\"duration\") == \"6\" ? 6 : param(\"duration\") == \"5\" ? 5 : 5) * 18) * 1 * 50000)))"
+    },
+    "billing_setting.billing_mode": {
+      "Seedance2.0-fast": "tiered_expr",
+      "Seedance2.0-jimeng": "tiered_expr",
+      "gpt-image-2": "tiered_expr",
+      "gpt-image-2-4k": "tiered_expr",
+      "gpt-image-2-nio": "tiered_expr",
+      "gpt-image-2-nio-4k": "tiered_expr",
+      "gpt-image-2-vibe": "tiered_expr",
+      "gpt-image-2-vibe-4k": "tiered_expr",
+      "nano-banana": "tiered_expr",
+      "nano-banana-2": "tiered_expr",
+      "seedance2.0-720p": "tiered_expr"
+    },
+    "checkin_setting.max_quota": 10000,
+    "checkin_setting.min_quota": 10000,
+    "general_setting.quota_display_type": "CUSTOM",
+    "group_ratio_setting.group_group_ratio": {
+      "vip_veo": {
+        "vip_veo": 0.8
+      }
+    },
+    "group_ratio_setting.group_ratio": {
+      "auto": 1,
+      "claude": 1,
+      "codex": 1,
+      "creative": 1,
+      "creative-image": 1,
+      "creative-premium": 1,
+      "creative-video": 1,
+      "default": 1,
+      "svip": 1,
+      "vip": 1,
+      "vip_veo": 1
+    },
+    "group_ratio_setting.group_special_usable_group": {},
+    "quota_setting.enable_free_model_pre_consume": true,
+    "tool_price_setting.prices": {
+      "file_search": 2.5,
+      "google_search": 14,
+      "web_search": 10,
+      "web_search_preview": 10,
+      "web_search_preview:gpt-4.1*": 25,
+      "web_search_preview:gpt-4.1-mini*": 25,
+      "web_search_preview:gpt-4o*": 25,
+      "web_search_preview:gpt-4o-mini*": 25
+    }
+  },
+  "source": "api.waninter.com /api/option current pricing-related settings"
+}

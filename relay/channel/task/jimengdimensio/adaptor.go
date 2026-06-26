@@ -32,6 +32,7 @@ type jsonRequest struct {
 	Seconds        string         `json:"seconds,omitempty"`
 	FilePaths      []string       `json:"file_paths,omitempty"`
 	Ratio          string         `json:"ratio,omitempty"`
+	AspectRatio    string         `json:"aspect_ratio,omitempty"`
 	Resolution     string         `json:"resolution,omitempty"`
 	FunctionMode   string         `json:"functionMode,omitempty"`
 	ResponseFormat string         `json:"response_format,omitempty"`
@@ -45,6 +46,15 @@ type requestPayload struct {
 	Resolution     string   `json:"resolution,omitempty"`
 	Duration       int      `json:"duration,omitempty"`
 	FilePaths      []string `json:"file_paths,omitempty"`
+	ImageFile1     string   `json:"image_file_1,omitempty"`
+	ImageFile2     string   `json:"image_file_2,omitempty"`
+	ImageFile3     string   `json:"image_file_3,omitempty"`
+	ImageFile4     string   `json:"image_file_4,omitempty"`
+	ImageFile5     string   `json:"image_file_5,omitempty"`
+	ImageFile6     string   `json:"image_file_6,omitempty"`
+	ImageFile7     string   `json:"image_file_7,omitempty"`
+	ImageFile8     string   `json:"image_file_8,omitempty"`
+	ImageFile9     string   `json:"image_file_9,omitempty"`
 	FunctionMode   string   `json:"functionMode,omitempty"`
 	ResponseFormat string   `json:"response_format,omitempty"`
 }
@@ -148,6 +158,14 @@ func copyJSONRequestMetadata(raw jsonRequest, metadata map[string]any) {
 	if raw.Ratio != "" {
 		metadata["ratio"] = raw.Ratio
 	}
+	if raw.AspectRatio != "" {
+		metadata["aspect_ratio"] = raw.AspectRatio
+	}
+	if raw.Metadata != nil {
+		if v, ok := raw.Metadata["aspect_ratio"]; ok {
+			metadata["aspect_ratio"] = v
+		}
+	}
 	if raw.Resolution != "" {
 		metadata["resolution"] = raw.Resolution
 	}
@@ -178,7 +196,7 @@ func parseMultipartRequest(c *gin.Context) (relaycommon.TaskSubmitReq, error) {
 		Duration: parsePositiveInt(form.Get("duration"), 0),
 		Metadata: map[string]any{},
 	}
-	for _, key := range []string{"ratio", "resolution", "functionMode", "response_format"} {
+	for _, key := range []string{"ratio", "aspect_ratio", "resolution", "functionMode", "response_format"} {
 		if v := strings.TrimSpace(form.Get(key)); v != "" {
 			req.Metadata[key] = v
 		}
@@ -446,7 +464,7 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 		Resolution: DefaultResolution,
 		Duration:   DefaultDuration,
 	}
-	if req.Model != "" {
+	if req.Model != "" && !info.IsModelMapped {
 		payload.Model = req.Model
 	}
 	if req.Duration > 0 {
@@ -457,6 +475,9 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 	}
 	if len(req.Images) > 0 {
 		payload.FilePaths = append(payload.FilePaths, req.Images...)
+	}
+	if aspectRatio, ok := req.Metadata["aspect_ratio"].(string); ok && strings.TrimSpace(aspectRatio) != "" {
+		payload.Ratio = aspectRatio
 	}
 	if err := taskcommon.UnmarshalMetadata(req.Metadata, payload); err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
@@ -474,7 +495,51 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 	if payload.Duration <= 0 {
 		payload.Duration = DefaultDuration
 	}
+	applyReferenceFilesAndMode(payload)
 	return payload, nil
+}
+
+func applyReferenceFilesAndMode(payload *requestPayload) {
+	for i, path := range payload.FilePaths {
+		if i >= 9 {
+			break
+		}
+		switch i {
+		case 0:
+			payload.ImageFile1 = path
+		case 1:
+			payload.ImageFile2 = path
+		case 2:
+			payload.ImageFile3 = path
+		case 3:
+			payload.ImageFile4 = path
+		case 4:
+			payload.ImageFile5 = path
+		case 5:
+			payload.ImageFile6 = path
+		case 6:
+			payload.ImageFile7 = path
+		case 7:
+			payload.ImageFile8 = path
+		case 8:
+			payload.ImageFile9 = path
+		}
+	}
+	payload.FilePaths = nil
+	if strings.TrimSpace(payload.FunctionMode) != "" {
+		return
+	}
+	imageCount := 0
+	for _, path := range []string{payload.ImageFile1, payload.ImageFile2, payload.ImageFile3, payload.ImageFile4, payload.ImageFile5, payload.ImageFile6, payload.ImageFile7, payload.ImageFile8, payload.ImageFile9} {
+		if path != "" {
+			imageCount++
+		}
+	}
+	if imageCount > 2 {
+		payload.FunctionMode = "omni_reference"
+		return
+	}
+	payload.FunctionMode = "first_last_frames"
 }
 
 func resolutionRatio(modelName, resolution string) float64 {

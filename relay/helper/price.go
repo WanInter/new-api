@@ -167,6 +167,16 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types.PriceData, error) {
 	groupRatioInfo := HandleGroupRatio(c, info)
 
+	if billing_setting.GetBillingMode(info.OriginModelName) == billing_setting.BillingModeTieredExpr {
+		priceData, err := modelPriceHelperTiered(c, info, 0, &types.TokenCountMeta{}, groupRatioInfo)
+		if err != nil {
+			return types.PriceData{}, err
+		}
+		priceData.Quota = priceData.QuotaToPreConsume
+		info.PriceData = priceData
+		return priceData, nil
+	}
+
 	modelPrice, success := ratio_setting.GetModelPrice(info.OriginModelName, true)
 	usePrice := success
 	var modelRatio float64

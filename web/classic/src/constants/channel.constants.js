@@ -199,6 +199,11 @@ export const CHANNEL_OPTIONS = [
     color: 'blue',
     label: 'Jimeng Dimensio',
   },
+  {
+    value: 60,
+    color: 'blue',
+    label: 'Xinghe Video',
+  },
 ];
 
 // Channel types that support upstream model list fetching in UI.

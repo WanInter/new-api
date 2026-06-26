@@ -60,3 +60,49 @@ func TestModelPriceHelperTieredUsesPreloadedRequestInput(t *testing.T) {
 	require.Equal(t, billing_setting.BillingModeTieredExpr, info.TieredBillingSnapshot.BillingMode)
 	require.Equal(t, common.QuotaPerUnit, info.TieredBillingSnapshot.QuotaPerUnit)
 }
+
+func TestModelPriceHelperPerCallUsesTieredExpression(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	savedQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 20
+	t.Cleanup(func() { common.QuotaPerUnit = savedQuotaPerUnit })
+
+	saved := map[string]string{}
+	require.NoError(t, config.GlobalConfig.SaveToDB(func(key, value string) error {
+		saved[key] = value
+		return nil
+	}))
+	t.Cleanup(func() {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(saved))
+	})
+
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": `{"task-tiered-model":"tiered_expr"}`,
+		"billing_setting.billing_expr": `{"task-tiered-model":"param(\"duration\") == \"10\" ? tier(\"10s\", 10000000) : tier(\"base\", 5000000)"}`,
+	}))
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	req := httptest.NewRequest(http.MethodPost, "/v1/video/generations", nil)
+	req.Header.Set("Content-Type", "application/json")
+	ctx.Request = req
+	ctx.Set("group", "default")
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "task-tiered-model",
+		UserGroup:       "default",
+		UsingGroup:      "default",
+		RequestHeaders:  map[string]string{"Content-Type": "application/json"},
+		BillingRequestInput: &billingexpr.RequestInput{
+			Headers: map[string]string{"Content-Type": "application/json"},
+			Body:    []byte(`{"duration":"10"}`),
+		},
+	}
+
+	priceData, err := ModelPriceHelperPerCall(ctx, info)
+	require.NoError(t, err)
+	require.Equal(t, 200, priceData.Quota)
+	require.Equal(t, 200, priceData.QuotaToPreConsume)
+	require.NotNil(t, info.TieredBillingSnapshot)
+	require.Equal(t, "10s", info.TieredBillingSnapshot.EstimatedTier)
+}
