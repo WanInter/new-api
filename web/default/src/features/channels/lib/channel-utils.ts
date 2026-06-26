@@ -54,6 +54,7 @@ export function getChannelTypeIcon(type: number): string {
     58: 'OpenAI', // Advanced Custom
     59: 'Jimeng', // Jimeng Dimensio
     60: 'Video', // Xinghe Video
+    61: 'Video', // AGGC
     3: 'Azure', // Azure
 
     // Anthropic

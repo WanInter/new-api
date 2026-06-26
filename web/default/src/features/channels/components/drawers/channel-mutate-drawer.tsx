@@ -129,6 +129,7 @@ import {
   channelFormSchema,
   channelsQueryKeys,
   getAdvancedCustomStats,
+  getChannelTypeConfig,
   transformChannelToFormDefaults,
   type ChannelFormValues,
   deduplicateKeys,
@@ -418,6 +419,11 @@ export function ChannelMutateDrawer({
     () => getAdvancedCustomStats(currentAdvancedCustom),
     [currentAdvancedCustom]
   )
+  const currentChannelTypeConfig = useMemo(
+    () => getChannelTypeConfig(currentType),
+    [currentType]
+  )
+  const currentChannelTypeHints = currentChannelTypeConfig.hints
 
   // Get all models list
   const allModelsList = useMemo(
@@ -1219,6 +1225,14 @@ export function ChannelMutateDrawer({
                       </Alert>
                     )}
 
+                    {currentChannelTypeHints?.other && (
+                      <Alert>
+                        <AlertDescription>
+                          {t(currentChannelTypeHints.other)}
+                        </AlertDescription>
+                      </Alert>
+                    )}
+
                     {/* Azure (type 3) */}
                     {currentType === 3 && (
                       <>
@@ -1819,9 +1833,11 @@ export function ChannelMutateDrawer({
                               />
                             </FormControl>
                             <FormDescription>
-                              {t(
-                                'Custom API base URL. For official channels, New API has built-in addresses. Only fill this for third-party proxy sites or special endpoints. Do not add /v1 or trailing slash.'
-                              )}
+                              {currentChannelTypeHints?.baseUrl
+                                ? t(currentChannelTypeHints.baseUrl)
+                                : t(
+                                    'Custom API base URL. For official channels, New API has built-in addresses. Only fill this for third-party proxy sites or special endpoints. Do not add /v1 or trailing slash.'
+                                  )}
                             </FormDescription>
                             <FormMessage />
                           </FormItem>
@@ -1986,6 +2002,8 @@ export function ChannelMutateDrawer({
                                       t(
                                         'Enter one API key per line for batch creation'
                                       )
+                                    ) : currentChannelTypeHints?.key ? (
+                                      t(currentChannelTypeHints.key)
                                     ) : (
                                       t(FIELD_DESCRIPTIONS.KEY)
                                     )}
@@ -2222,7 +2240,9 @@ export function ChannelMutateDrawer({
                                 <div className='space-y-1'>
                                   <FormLabel>{t('Models *')}</FormLabel>
                                   <FormDescription>
-                                    {t(FIELD_DESCRIPTIONS.MODELS)}
+                                    {currentChannelTypeHints?.models
+                                      ? t(currentChannelTypeHints.models)
+                                      : t(FIELD_DESCRIPTIONS.MODELS)}
                                   </FormDescription>
                                 </div>
                                 <Badge variant='outline' className='w-fit'>

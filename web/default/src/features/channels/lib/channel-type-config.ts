@@ -157,6 +157,19 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       other: 'Video endpoint: POST /api/generate-video; requires at least one reference asset.',
     },
   },
+  61: {
+    id: 61,
+    name: CHANNEL_TYPES[61],
+    icon: 'video',
+    defaultBaseUrl: 'https://aggc.site',
+    supportedModels: ['seedance-2.0'],
+    hints: {
+      baseUrl: 'Default host: https://aggc.site. Do not append /api/v1/prot or a trailing slash; the adaptor adds the generate, query, and balance paths automatically.',
+      key: 'Use the AGGC provider key. Requests are authenticated with the x-api-key header, not Bearer Authorization.',
+      models: 'Expose the New API model names you want users to call. Use model mapping if the upstream model_id is different; for example, map your public model to seedance-2.0.',
+      other: 'Video task channel. Submit uses POST /api/v1/prot/generate, polling uses GET /api/v1/prot/query/{jobId}, and balance uses GET /api/v1/prot/balance. Remaining balance is shown as credits minus frozen_credits. Pricing is configured locally in New API, not synced from AGGC.',
+    },
+  },
 }
 
 /**

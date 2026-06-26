@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -121,6 +122,46 @@ type OpenRouterCreditResponse struct {
 	} `json:"data"`
 }
 
+type AGGCBalanceResponse struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    struct {
+		Credits       flexibleFloat64 `json:"credits"`
+		FrozenCredits flexibleFloat64 `json:"frozen_credits"`
+		UsageCount    int             `json:"usage_count"`
+		TotalSpent    flexibleFloat64 `json:"total_spent"`
+	} `json:"data"`
+}
+
+type flexibleFloat64 float64
+
+func (f *flexibleFloat64) UnmarshalJSON(data []byte) error {
+	var number float64
+	if err := common.Unmarshal(data, &number); err == nil {
+		*f = flexibleFloat64(number)
+		return nil
+	}
+	var text string
+	if err := common.Unmarshal(data, &text); err != nil {
+		return err
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		*f = 0
+		return nil
+	}
+	parsed, err := strconv.ParseFloat(text, 64)
+	if err != nil {
+		return err
+	}
+	*f = flexibleFloat64(parsed)
+	return nil
+}
+
+func (f flexibleFloat64) Float64() float64 {
+	return float64(f)
+}
+
 // GetAuthHeader get auth header
 func GetAuthHeader(token string) http.Header {
 	h := http.Header{}
@@ -133,6 +174,12 @@ func GetClaudeAuthHeader(token string) http.Header {
 	h := http.Header{}
 	h.Add("x-api-key", token)
 	h.Add("anthropic-version", "2023-06-01")
+	return h
+}
+
+func GetAPIKeyHeader(token string) http.Header {
+	h := http.Header{}
+	h.Add("x-api-key", token)
 	return h
 }
 
@@ -356,6 +403,24 @@ func updateChannelMoonshotBalance(channel *model.Channel) (float64, error) {
 	return availableBalanceUsd, nil
 }
 
+func updateChannelAGGCBalance(channel *model.Channel) (float64, error) {
+	url := fmt.Sprintf("%s/api/v1/prot/balance", strings.TrimRight(channel.GetBaseURL(), "/"))
+	body, err := GetResponseBody("GET", url, channel, GetAPIKeyHeader(channel.Key))
+	if err != nil {
+		return 0, err
+	}
+	response := AGGCBalanceResponse{}
+	if err := common.Unmarshal(body, &response); err != nil {
+		return 0, err
+	}
+	if response.Code != 0 {
+		return 0, fmt.Errorf("code: %d, message: %s", response.Code, response.Message)
+	}
+	balance := response.Data.Credits.Float64() - response.Data.FrozenCredits.Float64()
+	channel.UpdateBalance(balance)
+	return balance, nil
+}
+
 func updateChannelBalance(channel *model.Channel) (float64, error) {
 	baseURL := constant.ChannelBaseURLs[channel.Type]
 	if channel.GetBaseURL() == "" {
@@ -386,6 +451,8 @@ func updateChannelBalance(channel *model.Channel) (float64, error) {
 		return updateChannelOpenRouterBalance(channel)
 	case constant.ChannelTypeMoonshot:
 		return updateChannelMoonshotBalance(channel)
+	case constant.ChannelTypeAGGC:
+		return updateChannelAGGCBalance(channel)
 	default:
 		return 0, errors.New("尚未实现")
 	}

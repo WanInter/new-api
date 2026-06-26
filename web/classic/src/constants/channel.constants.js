@@ -204,6 +204,11 @@ export const CHANNEL_OPTIONS = [
     color: 'blue',
     label: 'Xinghe Video',
   },
+  {
+    value: 61,
+    color: 'blue',
+    label: 'AGGC',
+  },
 ];
 
 // Channel types that support upstream model list fetching in UI.

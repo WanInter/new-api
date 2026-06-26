@@ -58,6 +58,7 @@ const (
 	ChannelTypeAdvancedCustom = 58
 	ChannelTypeJimengDimensio = 59
 	ChannelTypeXingheVideo    = 60
+	ChannelTypeAGGC           = 61
 	ChannelTypeDummy          // this one is only for count, do not add any channel after this
 
 )
@@ -124,6 +125,7 @@ var ChannelBaseURLs = []string{
 	"",                                          //58
 	"https://jimeng.dimensio.cn",                //59
 	"http://113.207.49.151:8045",                //60
+	"https://aggc.site",                         //61
 }
 
 var ChannelTypeNames = map[int]string{
@@ -184,6 +186,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeAdvancedCustom: "Advanced Custom",
 	ChannelTypeJimengDimensio: "Jimeng Dimensio",
 	ChannelTypeXingheVideo:    "Xinghe Video",
+	ChannelTypeAGGC:           "AGGC",
 }
 
 func GetChannelTypeName(channelType int) string {
