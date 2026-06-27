@@ -718,16 +718,8 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	}
 
 	if len(aux.Duration) > 0 {
-		var durationInt int
-		if err := common.Unmarshal(aux.Duration, &durationInt); err == nil {
-			t.Duration = durationInt
-		} else {
-			var durationStr string
-			if err := common.Unmarshal(aux.Duration, &durationStr); err == nil && durationStr != "" {
-				if v, err := strconv.Atoi(durationStr); err == nil {
-					t.Duration = v
-				}
-			}
+		if duration, ok := parseDurationSeconds(aux.Duration); ok {
+			t.Duration = duration
 		}
 	}
 
@@ -749,6 +741,38 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 
 	return nil
 }
+
+func parseDurationSeconds(raw json.RawMessage) (int, bool) {
+	var durationInt int
+	if err := common.Unmarshal(raw, &durationInt); err == nil {
+		return durationInt, true
+	}
+
+	var durationFloat float64
+	if err := common.Unmarshal(raw, &durationFloat); err == nil {
+		return int(durationFloat), true
+	}
+
+	var durationStr string
+	if err := common.Unmarshal(raw, &durationStr); err != nil {
+		return 0, false
+	}
+	durationStr = strings.TrimSpace(strings.ToLower(durationStr))
+	durationStr = strings.TrimSuffix(durationStr, "seconds")
+	durationStr = strings.TrimSuffix(durationStr, "second")
+	durationStr = strings.TrimSuffix(durationStr, "secs")
+	durationStr = strings.TrimSuffix(durationStr, "sec")
+	durationStr = strings.TrimSuffix(durationStr, "s")
+	durationStr = strings.TrimSpace(durationStr)
+	if durationStr == "" {
+		return 0, false
+	}
+	if v, err := strconv.ParseFloat(durationStr, 64); err == nil {
+		return int(v), true
+	}
+	return 0, false
+}
+
 func (t *TaskSubmitReq) UnmarshalMetadata(v any) error {
 	metadata := t.Metadata
 	if metadata != nil {

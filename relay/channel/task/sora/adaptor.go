@@ -176,6 +176,11 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		var bodyMap map[string]interface{}
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
 			bodyMap["model"] = info.UpstreamModelName
+			if seconds, ok := normalizeVideoSeconds(bodyMap["seconds"]); ok {
+				bodyMap["seconds"] = seconds
+			} else if seconds, ok := normalizeVideoSeconds(bodyMap["duration"]); ok {
+				bodyMap["seconds"] = seconds
+			}
 			if newBody, err := common.Marshal(bodyMap); err == nil {
 				return bytes.NewReader(newBody), nil
 			}
@@ -191,8 +196,11 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		var buf bytes.Buffer
 		writer := multipart.NewWriter(&buf)
 		writer.WriteField("model", info.UpstreamModelName)
+		if seconds := normalizeVideoSecondsFromForm(formData.Value); seconds != "" {
+			writer.WriteField("seconds", seconds)
+		}
 		for key, values := range formData.Value {
-			if key == "model" {
+			if key == "model" || key == "seconds" {
 				continue
 			}
 			for _, v := range values {
@@ -235,6 +243,62 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 
 	return common.ReaderOnly(storage), nil
+}
+
+func normalizeVideoSecondsFromForm(values map[string][]string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	if rawValues := values["seconds"]; len(rawValues) > 0 {
+		if seconds, ok := normalizeVideoSeconds(rawValues[0]); ok {
+			return seconds
+		}
+	}
+	if rawValues := values["duration"]; len(rawValues) > 0 {
+		if seconds, ok := normalizeVideoSeconds(rawValues[0]); ok {
+			return seconds
+		}
+	}
+	return ""
+}
+
+func normalizeVideoSeconds(value any) (string, bool) {
+	switch v := value.(type) {
+	case nil:
+		return "", false
+	case string:
+		seconds := strings.TrimSpace(strings.ToLower(v))
+		seconds = strings.TrimSuffix(seconds, "seconds")
+		seconds = strings.TrimSuffix(seconds, "second")
+		seconds = strings.TrimSuffix(seconds, "secs")
+		seconds = strings.TrimSuffix(seconds, "sec")
+		seconds = strings.TrimSuffix(seconds, "s")
+		seconds = strings.TrimSpace(seconds)
+		if seconds == "" {
+			return "", false
+		}
+		if f, err := strconv.ParseFloat(seconds, 64); err == nil && f > 0 {
+			return strconv.Itoa(int(f)), true
+		}
+		return "", false
+	case int:
+		if v > 0 {
+			return strconv.Itoa(v), true
+		}
+	case int64:
+		if v > 0 {
+			return strconv.FormatInt(v, 10), true
+		}
+	case float64:
+		if v > 0 {
+			return strconv.Itoa(int(v)), true
+		}
+	case float32:
+		if v > 0 {
+			return strconv.Itoa(int(v)), true
+		}
+	}
+	return "", false
 }
 
 // DoRequest delegates to common helper.

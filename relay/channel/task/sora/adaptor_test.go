@@ -96,3 +96,29 @@ func TestConvertToOpenAIVideoPromotesMetadataURLToSoraResponseShape(t *testing.T
 	require.True(t, ok)
 	require.Equal(t, "https://example.com/video.mp4", video["url"])
 }
+
+func TestNormalizeVideoSeconds(t *testing.T) {
+	tests := []struct {
+		name string
+		in   any
+		want string
+	}{
+		{name: "int", in: 15, want: "15"},
+		{name: "float", in: float64(15), want: "15"},
+		{name: "string", in: "15", want: "15"},
+		{name: "string seconds suffix", in: "15s", want: "15"},
+		{name: "string word suffix", in: "15 seconds", want: "15"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := normalizeVideoSeconds(tt.in)
+			require.True(t, ok)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestNormalizeVideoSecondsFromFormUsesDurationFallback(t *testing.T) {
+	require.Equal(t, "15", normalizeVideoSecondsFromForm(map[string][]string{"duration": {"15s"}}))
+	require.Equal(t, "10", normalizeVideoSecondsFromForm(map[string][]string{"seconds": {"10s"}, "duration": {"15s"}}))
+}
