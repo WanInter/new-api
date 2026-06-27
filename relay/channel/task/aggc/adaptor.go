@@ -298,26 +298,78 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
-	ov := originTask.ToOpenAIVideo()
-	if u := originTask.GetResultURL(); u != "" {
-		ov.SetMetadata("url", u)
-		ov.SetMetadata("video_url", u)
-		ov.SetMetadata("result_url", u)
-	}
 	var parsed queryResponse
 	if len(originTask.Data) > 0 {
 		_ = common.Unmarshal(originTask.Data, &parsed)
 	}
+
+	out := map[string]any{
+		"id":       originTask.TaskID,
+		"object":   "video",
+		"model":    originTask.Properties.OriginModelName,
+		"progress": progressInt(originTask.Progress, parsed.Data.Progress),
+		"status":   aggcOpenAIStatus(originTask.Status, parsed.Data.Status),
+	}
+	if upstreamTaskID := strings.TrimSpace(originTask.GetUpstreamTaskID()); upstreamTaskID != "" && upstreamTaskID != originTask.TaskID {
+		out["task_id"] = upstreamTaskID
+	}
+	if originTask.CreatedAt > 0 {
+		out["created_at"] = originTask.CreatedAt
+	}
+	if originTask.FinishTime > 0 {
+		out["completed_at"] = originTask.FinishTime
+	} else if originTask.UpdatedAt > 0 && originTask.Status == model.TaskStatusSuccess {
+		out["completed_at"] = originTask.UpdatedAt
+	}
+
+	if u := firstNonEmpty(parsed.Data.VideoURL, originTask.GetResultURL()); u != "" {
+		out["result_url"] = u
+		out["url"] = u
+		out["video_url"] = u
+		out["output"] = []string{u}
+		out["video"] = map[string]any{"url": u}
+	}
 	if parsed.Data.VideoCoverURL != "" {
-		ov.SetMetadata("video_cover_url", parsed.Data.VideoCoverURL)
+		out["video_cover_url"] = parsed.Data.VideoCoverURL
 	}
 	if originTask.Status == model.TaskStatusFailure {
-		ov.Error = &dto.OpenAIVideoError{Message: firstNonEmpty(parsed.Data.FailReason, parsed.Data.Error, parsed.Data.Message, originTask.FailReason), Code: fmt.Sprintf("%d", parsed.Code)}
+		out["error"] = &dto.OpenAIVideoError{Message: firstNonEmpty(parsed.Data.FailReason, parsed.Data.Error, parsed.Data.Message, originTask.FailReason), Code: fmt.Sprintf("%d", parsed.Code)}
 	}
-	return common.Marshal(ov)
+	return common.Marshal(out)
 }
 
 func (a *TaskAdaptor) GetModelList() []string { return ModelList }
+
+func aggcOpenAIStatus(status model.TaskStatus, raw string) string {
+	if converted := status.ToVideoStatus(); converted != dto.VideoStatusUnknown {
+		return converted
+	}
+	switch mapAggcStatus(raw) {
+	case model.TaskStatusSuccess:
+		return dto.VideoStatusCompleted
+	case model.TaskStatusFailure:
+		return dto.VideoStatusFailed
+	case model.TaskStatusQueued, model.TaskStatusSubmitted:
+		return dto.VideoStatusQueued
+	default:
+		return dto.VideoStatusInProgress
+	}
+}
+
+func progressInt(progress string, fallback any) int {
+	progress = strings.TrimSpace(strings.TrimSuffix(progress, "%"))
+	if progress != "" {
+		if n, err := strconv.Atoi(progress); err == nil {
+			return n
+		}
+	}
+	if s := strings.TrimSpace(anyToString(fallback)); s != "" {
+		if n, err := strconv.Atoi(strings.TrimSuffix(s, "%")); err == nil {
+			return n
+		}
+	}
+	return 0
+}
 func (a *TaskAdaptor) GetChannelName() string { return ChannelName }
 
 func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (*requestPayload, error) {

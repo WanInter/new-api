@@ -21,7 +21,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
-	"github.com/tidwall/sjson"
 )
 
 // ============================
@@ -39,22 +38,22 @@ type ImageURL struct {
 }
 
 type responseTask struct {
-	ID                 string   `json:"id"`
-	TaskID             string   `json:"task_id,omitempty"` //兼容旧接口
-	Object             string   `json:"object"`
-	Model              string   `json:"model"`
-	Status             string   `json:"status"`
-	Progress           int      `json:"progress"`
-	CreatedAt          int64    `json:"created_at"`
-	CompletedAt        int64    `json:"completed_at,omitempty"`
-	ExpiresAt          int64    `json:"expires_at,omitempty"`
-	Seconds            string   `json:"seconds,omitempty"`
-	Size               string   `json:"size,omitempty"`
-	RemixedFromVideoID string   `json:"remixed_from_video_id,omitempty"`
-	ResultURL          string   `json:"result_url,omitempty"`
-	VideoURL           string   `json:"video_url,omitempty"`
-	URL                string   `json:"url,omitempty"`
-	Output             []string `json:"output,omitempty"`
+	ID                 string `json:"id"`
+	TaskID             string `json:"task_id,omitempty"` //兼容旧接口
+	Object             string `json:"object"`
+	Model              string `json:"model"`
+	Status             string `json:"status"`
+	Progress           int    `json:"progress"`
+	CreatedAt          int64  `json:"created_at"`
+	CompletedAt        int64  `json:"completed_at,omitempty"`
+	ExpiresAt          int64  `json:"expires_at,omitempty"`
+	Seconds            string `json:"seconds,omitempty"`
+	Size               string `json:"size,omitempty"`
+	RemixedFromVideoID string `json:"remixed_from_video_id,omitempty"`
+	ResultURL          string `json:"result_url,omitempty"`
+	VideoURL           string `json:"video_url,omitempty"`
+	URL                string `json:"url,omitempty"`
+	Output             any    `json:"output,omitempty"`
 	Video              *struct {
 		URL string `json:"url,omitempty"`
 	} `json:"video,omitempty"`
@@ -73,12 +72,7 @@ func extractResponseTaskVideoURL(task responseTask) string {
 	if task.Video != nil && strings.TrimSpace(task.Video.URL) != "" {
 		return strings.TrimSpace(task.Video.URL)
 	}
-	for _, candidate := range task.Output {
-		if strings.TrimSpace(candidate) != "" {
-			return strings.TrimSpace(candidate)
-		}
-	}
-	return ""
+	return extractVideoURLFromAny(task.Output)
 }
 
 // ============================
@@ -346,10 +340,127 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
-	data := task.Data
-	var err error
-	if data, err = sjson.SetBytes(data, "id", task.TaskID); err != nil {
-		return nil, errors.Wrap(err, "set id failed")
+	payload := map[string]any{}
+	if len(task.Data) > 0 {
+		if err := common.Unmarshal(task.Data, &payload); err != nil {
+			return nil, errors.Wrap(err, "unmarshal sora video response failed")
+		}
 	}
-	return data, nil
+
+	payload["id"] = task.TaskID
+	if strings.TrimSpace(stringValue(payload["object"])) == "" {
+		payload["object"] = "video"
+	}
+	if upstreamTaskID := strings.TrimSpace(task.GetUpstreamTaskID()); upstreamTaskID != "" && upstreamTaskID != task.TaskID {
+		payload["task_id"] = upstreamTaskID
+	}
+	if strings.TrimSpace(stringValue(payload["model"])) == "" && task.Properties.OriginModelName != "" {
+		payload["model"] = task.Properties.OriginModelName
+	}
+	payload["status"] = toSoraCompatibleVideoStatus(task.Status, stringValue(payload["status"]))
+	if _, ok := payload["progress"]; !ok {
+		progress, _ := strconv.Atoi(strings.TrimSuffix(task.Progress, "%"))
+		payload["progress"] = progress
+	}
+	if _, ok := payload["created_at"]; !ok && task.CreatedAt > 0 {
+		payload["created_at"] = task.CreatedAt
+	}
+	if _, ok := payload["completed_at"]; !ok && task.FinishTime > 0 {
+		payload["completed_at"] = task.FinishTime
+	}
+
+	if url := firstNonEmpty(extractVideoURLFromAny(payload), task.GetResultURL()); url != "" {
+		payload["result_url"] = url
+		payload["url"] = url
+		payload["video_url"] = url
+		payload["output"] = []string{url}
+		video, _ := payload["video"].(map[string]any)
+		if video == nil {
+			video = map[string]any{}
+		}
+		video["url"] = url
+		payload["video"] = video
+	}
+
+	return common.Marshal(payload)
+}
+
+func toSoraCompatibleVideoStatus(status model.TaskStatus, raw string) string {
+	if converted := status.ToVideoStatus(); converted != dto.VideoStatusUnknown {
+		return converted
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "completed", "complete", "done", "succeeded", "success":
+		return dto.VideoStatusCompleted
+	case "processing", "in_progress", "running":
+		return dto.VideoStatusInProgress
+	case "pending", "queued", "submitted":
+		return dto.VideoStatusQueued
+	case "failed", "error", "cancelled", "canceled":
+		return dto.VideoStatusFailed
+	default:
+		return strings.ToLower(strings.TrimSpace(raw))
+	}
+}
+
+func extractVideoURLFromAny(v any) string {
+	switch typed := v.(type) {
+	case map[string]any:
+		for _, key := range []string{"video_url", "result_url", "url", "uri"} {
+			if url := strings.TrimSpace(stringValue(typed[key])); url != "" {
+				return url
+			}
+		}
+		for _, key := range []string{"output", "result_urls"} {
+			if url := firstStringFromAnySlice(typed[key]); url != "" {
+				return url
+			}
+		}
+		for _, key := range []string{"video", "metadata", "response", "data"} {
+			if url := extractVideoURLFromAny(typed[key]); url != "" {
+				return url
+			}
+		}
+	case []any:
+		for _, item := range typed {
+			if url := strings.TrimSpace(stringValue(item)); url != "" {
+				return url
+			}
+		}
+	}
+	return ""
+}
+
+func firstStringFromAnySlice(v any) string {
+	switch typed := v.(type) {
+	case []any:
+		for _, item := range typed {
+			if url := strings.TrimSpace(stringValue(item)); url != "" {
+				return url
+			}
+		}
+	case []string:
+		for _, item := range typed {
+			if url := strings.TrimSpace(item); url != "" {
+				return url
+			}
+		}
+	}
+	return ""
+}
+
+func stringValue(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }

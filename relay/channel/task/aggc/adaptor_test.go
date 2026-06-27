@@ -25,6 +25,52 @@ func TestParseTaskResultSuccess(t *testing.T) {
 	}
 }
 
+func TestConvertToOpenAIVideoUsesSoraCompatibleResponseShape(t *testing.T) {
+	task := &model.Task{
+		TaskID:    "task_public",
+		Status:    model.TaskStatusSuccess,
+		Progress:  "100%",
+		CreatedAt: 1782570791,
+		UpdatedAt: 1782571022,
+		PrivateData: model.TaskPrivateData{
+			UpstreamTaskID: "123",
+		},
+		Properties: model.Properties{
+			OriginModelName: "sd-bak-2",
+		},
+		Data: []byte(`{
+			"code":0,
+			"message":"OK",
+			"data":{
+				"job_id":123,
+				"status":"success",
+				"video_url":"https://example.com/result.mp4",
+				"video_cover_url":"https://example.com/cover.jpg"
+			}
+		}`),
+	}
+
+	body, err := (&TaskAdaptor{}).ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+
+	var got map[string]any
+	require.NoError(t, common.Unmarshal(body, &got))
+	require.Equal(t, "task_public", got["id"])
+	require.Equal(t, "video", got["object"])
+	require.Equal(t, "123", got["task_id"])
+	require.Equal(t, "sd-bak-2", got["model"])
+	require.Equal(t, "completed", got["status"])
+	require.Equal(t, "https://example.com/result.mp4", got["result_url"])
+	require.Equal(t, "https://example.com/result.mp4", got["url"])
+	require.Equal(t, "https://example.com/result.mp4", got["video_url"])
+	require.Equal(t, []any{"https://example.com/result.mp4"}, got["output"])
+	require.Equal(t, "https://example.com/cover.jpg", got["video_cover_url"])
+
+	video, ok := got["video"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "https://example.com/result.mp4", video["url"])
+}
+
 func TestDoResponseExtractsTaskID(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	payload := []byte(`{"code":0,"message":"OK","data":{"job_id":123,"status":"queued"}}`)

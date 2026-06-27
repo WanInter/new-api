@@ -3,6 +3,8 @@ package jimengdimensio
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/stretchr/testify/require"
 )
@@ -53,4 +55,45 @@ func TestConvertToRequestPayloadUsesAspectRatioMetadata(t *testing.T) {
 	}, info)
 	require.NoError(t, err)
 	require.Equal(t, "16:9", payload.Ratio)
+}
+
+func TestConvertToOpenAIVideoUsesSoraCompatibleResponseShape(t *testing.T) {
+	task := &model.Task{
+		TaskID:    "task_public",
+		Status:    model.TaskStatusSuccess,
+		Progress:  "100%",
+		CreatedAt: 1782570791,
+		UpdatedAt: 1782571022,
+		PrivateData: model.TaskPrivateData{
+			UpstreamTaskID: "task_upstream",
+		},
+		Properties: model.Properties{
+			OriginModelName: "Seedance2.0-jimeng",
+		},
+		Data: []byte(`{
+			"task_id":"task_upstream",
+			"status":"completed",
+			"progress":100,
+			"result":{"url":"https://example.com/video.mp4"}
+		}`),
+	}
+
+	body, err := (&TaskAdaptor{}).ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+
+	var got map[string]any
+	require.NoError(t, common.Unmarshal(body, &got))
+	require.Equal(t, "task_public", got["id"])
+	require.Equal(t, "video", got["object"])
+	require.Equal(t, "task_upstream", got["task_id"])
+	require.Equal(t, "Seedance2.0-jimeng", got["model"])
+	require.Equal(t, "completed", got["status"])
+	require.Equal(t, "https://example.com/video.mp4", got["result_url"])
+	require.Equal(t, "https://example.com/video.mp4", got["url"])
+	require.Equal(t, "https://example.com/video.mp4", got["video_url"])
+	require.Equal(t, []any{"https://example.com/video.mp4"}, got["output"])
+
+	video, ok := got["video"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "https://example.com/video.mp4", video["url"])
 }

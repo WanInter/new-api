@@ -7,6 +7,9 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -62,4 +65,41 @@ func TestTaskModel2DtoHidesInternalModelNamesForOtherChannels(t *testing.T) {
 	assert.Contains(t, string(encoded), "model_name")
 	assert.Equal(t, "sora-upstream", task.Properties.UpstreamModelName)
 	assert.Equal(t, "sora-origin", task.Properties.OriginModelName)
+}
+
+func TestShouldApplyTaskOtherRatiosSkipsFixedModelPrice(t *testing.T) {
+	info := &relaycommon.RelayInfo{
+		PriceData: types.PriceData{
+			UsePrice: true,
+			Quota:    10,
+			OtherRatios: map[string]float64{
+				"seconds": 15,
+			},
+		},
+	}
+
+	assert.False(t, shouldApplyTaskOtherRatios(info, "grok-image-video"))
+}
+
+func TestShouldApplyTaskOtherRatiosKeepsDynamicRatioBilling(t *testing.T) {
+	info := &relaycommon.RelayInfo{
+		PriceData: types.PriceData{
+			UsePrice: false,
+			Quota:    10,
+			OtherRatios: map[string]float64{
+				"seconds": 15,
+			},
+		},
+	}
+
+	assert.True(t, shouldApplyTaskOtherRatios(info, "dynamic-video-model"))
+}
+
+func TestShouldApplyTaskOtherRatiosSkipsTieredExpressionBilling(t *testing.T) {
+	info := &relaycommon.RelayInfo{
+		PriceData:             types.PriceData{UsePrice: false, Quota: 10},
+		TieredBillingSnapshot: &billingexpr.BillingSnapshot{ModelName: "tiered-video-model"},
+	}
+
+	assert.False(t, shouldApplyTaskOtherRatios(info, "tiered-video-model"))
 }

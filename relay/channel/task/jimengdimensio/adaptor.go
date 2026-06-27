@@ -439,21 +439,81 @@ func (a *TaskAdaptor) GetModelList() []string { return ModelList }
 func (a *TaskAdaptor) GetChannelName() string { return ChannelName }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
-	openAIVideo := originTask.ToOpenAIVideo()
 	var res taskResponse
 	if len(originTask.Data) > 0 {
 		_ = common.Unmarshal(originTask.Data, &res)
 	}
-	if res.Result.URL != "" {
-		openAIVideo.SetMetadata("url", res.Result.URL)
+
+	out := map[string]any{
+		"id":       originTask.TaskID,
+		"object":   "video",
+		"model":    originTask.Properties.OriginModelName,
+		"progress": progressInt(originTask.Progress, res.Progress),
+		"status":   jimengDimensioOpenAIStatus(originTask.Status, res.Status),
+	}
+	if upstreamTaskID := strings.TrimSpace(originTask.GetUpstreamTaskID()); upstreamTaskID != "" && upstreamTaskID != originTask.TaskID {
+		out["task_id"] = upstreamTaskID
+	}
+	if originTask.CreatedAt > 0 {
+		out["created_at"] = originTask.CreatedAt
+	}
+	if originTask.FinishTime > 0 {
+		out["completed_at"] = originTask.FinishTime
+	} else if originTask.UpdatedAt > 0 && originTask.Status == model.TaskStatusSuccess {
+		out["completed_at"] = originTask.UpdatedAt
+	}
+
+	if url := firstNonEmpty(res.Result.URL, originTask.GetResultURL()); url != "" {
+		out["result_url"] = url
+		out["url"] = url
+		out["video_url"] = url
+		out["output"] = []string{url}
+		out["video"] = map[string]any{"url": url}
 	}
 	if res.Result.B64URL != "" {
-		openAIVideo.SetMetadata("b64_url", res.Result.B64URL)
+		out["b64_url"] = res.Result.B64URL
 	}
 	if res.Error != "" || originTask.Status == model.TaskStatusFailure {
-		openAIVideo.Error = &dto.OpenAIVideoError{Message: defaultString(res.Error, originTask.FailReason), Code: res.ErrorCode}
+		out["error"] = &dto.OpenAIVideoError{Message: defaultString(res.Error, originTask.FailReason), Code: res.ErrorCode}
 	}
-	return common.Marshal(openAIVideo)
+	return common.Marshal(out)
+}
+
+func jimengDimensioOpenAIStatus(status model.TaskStatus, raw string) string {
+	if converted := status.ToVideoStatus(); converted != dto.VideoStatusUnknown {
+		return converted
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "completed", "complete", "done", "succeeded", "success":
+		return dto.VideoStatusCompleted
+	case "pending", "queued", "submitted":
+		return dto.VideoStatusQueued
+	case "processing", "in_progress", "running":
+		return dto.VideoStatusInProgress
+	case "failed", "error", "cancelled", "canceled":
+		return dto.VideoStatusFailed
+	default:
+		return strings.ToLower(strings.TrimSpace(raw))
+	}
+}
+
+func progressInt(progress string, fallback int) int {
+	progress = strings.TrimSpace(strings.TrimSuffix(progress, "%"))
+	if progress != "" {
+		if n, err := strconv.Atoi(progress); err == nil {
+			return n
+		}
+	}
+	return fallback
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (*requestPayload, error) {

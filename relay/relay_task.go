@@ -196,7 +196,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 6. 将 OtherRatios 应用到基础额度。
 	// 表达式计费已经在 ModelPriceHelperPerCall 中读取请求参数并计算出完整价格，
 	// 这里不能再叠加 seconds/resolution 等倍率，否则会重复计费。
-	if info.TieredBillingSnapshot == nil && !common.StringsContains(constant.TaskPricePatches, modelName) {
+	if shouldApplyTaskOtherRatios(info, modelName) {
 		for _, ra := range info.PriceData.OtherRatios {
 			if ra != 1.0 {
 				info.PriceData.Quota = int(float64(info.PriceData.Quota) * ra)
@@ -244,11 +244,14 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 11. 提交后计费调整：让适配器根据上游实际返回调整 OtherRatios
 	finalQuota := info.PriceData.Quota
-	if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData); len(adjustedRatios) > 0 {
-		// 基于调整后的 ratios 重新计算 quota
-		finalQuota = recalcQuotaFromRatios(info, adjustedRatios)
-		info.PriceData.OtherRatios = adjustedRatios
-		info.PriceData.Quota = finalQuota
+	if shouldApplyTaskOtherRatios(info, modelName) {
+		adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData)
+		if len(adjustedRatios) > 0 {
+			// 基于调整后的 ratios 重新计算 quota
+			finalQuota = recalcQuotaFromRatios(info, adjustedRatios)
+			info.PriceData.OtherRatios = adjustedRatios
+			info.PriceData.Quota = finalQuota
+		}
 	}
 
 	return &TaskSubmitResult{
@@ -257,6 +260,19 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		Platform:       platform,
 		Quota:          finalQuota,
 	}, nil
+}
+
+func shouldApplyTaskOtherRatios(info *relaycommon.RelayInfo, modelName string) bool {
+	if info == nil {
+		return false
+	}
+	if info.TieredBillingSnapshot != nil {
+		return false
+	}
+	if info.PriceData.UsePrice {
+		return false
+	}
+	return !common.StringsContains(constant.TaskPricePatches, modelName)
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。
