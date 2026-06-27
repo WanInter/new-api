@@ -540,6 +540,14 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 	}
 }
 
+func taskDtoProperties(task *model.Task) any {
+	properties := task.Properties
+	if task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeJimengDimensio)) {
+		properties.UpstreamModelName = ""
+	}
+	return properties
+}
+
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 	return &dto.TaskDto{
 		ID:         task.ID,
@@ -559,7 +567,7 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		StartTime:  task.StartTime,
 		FinishTime: task.FinishTime,
 		Progress:   task.Progress,
-		Properties: task.Properties,
+		Properties: taskDtoProperties(task),
 		Username:   task.Username,
 		Data:       task.Data,
 	}
