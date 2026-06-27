@@ -270,6 +270,7 @@ export interface TaskLog {
   finish_time?: number // seconds
   progress?: string
   progress_message_en?: string
+  model_name?: string
   properties?: TaskLogProperties | string
   data?: string // JSON string
   fail_reason?: string

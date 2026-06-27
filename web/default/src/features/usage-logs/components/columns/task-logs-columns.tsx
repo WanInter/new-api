@@ -47,25 +47,7 @@ import {
 
 
 function getTaskModelName(log: TaskLog): string {
-  const properties = log.properties
-  if (!properties) return ''
-
-  if (typeof properties === 'string') {
-    try {
-      const parsed = JSON.parse(properties) as Record<string, unknown>
-      return (
-        (typeof parsed.origin_model_name === 'string' &&
-          parsed.origin_model_name) ||
-        (typeof parsed.upstream_model_name === 'string' &&
-          parsed.upstream_model_name) ||
-        ''
-      )
-    } catch {
-      return ''
-    }
-  }
-
-  return properties.origin_model_name || properties.upstream_model_name || ''
+  return log.model_name || ''
 }
 
 function parseTaskData(data: unknown): unknown[] {

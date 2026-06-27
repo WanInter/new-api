@@ -47,6 +47,7 @@ type TaskDto struct {
 	StartTime  int64           `json:"start_time"`
 	FinishTime int64           `json:"finish_time"`
 	Progress   string          `json:"progress"`
+	ModelName  string          `json:"model_name,omitempty"` // Safe display model name (local/origin model)
 	Properties any             `json:"properties"`
 	Username   string          `json:"username,omitempty"`
 	Data       json.RawMessage `json:"data"`

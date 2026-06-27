@@ -542,9 +542,11 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 
 func taskDtoProperties(task *model.Task) any {
 	properties := task.Properties
-	if task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeJimengDimensio)) {
-		properties.UpstreamModelName = ""
-	}
+	// Model mapping names are internal routing/billing metadata and must not be
+	// exposed in task detail/list responses. Keep them in task.Properties for
+	// storage and billing, but strip them from the DTO copy returned to users/admin UI.
+	properties.UpstreamModelName = ""
+	properties.OriginModelName = ""
 	return properties
 }
 
@@ -567,6 +569,7 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		StartTime:  task.StartTime,
 		FinishTime: task.FinishTime,
 		Progress:   task.Progress,
+		ModelName:  task.Properties.OriginModelName,
 		Properties: taskDtoProperties(task),
 		Username:   task.Username,
 		Data:       task.Data,
