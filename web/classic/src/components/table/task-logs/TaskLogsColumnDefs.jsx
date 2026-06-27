@@ -143,6 +143,23 @@ const renderType = (type, t) => {
   }
 };
 
+
+const getTaskModelName = (record) => {
+  const properties = record?.properties;
+  if (!properties) return '';
+
+  if (typeof properties === 'string') {
+    try {
+      const parsed = JSON.parse(properties);
+      return parsed?.origin_model_name || parsed?.upstream_model_name || '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  return properties.origin_model_name || properties.upstream_model_name || '';
+};
+
 const renderPlatform = (platform, t) => {
   let option = CHANNEL_OPTIONS.find(
     (opt) => String(opt.value) === String(platform),
@@ -314,12 +331,34 @@ export const getTaskLogsColumns = ({
         );
       },
     },
+    ...(isAdminUser
+      ? [
+          {
+            key: COLUMN_KEYS.PLATFORM,
+            title: t('平台'),
+            dataIndex: 'platform',
+            render: (text, record, index) => {
+              return <div>{renderPlatform(text, t)}</div>;
+            },
+          },
+        ]
+      : []),
     {
-      key: COLUMN_KEYS.PLATFORM,
-      title: t('平台'),
-      dataIndex: 'platform',
+      key: COLUMN_KEYS.MODEL,
+      title: t('模型'),
+      dataIndex: 'properties',
       render: (text, record, index) => {
-        return <div>{renderPlatform(text, t)}</div>;
+        const modelName = getTaskModelName(record);
+        if (!modelName) return t('无');
+        return (
+          <Typography.Text
+            ellipsis={{ showTooltip: true }}
+            style={{ maxWidth: 180 }}
+            copyable={{ content: modelName }}
+          >
+            {modelName}
+          </Typography.Text>
+        );
       },
     },
     {

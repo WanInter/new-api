@@ -252,6 +252,12 @@ export interface MidjourneyLog {
 // Task Logs Types
 // ============================================================================
 
+export interface TaskLogProperties {
+  input?: string
+  origin_model_name?: string
+  upstream_model_name?: string
+}
+
 export interface TaskLog {
   id: number
   user_id: number
@@ -264,6 +270,7 @@ export interface TaskLog {
   finish_time?: number // seconds
   progress?: string
   progress_message_en?: string
+  properties?: TaskLogProperties | string
   data?: string // JSON string
   fail_reason?: string
   status: string // NOT_START, SUBMITTED, IN_PROGRESS, SUCCESS, FAILURE, QUEUED, UNKNOWN

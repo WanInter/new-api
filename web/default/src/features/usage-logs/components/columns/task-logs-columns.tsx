@@ -27,7 +27,11 @@ import { cn } from '@/lib/utils'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { StatusBadge } from '@/components/status-badge'
 import { TASK_ACTIONS, TASK_STATUS } from '../../constants'
-import { taskActionMapper, taskStatusMapper } from '../../lib/mappers'
+import {
+  taskActionMapper,
+  taskPlatformMapper,
+  taskStatusMapper,
+} from '../../lib/mappers'
 import type { TaskLog } from '../../types'
 import {
   AudioPreviewDialog,
@@ -40,6 +44,29 @@ import {
   createChannelColumn,
   createProgressColumn,
 } from './column-helpers'
+
+
+function getTaskModelName(log: TaskLog): string {
+  const properties = log.properties
+  if (!properties) return ''
+
+  if (typeof properties === 'string') {
+    try {
+      const parsed = JSON.parse(properties) as Record<string, unknown>
+      return (
+        (typeof parsed.origin_model_name === 'string' &&
+          parsed.origin_model_name) ||
+        (typeof parsed.upstream_model_name === 'string' &&
+          parsed.upstream_model_name) ||
+        ''
+      )
+    } catch {
+      return ''
+    }
+  }
+
+  return properties.origin_model_name || properties.upstream_model_name || ''
+}
 
 function parseTaskData(data: unknown): unknown[] {
   if (Array.isArray(data)) return data
@@ -157,10 +184,45 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
           </button>
         )
       },
+    },
+    {
+      accessorKey: 'platform',
+      header: t('Platform'),
+      cell: ({ row }) => {
+        const platform = row.getValue('platform') as string
+        return (
+          <StatusBadge
+            label={t(taskPlatformMapper.getLabel(platform, platform || '-'))}
+            variant={taskPlatformMapper.getVariant(platform)}
+            size='sm'
+            copyable={false}
+            className='-ml-1.5'
+          />
+        )
+      },
     })
   }
 
   columns.push(
+    {
+      id: 'model',
+      header: t('Model'),
+      accessorFn: (row) => getTaskModelName(row),
+      cell: ({ row }) => {
+        const modelName = row.getValue('model') as string
+        if (!modelName) {
+          return <span className='text-muted-foreground/60 text-xs'>-</span>
+        }
+        return (
+          <StatusBadge
+            label={modelName}
+            autoColor={modelName}
+            size='sm'
+            className='border-border/60 bg-muted/30 max-w-[180px] truncate rounded-md border px-1.5 py-0.5 font-mono'
+          />
+        )
+      },
+    },
     {
       accessorKey: 'task_id',
       header: t('Task ID'),
@@ -179,7 +241,7 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
               className='border-border/60 bg-muted/30 max-w-full truncate rounded-md border px-1.5 py-0.5 font-mono'
             />
             <span className='text-muted-foreground/60 truncate text-[11px]'>
-              {t(log.platform)} · {t(taskActionMapper.getLabel(log.action))}
+              {t(taskActionMapper.getLabel(log.action))}
             </span>
           </div>
         )
