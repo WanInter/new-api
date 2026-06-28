@@ -31,7 +31,7 @@ func TestConvertToRequestPayloadSelectsFunctionModeByImageCount(t *testing.T) {
 
 	payload, err := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{Prompt: "text only"}, info)
 	require.NoError(t, err)
-	require.Equal(t, "first_last_frames", payload.FunctionMode)
+	require.Empty(t, payload.FunctionMode)
 
 	payload, err = adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{Prompt: "two images", Images: []string{"https://example.com/1.jpg", "https://example.com/2.jpg"}}, info)
 	require.NoError(t, err)

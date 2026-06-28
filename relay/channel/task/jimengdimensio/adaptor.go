@@ -595,6 +595,9 @@ func applyReferenceFilesAndMode(payload *requestPayload) {
 			imageCount++
 		}
 	}
+	if imageCount == 0 {
+		return
+	}
 	if imageCount > 2 {
 		payload.FunctionMode = "omni_reference"
 		return
