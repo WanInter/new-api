@@ -176,6 +176,15 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		var bodyMap map[string]interface{}
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
 			bodyMap["model"] = info.UpstreamModelName
+			if shouldUseVeoReferenceImages(info, bodyMap) {
+				if images := collectVeoImages(bodyMap); len(images) > 2 {
+					bodyMap["Ingredients_images"] = images
+				} else if len(images) > 0 {
+					bodyMap["images"] = images
+				}
+				delete(bodyMap, "image")
+				delete(bodyMap, "input_reference")
+			}
 			if seconds, ok := normalizeVideoSeconds(bodyMap["seconds"]); ok {
 				bodyMap["seconds"] = seconds
 			} else if seconds, ok := normalizeVideoSeconds(bodyMap["duration"]); ok {
@@ -243,6 +252,41 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 
 	return common.ReaderOnly(storage), nil
+}
+
+func shouldUseVeoReferenceImages(info *relaycommon.RelayInfo, body map[string]interface{}) bool {
+	if info == nil || strings.TrimSpace(info.OriginModelName) != "veo-omni-flash" {
+		return false
+	}
+	return len(collectVeoImages(body)) > 0
+}
+
+func collectVeoImages(body map[string]interface{}) []string {
+	if body == nil {
+		return nil
+	}
+	images := make([]string, 0)
+	appendImages := func(v any) {
+		switch typed := v.(type) {
+		case []string:
+			images = append(images, typed...)
+		case []any:
+			for _, item := range typed {
+				if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+					images = append(images, strings.TrimSpace(s))
+				}
+			}
+		case string:
+			if strings.TrimSpace(typed) != "" {
+				images = append(images, strings.TrimSpace(typed))
+			}
+		}
+	}
+
+	appendImages(body["images"])
+	appendImages(body["image"])
+	appendImages(body["input_reference"])
+	return images
 }
 
 func normalizeVideoSecondsFromForm(values map[string][]string) string {
