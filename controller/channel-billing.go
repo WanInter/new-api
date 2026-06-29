@@ -453,6 +453,8 @@ func updateChannelBalance(channel *model.Channel) (float64, error) {
 		return updateChannelMoonshotBalance(channel)
 	case constant.ChannelTypeAGGC:
 		return updateChannelAGGCBalance(channel)
+	case constant.ChannelTypeYobox:
+		return 0, errors.New("尚未实现")
 	default:
 		return 0, errors.New("尚未实现")
 	}

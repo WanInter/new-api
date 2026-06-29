@@ -55,6 +55,7 @@ export function getChannelTypeIcon(type: number): string {
     59: 'Jimeng', // Jimeng Dimensio
     60: 'Video', // Xinghe Video
     61: 'Video', // AGGC
+    62: 'Video', // Yobox
     3: 'Azure', // Azure
 
     // Anthropic

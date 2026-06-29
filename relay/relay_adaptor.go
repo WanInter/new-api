@@ -34,13 +34,14 @@ import (
 	taskaggc "github.com/QuantumNous/new-api/relay/channel/task/aggc"
 	taskali "github.com/QuantumNous/new-api/relay/channel/task/ali"
 	taskdoubao "github.com/QuantumNous/new-api/relay/channel/task/doubao"
-	taskGemini "github.com/QuantumNous/new-api/relay/channel/task/gemini"
+taskGemini "github.com/QuantumNous/new-api/relay/channel/task/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/task/hailuo"
 	taskjimeng "github.com/QuantumNous/new-api/relay/channel/task/jimeng"
 	taskjimengdimensio "github.com/QuantumNous/new-api/relay/channel/task/jimengdimensio"
 	"github.com/QuantumNous/new-api/relay/channel/task/kling"
 	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
 	"github.com/QuantumNous/new-api/relay/channel/task/suno"
+	taskyobox "github.com/QuantumNous/new-api/relay/channel/task/yobox"
 	taskvertex "github.com/QuantumNous/new-api/relay/channel/task/vertex"
 	taskVidu "github.com/QuantumNous/new-api/relay/channel/task/vidu"
 	taskxinghe "github.com/QuantumNous/new-api/relay/channel/task/xinghe"
@@ -159,6 +160,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &taskxinghe.TaskAdaptor{}
 		case constant.ChannelTypeAGGC:
 			return &taskaggc.TaskAdaptor{}
+		case constant.ChannelTypeYobox:
+			return &taskyobox.TaskAdaptor{}
 		case constant.ChannelTypeVertexAi:
 			return &taskvertex.TaskAdaptor{}
 		case constant.ChannelTypeVidu:

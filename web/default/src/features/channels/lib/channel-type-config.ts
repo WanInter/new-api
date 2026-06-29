@@ -170,6 +170,19 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       other: 'Video task channel. Submit uses POST /api/v1/prot/generate, polling uses GET /api/v1/prot/query/{jobId}, and balance uses GET /api/v1/prot/balance. Remaining balance is shown as credits minus frozen_credits. Pricing is configured locally in New API, not synced from AGGC.',
     },
   },
+  62: {
+    id: 62,
+    name: CHANNEL_TYPES[62],
+    icon: 'video',
+    defaultBaseUrl: 'https://max.yoboxai.com',
+    supportedModels: ['seedance2', 'seedance-2.0', 'seedance-2.0-fast'],
+    hints: {
+      baseUrl: 'Default host: https://max.yoboxai.com. The adaptor adds /async/tasks automatically.',
+      key: 'Use the Yobox API key. Requests are authenticated with the Bearer Authorization header.',
+      models: 'Expose seedance2, seedance-2.0, and seedance-2.0-fast. Use model mapping if the upstream model name differs.',
+      other: 'Video task channel. Submit uses POST /async/tasks, polling uses GET /async/tasks/{task_id}, and the adaptor normalizes seedance2 versus seedance-2.0 request shapes internally.',
+    },
+  },
 }
 
 /**
