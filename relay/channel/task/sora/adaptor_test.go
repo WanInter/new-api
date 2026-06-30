@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -159,4 +160,23 @@ func TestApplyVeoReferenceImagesUsesImagesForAtMostTwoImages(t *testing.T) {
 		"https://example.com/1.png",
 		"https://example.com/2.png",
 	}, body["images"])
+}
+
+func TestEstimateVideoSecondsUsesSeedanceGatewayMetadataDuration(t *testing.T) {
+	seconds := estimateVideoSeconds(relaycommon.TaskSubmitReq{
+		Model:    "seedance-gateway",
+		Metadata: map[string]any{"duration": "15"},
+	}, &relaycommon.RelayInfo{OriginModelName: "seedance-gateway"})
+
+	require.Equal(t, 15, seconds)
+}
+
+func TestEstimateVideoSecondsSeedanceGatewayDefaultsToFifteen(t *testing.T) {
+	seconds := estimateVideoSeconds(relaycommon.TaskSubmitReq{Model: "seedance-gateway"}, nil)
+
+	require.Equal(t, 15, seconds)
+}
+
+func TestModelListIncludesSeedanceGateway(t *testing.T) {
+	require.Contains(t, (&TaskAdaptor{}).GetModelList(), "seedance-gateway")
 }

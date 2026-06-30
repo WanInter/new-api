@@ -124,14 +124,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		return nil
 	}
 
-	seconds, _ := strconv.Atoi(req.Seconds)
-	if seconds == 0 {
-		seconds = req.Duration
-	}
-	if seconds <= 0 {
-		seconds = 4
-	}
-
+	seconds := estimateVideoSeconds(req, info)
 	size := req.Size
 	if size == "" {
 		size = "720x1280"
@@ -308,6 +301,41 @@ func collectVeoImages(body map[string]interface{}) []string {
 	appendImages(body["image"])
 	appendImages(body["input_reference"])
 	return images
+}
+
+func estimateVideoSeconds(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) int {
+	if seconds, ok := normalizeVideoSeconds(req.Seconds); ok {
+		return mustParsePositiveInt(seconds)
+	}
+	if req.Duration > 0 {
+		return req.Duration
+	}
+	if seconds, ok := normalizeVideoSeconds(req.Metadata["duration"]); ok {
+		return mustParsePositiveInt(seconds)
+	}
+	if isSeedanceGateway(info, req.Model) {
+		return 15
+	}
+	return 4
+}
+
+func isSeedanceGateway(info *relaycommon.RelayInfo, modelName string) bool {
+	if strings.TrimSpace(modelName) == "seedance-gateway" {
+		return true
+	}
+	if info == nil {
+		return false
+	}
+	return strings.TrimSpace(info.OriginModelName) == "seedance-gateway" ||
+		strings.TrimSpace(info.UpstreamModelName) == "seedance-gateway"
+}
+
+func mustParsePositiveInt(value string) int {
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return 0
+	}
+	return parsed
 }
 
 func normalizeVideoSecondsFromForm(values map[string][]string) string {
