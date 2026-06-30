@@ -142,3 +142,41 @@ func TestConvertToRequestPayloadConvertsSizeAndCommonParams(t *testing.T) {
 	assert.False(t, *payload.Params.Watermark)
 	assert.Equal(t, []string{"https://example.com/input.png"}, payload.Params.ImageURLs)
 }
+
+func TestConvertToRequestPayloadAcceptsTopLevelCamelAspectRatio(t *testing.T) {
+	metadata := map[string]any{}
+	copyAggcRawMetadata(jsonRequest{AspectRatioCamel: "9:16"}, metadata)
+
+	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Prompt:   "draw a cat",
+		Model:    "seedance-2.0",
+		Metadata: metadata,
+	}, &relaycommon.RelayInfo{})
+
+	require.NoError(t, err)
+	require.Equal(t, "9:16", payload.Params.AspectRatio)
+
+	body, err := common.Marshal(payload)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"aspectRatio":"9:16"`)
+	require.NotContains(t, string(body), "aspect_ratio")
+}
+
+func TestConvertToRequestPayloadAcceptsTopLevelSnakeAspectRatio(t *testing.T) {
+	metadata := map[string]any{}
+	copyAggcRawMetadata(jsonRequest{AspectRatio: "16:9"}, metadata)
+
+	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Prompt:   "draw a cat",
+		Model:    "seedance-2.0",
+		Metadata: metadata,
+	}, &relaycommon.RelayInfo{})
+
+	require.NoError(t, err)
+	require.Equal(t, "16:9", payload.Params.AspectRatio)
+
+	body, err := common.Marshal(payload)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"aspectRatio":"16:9"`)
+	require.NotContains(t, string(body), "aspect_ratio")
+}

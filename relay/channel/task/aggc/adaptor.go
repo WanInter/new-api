@@ -31,26 +31,27 @@ const (
 var ModelList = []string{"seedance-2.0"}
 
 type jsonRequest struct {
-	Prompt      string         `json:"prompt"`
-	Model       string         `json:"model,omitempty"`
-	ModelID     string         `json:"model_id,omitempty"`
-	Type        string         `json:"type,omitempty"`
-	Image       string         `json:"image,omitempty"`
-	Images      []string       `json:"images,omitempty"`
-	ImageURLs   []string       `json:"image_urls,omitempty"`
-	VideoURL    string         `json:"video_url,omitempty"`
-	VideoURLs   []string       `json:"video_urls,omitempty"`
-	AudioURL    string         `json:"audio_url,omitempty"`
-	AudioURLs   []string       `json:"audio_urls,omitempty"`
-	Duration    int            `json:"duration,omitempty"`
-	Seconds     string         `json:"seconds,omitempty"`
-	Size        string         `json:"size,omitempty"`
-	Orientation string         `json:"orientation,omitempty"`
-	Watermark   *bool          `json:"watermark,omitempty"`
-	AspectRatio string         `json:"aspect_ratio,omitempty"`
-	Ratio       string         `json:"ratio,omitempty"`
-	Params      map[string]any `json:"params,omitempty"`
-	Metadata    map[string]any `json:"metadata,omitempty"`
+	Prompt           string         `json:"prompt"`
+	Model            string         `json:"model,omitempty"`
+	ModelID          string         `json:"model_id,omitempty"`
+	Type             string         `json:"type,omitempty"`
+	Image            string         `json:"image,omitempty"`
+	Images           []string       `json:"images,omitempty"`
+	ImageURLs        []string       `json:"image_urls,omitempty"`
+	VideoURL         string         `json:"video_url,omitempty"`
+	VideoURLs        []string       `json:"video_urls,omitempty"`
+	AudioURL         string         `json:"audio_url,omitempty"`
+	AudioURLs        []string       `json:"audio_urls,omitempty"`
+	Duration         int            `json:"duration,omitempty"`
+	Seconds          string         `json:"seconds,omitempty"`
+	Size             string         `json:"size,omitempty"`
+	Orientation      string         `json:"orientation,omitempty"`
+	Watermark        *bool          `json:"watermark,omitempty"`
+	AspectRatio      string         `json:"aspect_ratio,omitempty"`
+	AspectRatioCamel string         `json:"aspectRatio,omitempty"`
+	Ratio            string         `json:"ratio,omitempty"`
+	Params           map[string]any `json:"params,omitempty"`
+	Metadata         map[string]any `json:"metadata,omitempty"`
 }
 
 type requestPayload struct {
@@ -153,8 +154,8 @@ func copyAggcRawMetadata(raw jsonRequest, metadata map[string]any) {
 	if strings.TrimSpace(raw.Type) != "" {
 		metadata["type"] = raw.Type
 	}
-	if strings.TrimSpace(raw.AspectRatio) != "" {
-		metadata["aspect_ratio"] = raw.AspectRatio
+	if aspectRatio := firstNonEmpty(raw.AspectRatio, raw.AspectRatioCamel); aspectRatio != "" {
+		metadata["aspect_ratio"] = aspectRatio
 	}
 	if strings.TrimSpace(raw.Ratio) != "" {
 		metadata["ratio"] = raw.Ratio
