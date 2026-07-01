@@ -35,17 +35,17 @@ type responseTask struct {
 	TaskID string `json:"task_id"`
 	Status string `json:"status"`
 	Data   struct {
-		ID        string `json:"id"`
-		Model     string `json:"model"`
-		Status    string `json:"status"`
-		Progress  int    `json:"progress"`
-		VideoURL  string `json:"video_url"`
-		Outputs   []string `json:"outputs"`
-		URL       string `json:"url"`
-		Seconds   int    `json:"seconds"`
-		Phase     string `json:"phase"`
-		Error     string `json:"error"`
-		FailReason string `json:"fail_reason"`
+		ID         string   `json:"id"`
+		Model      string   `json:"model"`
+		Status     string   `json:"status"`
+		Progress   int      `json:"progress"`
+		VideoURL   string   `json:"video_url"`
+		Outputs    []string `json:"outputs"`
+		URL        string   `json:"url"`
+		Seconds    int      `json:"seconds"`
+		Phase      string   `json:"phase"`
+		Error      string   `json:"error"`
+		FailReason string   `json:"fail_reason"`
 	} `json:"data"`
 }
 
@@ -234,9 +234,17 @@ func (a *TaskAdaptor) GetModelList() []string { return modelList }
 func (a *TaskAdaptor) GetChannelName() string { return "yobox" }
 
 func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (any, error) {
-	modelName := strings.TrimSpace(req.Model)
-	if modelName == "" && info != nil {
-		modelName = strings.TrimSpace(info.OriginModelName)
+	modelName := ""
+	if info != nil {
+		if info.ChannelMeta != nil {
+			modelName = strings.TrimSpace(info.UpstreamModelName)
+		}
+		if modelName == "" {
+			modelName = strings.TrimSpace(info.OriginModelName)
+		}
+	}
+	if modelName == "" {
+		modelName = strings.TrimSpace(req.Model)
 	}
 	if modelName == "" {
 		modelName = "seedance2"

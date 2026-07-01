@@ -12,11 +12,11 @@ import (
 func TestConvertToRequestPayloadSeedance2UsesInputReference(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	payload, err := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
-		Model:        "seedance2",
-		Prompt:       "dance",
-		Seconds:      "12",
-		Size:         "720x1280",
-		Images:       []string{"https://example.com/ref.png"},
+		Model:   "seedance2",
+		Prompt:  "dance",
+		Seconds: "12",
+		Size:    "720x1280",
+		Images:  []string{"https://example.com/ref.png"},
 	}, &relaycommon.RelayInfo{})
 	require.NoError(t, err)
 
@@ -29,10 +29,10 @@ func TestConvertToRequestPayloadSeedance2UsesInputReference(t *testing.T) {
 func TestConvertToRequestPayloadSeedance20UsesInputObject(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	payload, err := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
-		Model:  "seedance-2.0",
-		Prompt: "run",
+		Model:    "seedance-2.0",
+		Prompt:   "run",
 		Duration: 6,
-		Images: []string{"https://example.com/start.png", "https://example.com/end.png"},
+		Images:   []string{"https://example.com/start.png", "https://example.com/end.png"},
 	}, &relaycommon.RelayInfo{})
 	require.NoError(t, err)
 
@@ -41,6 +41,24 @@ func TestConvertToRequestPayloadSeedance20UsesInputObject(t *testing.T) {
 	require.Contains(t, string(body), `"input":`)
 	require.Contains(t, string(body), `"start_frames":["https://example.com/start.png"]`)
 	require.Contains(t, string(body), `"end_frames":["https://example.com/end.png"]`)
+}
+
+func TestConvertToRequestPayloadUsesMappedUpstreamModel(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	payload, err := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Model:    "seedance-2.0-yo",
+		Prompt:   "run",
+		Duration: 15,
+	}, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+		UpstreamModelName: "seedance-2.0",
+		IsModelMapped:     true,
+	}})
+	require.NoError(t, err)
+
+	body, ok := payload.(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "seedance-2.0", body["model"])
+	require.Contains(t, body, "input")
 }
 
 func TestParseTaskResultExtractsOutputsVideoURL(t *testing.T) {
