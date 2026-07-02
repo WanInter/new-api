@@ -57,7 +57,9 @@ type responseTask struct {
 	Video              *struct {
 		URL string `json:"url,omitempty"`
 	} `json:"video,omitempty"`
-	Error *responseTaskError `json:"error,omitempty"`
+	Error   *responseTaskError `json:"error,omitempty"`
+	Detail  any                `json:"detail,omitempty"`
+	Message string             `json:"message,omitempty"`
 }
 
 type responseTaskError struct {
@@ -284,6 +286,12 @@ func applyOtoySeedanceMiniReferenceRequest(body map[string]interface{}) {
 		return
 	}
 
+	if _, exists := body["aspect_ratio"]; !exists {
+		if ratio, ok := body["ratio"].(string); ok && strings.TrimSpace(ratio) != "" {
+			body["aspect_ratio"] = strings.TrimSpace(ratio)
+		}
+	}
+
 	delete(body, "seconds")
 	if duration, ok := normalizeVideoDurationString(body["duration"]); ok {
 		body["duration"] = duration
@@ -293,15 +301,31 @@ func applyOtoySeedanceMiniReferenceRequest(body map[string]interface{}) {
 	if len(images) > 0 {
 		body["image_urls"] = images
 	}
-	delete(body, "images")
-	delete(body, "image")
-	delete(body, "input_reference")
 
 	if _, exists := body["type"]; !exists {
 		body["type"] = "image-to-video"
 	}
 	if _, exists := body["generate_audio"]; !exists {
-		body["generate_audio"] = false
+		body["generate_audio"] = true
+	}
+
+	keep := map[string]bool{
+		"model":          true,
+		"prompt":         true,
+		"type":           true,
+		"image_urls":     true,
+		"video_urls":     true,
+		"audio_urls":     true,
+		"resolution":     true,
+		"duration":       true,
+		"aspect_ratio":   true,
+		"generate_audio": true,
+		"end_user_id":    true,
+	}
+	for key := range body {
+		if !keep[key] {
+			delete(body, key)
+		}
 	}
 }
 
@@ -353,6 +377,7 @@ func collectOtoySeedanceMiniReferenceImages(body map[string]interface{}) []strin
 	appendImages(body["images"])
 	appendImages(body["image"])
 	appendImages(body["input_reference"])
+	appendImages(body["file_paths"])
 	return images
 }
 
@@ -577,6 +602,36 @@ func (a *TaskAdaptor) GetChannelName() string {
 	return ChannelName
 }
 
+func responseTaskFailureReason(task responseTask) string {
+	if task.Error != nil && strings.TrimSpace(task.Error.Message) != "" {
+		return strings.TrimSpace(task.Error.Message)
+	}
+	if strings.TrimSpace(task.Message) != "" {
+		return strings.TrimSpace(task.Message)
+	}
+	if reason := detailFailureReason(task.Detail); reason != "" {
+		return reason
+	}
+	return ""
+}
+
+func detailFailureReason(detail any) string {
+	switch v := detail.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(v)
+	case map[string]any:
+		if msg, _ := v["message"].(string); strings.TrimSpace(msg) != "" {
+			return strings.TrimSpace(msg)
+		}
+		if typ, _ := v["type"].(string); strings.Contains(strings.ToLower(typ), "error") {
+			return strings.TrimSpace(typ)
+		}
+	}
+	return ""
+}
+
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 	resTask := responseTask{}
 	if err := common.Unmarshal(respBody, &resTask); err != nil {
@@ -597,12 +652,12 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Url = extractResponseTaskVideoURL(resTask)
 	case "failed", "cancelled", "canceled", "error":
 		taskResult.Status = model.TaskStatusFailure
-		if resTask.Error != nil {
-			taskResult.Reason = resTask.Error.Message
-		} else {
-			taskResult.Reason = "task failed"
-		}
+		taskResult.Reason = responseTaskFailureReason(resTask)
 	default:
+		if reason := responseTaskFailureReason(resTask); reason != "" {
+			taskResult.Status = model.TaskStatusFailure
+			taskResult.Reason = reason
+		}
 	}
 	if resTask.Progress > 0 && resTask.Progress < 100 {
 		taskResult.Progress = fmt.Sprintf("%d%%", resTask.Progress)

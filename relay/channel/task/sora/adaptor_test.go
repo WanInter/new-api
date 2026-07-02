@@ -227,12 +227,17 @@ func TestParseTaskResultAcceptsObjectError(t *testing.T) {
 
 func TestApplyOtoySeedanceMiniReferenceRequest(t *testing.T) {
 	body := map[string]any{
-		"model":        "otoy-image-to-video-seedance-2-0-mini-reference-to-video",
-		"prompt":       "make a video",
-		"duration":     float64(15),
-		"seconds":      "15",
-		"aspect_ratio": "9:16",
-		"resolution":   "720p",
+		"model":           "otoy-image-to-video-seedance-2-0-mini-reference-to-video",
+		"prompt":          "make a video",
+		"duration":        float64(15),
+		"seconds":         "15",
+		"ratio":           "9:16",
+		"resolution":      "720p",
+		"functionMode":    "omni_reference",
+		"response_format": "url",
+		"file_paths": []any{
+			"https://example.com/ref-from-file-path.png",
+		},
 		"images": []any{
 			"https://example.com/ref.png",
 		},
@@ -242,14 +247,29 @@ func TestApplyOtoySeedanceMiniReferenceRequest(t *testing.T) {
 
 	require.NotContains(t, body, "seconds")
 	require.NotContains(t, body, "images")
+	require.NotContains(t, body, "file_paths")
+	require.NotContains(t, body, "functionMode")
+	require.NotContains(t, body, "ratio")
+	require.NotContains(t, body, "response_format")
 	require.Equal(t, "15", body["duration"])
-	require.Equal(t, []string{"https://example.com/ref.png"}, body["image_urls"])
+	require.Equal(t, "9:16", body["aspect_ratio"])
+	require.Equal(t, []string{"https://example.com/ref.png", "https://example.com/ref-from-file-path.png"}, body["image_urls"])
 	require.Equal(t, "image-to-video", body["type"])
-	require.Equal(t, false, body["generate_audio"])
+	require.Equal(t, true, body["generate_audio"])
 }
 
 func TestNormalizeVideoDurationStringAllowsAuto(t *testing.T) {
 	got, ok := normalizeVideoDurationString("auto")
 	require.True(t, ok)
 	require.Equal(t, "auto", got)
+}
+
+func TestParseTaskResultTreatsDetailErrorAsFailure(t *testing.T) {
+	body := []byte(`{"detail":"{'message': '服务器内部错误: Invalid JSON response (502)', 'type': 'server_error'}","id":"task_upstream"}`)
+
+	info, err := (&TaskAdaptor{}).ParseTaskResult(body)
+	require.NoError(t, err)
+	require.NotNil(t, info)
+	require.Equal(t, string(model.TaskStatusFailure), info.Status)
+	require.Contains(t, info.Reason, "Invalid JSON response")
 }
