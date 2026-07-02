@@ -6,6 +6,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/stretchr/testify/require"
 )
 
@@ -52,6 +53,12 @@ func TestParseTaskResultAcceptsObjectOutput(t *testing.T) {
 }
 
 func TestConvertToOpenAIVideoPromotesMetadataURLToSoraResponseShape(t *testing.T) {
+	oldServerAddress := system_setting.ServerAddress
+	system_setting.ServerAddress = "https://api.example.test"
+	t.Cleanup(func() {
+		system_setting.ServerAddress = oldServerAddress
+	})
+
 	task := &model.Task{
 		TaskID:    "task_public",
 		Status:    model.TaskStatusSuccess,
@@ -88,14 +95,19 @@ func TestConvertToOpenAIVideoPromotesMetadataURLToSoraResponseShape(t *testing.T
 	require.Equal(t, "task_upstream", got["task_id"])
 	require.Equal(t, "sd-bak-2", got["model"])
 	require.Equal(t, "completed", got["status"])
-	require.Equal(t, "https://example.com/video.mp4", got["result_url"])
-	require.Equal(t, "https://example.com/video.mp4", got["url"])
-	require.Equal(t, "https://example.com/video.mp4", got["video_url"])
-	require.Equal(t, []any{"https://example.com/video.mp4"}, got["output"])
+	require.Equal(t, "https://api.example.test/v1/videos/task_public/content", got["result_url"])
+	require.Equal(t, "https://api.example.test/v1/videos/task_public/content", got["url"])
+	require.Equal(t, "https://api.example.test/v1/videos/task_public/content", got["video_url"])
+	require.Equal(t, []any{"https://api.example.test/v1/videos/task_public/content"}, got["output"])
 
 	video, ok := got["video"].(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, "https://example.com/video.mp4", video["url"])
+	require.Equal(t, "https://api.example.test/v1/videos/task_public/content", video["url"])
+
+	metadata, ok := got["metadata"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "https://api.example.test/v1/videos/task_public/content", metadata["url"])
+	require.Equal(t, []any{"https://api.example.test/v1/videos/task_public/content"}, metadata["result_urls"])
 }
 
 func TestNormalizeVideoSeconds(t *testing.T) {

@@ -549,20 +549,44 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 		payload["completed_at"] = task.FinishTime
 	}
 
-	if url := firstNonEmpty(extractVideoURLFromAny(payload), task.GetResultURL()); url != "" {
-		payload["result_url"] = url
-		payload["url"] = url
-		payload["video_url"] = url
-		payload["output"] = []string{url}
-		video, _ := payload["video"].(map[string]any)
-		if video == nil {
-			video = map[string]any{}
-		}
-		video["url"] = url
-		payload["video"] = video
+	if firstNonEmpty(extractVideoURLFromAny(payload), task.GetResultURL()) != "" {
+		// Sora-compatible upstreams may return protected content URLs that only work
+		// with the upstream API key. Never expose those directly to clients; return
+		// our authenticated content proxy while keeping the stored task data
+		// untouched for the proxy fetch path.
+		url := taskcommon.BuildProxyURL(task.TaskID)
+		setSoraResponseVideoURL(payload, url)
 	}
 
 	return common.Marshal(payload)
+}
+
+func setSoraResponseVideoURL(payload map[string]any, url string) {
+	if payload == nil || strings.TrimSpace(url) == "" {
+		return
+	}
+	payload["result_url"] = url
+	payload["url"] = url
+	payload["video_url"] = url
+	payload["output"] = []string{url}
+
+	video, _ := payload["video"].(map[string]any)
+	if video == nil {
+		video = map[string]any{}
+	}
+	video["url"] = url
+	payload["video"] = video
+
+	for _, key := range []string{"metadata", "response", "data"} {
+		child, _ := payload[key].(map[string]any)
+		if child == nil {
+			continue
+		}
+		child["result_url"] = url
+		child["url"] = url
+		child["video_url"] = url
+		child["result_urls"] = []string{url}
+	}
 }
 
 func toSoraCompatibleVideoStatus(status model.TaskStatus, raw string) string {

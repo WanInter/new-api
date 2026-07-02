@@ -109,6 +109,9 @@ func VideoProxy(c *gin.Context) {
 	case constant.ChannelTypeOpenAI, constant.ChannelTypeSora:
 		if url := extractStoredVideoURL(task); url != "" {
 			videoURL = url
+			if channel.Type == constant.ChannelTypeSora && sameURLHostname(videoURL, baseURL) {
+				req.Header.Set("Authorization", "Bearer "+channel.Key)
+			}
 		} else {
 			videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
 			req.Header.Set("Authorization", "Bearer "+channel.Key)
@@ -226,6 +229,18 @@ func extractVideoURLFromMap(payload map[string]any) string {
 		}
 	}
 	return ""
+}
+
+func sameURLHostname(rawURL string, rawBaseURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Hostname() == "" {
+		return false
+	}
+	base, err := url.Parse(strings.TrimSpace(rawBaseURL))
+	if err != nil || base.Hostname() == "" {
+		return false
+	}
+	return strings.EqualFold(u.Hostname(), base.Hostname())
 }
 
 func writeVideoDataURL(c *gin.Context, dataURL string) error {
