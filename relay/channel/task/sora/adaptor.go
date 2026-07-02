@@ -192,13 +192,17 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		var bodyMap map[string]interface{}
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
 			bodyMap["model"] = info.UpstreamModelName
-			if shouldUseVeoReferenceImages(info, bodyMap) {
-				applyVeoReferenceImages(bodyMap)
-			}
-			if seconds, ok := normalizeVideoSeconds(bodyMap["seconds"]); ok {
-				bodyMap["seconds"] = seconds
-			} else if seconds, ok := normalizeVideoSeconds(bodyMap["duration"]); ok {
-				bodyMap["seconds"] = seconds
+			if shouldUseOtoySeedanceMiniReference(info) {
+				applyOtoySeedanceMiniReferenceRequest(bodyMap)
+			} else {
+				if shouldUseVeoReferenceImages(info, bodyMap) {
+					applyVeoReferenceImages(bodyMap)
+				}
+				if seconds, ok := normalizeVideoSeconds(bodyMap["seconds"]); ok {
+					bodyMap["seconds"] = seconds
+				} else if seconds, ok := normalizeVideoSeconds(bodyMap["duration"]); ok {
+					bodyMap["seconds"] = seconds
+				}
 			}
 			if newBody, err := common.Marshal(bodyMap); err == nil {
 				return bytes.NewReader(newBody), nil
@@ -262,6 +266,94 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 
 	return common.ReaderOnly(storage), nil
+}
+
+func shouldUseOtoySeedanceMiniReference(info *relaycommon.RelayInfo) bool {
+	if info == nil {
+		return false
+	}
+	return isOtoySeedanceMiniReferenceModel(info.OriginModelName) || isOtoySeedanceMiniReferenceModel(info.UpstreamModelName)
+}
+
+func isOtoySeedanceMiniReferenceModel(modelName string) bool {
+	return strings.TrimSpace(modelName) == "otoy-image-to-video-seedance-2-0-mini-reference-to-video"
+}
+
+func applyOtoySeedanceMiniReferenceRequest(body map[string]interface{}) {
+	if body == nil {
+		return
+	}
+
+	delete(body, "seconds")
+	if duration, ok := normalizeVideoDurationString(body["duration"]); ok {
+		body["duration"] = duration
+	}
+
+	images := collectOtoySeedanceMiniReferenceImages(body)
+	if len(images) > 0 {
+		body["image_urls"] = images
+	}
+	delete(body, "images")
+	delete(body, "image")
+	delete(body, "input_reference")
+
+	if _, exists := body["type"]; !exists {
+		body["type"] = "image-to-video"
+	}
+	if _, exists := body["generate_audio"]; !exists {
+		body["generate_audio"] = false
+	}
+}
+
+func normalizeVideoDurationString(value any) (string, bool) {
+	if duration, ok := normalizeVideoSeconds(value); ok {
+		return duration, true
+	}
+	if s, ok := value.(string); ok {
+		s = strings.TrimSpace(s)
+		if strings.EqualFold(s, "auto") {
+			return "auto", true
+		}
+	}
+	return "", false
+}
+
+func collectOtoySeedanceMiniReferenceImages(body map[string]interface{}) []string {
+	if body == nil {
+		return nil
+	}
+	images := make([]string, 0)
+	seen := make(map[string]bool)
+	appendImage := func(image string) {
+		image = strings.TrimSpace(image)
+		if image == "" || seen[image] {
+			return
+		}
+		seen[image] = true
+		images = append(images, image)
+	}
+	appendImages := func(v any) {
+		switch typed := v.(type) {
+		case []string:
+			for _, image := range typed {
+				appendImage(image)
+			}
+		case []any:
+			for _, item := range typed {
+				if s, ok := item.(string); ok {
+					appendImage(s)
+				}
+			}
+		case string:
+			appendImage(typed)
+		}
+	}
+
+	appendImages(body["image_urls"])
+	appendImages(body["images"])
+	appendImages(body["image"])
+	appendImages(body["input_reference"])
+	return images
 }
 
 func shouldUseVeoReferenceImages(info *relaycommon.RelayInfo, body map[string]interface{}) bool {

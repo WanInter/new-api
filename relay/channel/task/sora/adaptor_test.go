@@ -224,3 +224,32 @@ func TestParseTaskResultAcceptsObjectError(t *testing.T) {
 	require.Equal(t, string(model.TaskStatusFailure), info.Status)
 	require.Equal(t, "生成失败", info.Reason)
 }
+
+func TestApplyOtoySeedanceMiniReferenceRequest(t *testing.T) {
+	body := map[string]any{
+		"model":        "otoy-image-to-video-seedance-2-0-mini-reference-to-video",
+		"prompt":       "make a video",
+		"duration":     float64(15),
+		"seconds":      "15",
+		"aspect_ratio": "9:16",
+		"resolution":   "720p",
+		"images": []any{
+			"https://example.com/ref.png",
+		},
+	}
+
+	applyOtoySeedanceMiniReferenceRequest(body)
+
+	require.NotContains(t, body, "seconds")
+	require.NotContains(t, body, "images")
+	require.Equal(t, "15", body["duration"])
+	require.Equal(t, []string{"https://example.com/ref.png"}, body["image_urls"])
+	require.Equal(t, "image-to-video", body["type"])
+	require.Equal(t, false, body["generate_audio"])
+}
+
+func TestNormalizeVideoDurationStringAllowsAuto(t *testing.T) {
+	got, ok := normalizeVideoDurationString("auto")
+	require.True(t, ok)
+	require.Equal(t, "auto", got)
+}

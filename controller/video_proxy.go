@@ -44,6 +44,16 @@ func VideoProxy(c *gin.Context) {
 		videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to query task")
 		return
 	}
+	if (!exists || task == nil) && model.IsAdmin(userID) {
+		// Admin dashboard users may preview tasks created by other users.
+		// Keep the normal user-scoped lookup above for non-admin callers.
+		task, exists, err = model.GetByOnlyTaskId(taskID)
+		if err != nil {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to query task %s as admin: %s", taskID, err.Error()))
+			videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to query task")
+			return
+		}
+	}
 	if !exists || task == nil {
 		videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Task not found")
 		return
