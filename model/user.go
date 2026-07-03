@@ -39,6 +39,8 @@ type User struct {
 	AccessToken      *string        `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
 	Quota            int            `json:"quota" gorm:"type:int;default:0"`
 	UsedQuota        int            `json:"used_quota" gorm:"type:int;default:0;column:used_quota"` // used quota
+	RechargeQuota    int            `json:"recharge_quota" gorm:"-"`                                // total quota excluding refunded quota
+	RefundQuota      int            `json:"refund_quota" gorm:"-"`                                  // quota returned by refunds
 	RequestCount     int            `json:"request_count" gorm:"type:int;default:0;"`               // request number
 	Group            string         `json:"group" gorm:"type:varchar(64);default:'default'"`
 	AffCode          string         `json:"aff_code" gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
@@ -191,6 +193,59 @@ func GetMaxUserId() int {
 	return user.Id
 }
 
+type userQuotaBreakdown struct {
+	UserId      int `gorm:"column:user_id"`
+	RefundQuota int `gorm:"column:refund_quota"`
+}
+
+func enrichUsersQuotaBreakdown(users []*User) {
+	if len(users) == 0 || LOG_DB == nil {
+		return
+	}
+
+	userIds := make([]int, 0, len(users))
+	for _, user := range users {
+		if user == nil {
+			continue
+		}
+		userIds = append(userIds, user.Id)
+	}
+	if len(userIds) == 0 {
+		return
+	}
+
+	var breakdowns []userQuotaBreakdown
+	if err := LOG_DB.Model(&Log{}).
+		Select("user_id, COALESCE(SUM(quota), 0) AS refund_quota").
+		Where("user_id IN ? AND type = ?", userIds, LogTypeRefund).
+		Group("user_id").
+		Scan(&breakdowns).Error; err != nil {
+		common.SysLog("failed to enrich users quota breakdown: " + err.Error())
+		return
+	}
+
+	refundByUserId := make(map[int]int, len(breakdowns))
+	for _, breakdown := range breakdowns {
+		refundByUserId[breakdown.UserId] = breakdown.RefundQuota
+	}
+
+	for _, user := range users {
+		if user == nil {
+			continue
+		}
+		totalQuota := user.UsedQuota + user.Quota
+		refundQuota := refundByUserId[user.Id]
+		if refundQuota < 0 {
+			refundQuota = 0
+		}
+		if refundQuota > totalQuota {
+			refundQuota = totalQuota
+		}
+		user.RefundQuota = refundQuota
+		user.RechargeQuota = totalQuota - refundQuota
+	}
+}
+
 func GetAllUsers(pageInfo *common.PageInfo) (users []*User, total int64, err error) {
 	// Start transaction
 	tx := DB.Begin()
@@ -222,6 +277,7 @@ func GetAllUsers(pageInfo *common.PageInfo) (users []*User, total int64, err err
 		return nil, 0, err
 	}
 
+	enrichUsersQuotaBreakdown(users)
 	return users, total, nil
 }
 
@@ -290,6 +346,7 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 		return nil, 0, err
 	}
 
+	enrichUsersQuotaBreakdown(users)
 	return users, total, nil
 }
 

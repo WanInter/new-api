@@ -171,6 +171,8 @@ export function useUsersColumns(): ColumnDef<User>[] {
         const used = user.used_quota
         const remaining = user.quota
         const total = used + remaining
+        const refund = user.refund_quota ?? 0
+        const recharge = user.recharge_quota ?? Math.max(total - refund, 0)
         const percentage = total > 0 ? (remaining / total) * 100 : 0
 
         if (total === 0) {
@@ -211,7 +213,13 @@ export function useUsersColumns(): ColumnDef<User>[] {
                   {t('Remaining:')} {formatQuota(remaining)}
                 </div>
                 <div>
-                  {t('Total:')} {formatQuota(total)}
+                  {t('Recharge quota:')} {formatQuota(recharge)}
+                </div>
+                <div>
+                  {t('Refund quota:')} {formatQuota(refund)}
+                </div>
+                <div>
+                  {t('Total (recharge + refund):')} {formatQuota(total)}
                 </div>
                 <div>
                   {t('Percentage:')} {percentage.toFixed(1)}%

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -38,21 +39,21 @@ func VideoProxy(c *gin.Context) {
 	}
 
 	userID := c.GetInt("id")
-	task, exists, err := model.GetByTaskId(userID, taskID)
+	var task *model.Task
+	var exists bool
+	var err error
+	if model.IsAdmin(userID) {
+		// Admin dashboard users may preview tasks created by other users. Querying
+		// globally first also avoids noisy gorm "record not found" logs when the
+		// task belongs to another user.
+		task, exists, err = model.GetByOnlyTaskId(taskID)
+	} else {
+		task, exists, err = model.GetByTaskId(userID, taskID)
+	}
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to query task %s: %s", taskID, err.Error()))
 		videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to query task")
 		return
-	}
-	if (!exists || task == nil) && model.IsAdmin(userID) {
-		// Admin dashboard users may preview tasks created by other users.
-		// Keep the normal user-scoped lookup above for non-admin callers.
-		task, exists, err = model.GetByOnlyTaskId(taskID)
-		if err != nil {
-			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to query task %s as admin: %s", taskID, err.Error()))
-			videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to query task")
-			return
-		}
 	}
 	if !exists || task == nil {
 		videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Task not found")
@@ -159,6 +160,9 @@ func VideoProxy(c *gin.Context) {
 		videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to create proxy request")
 		return
 	}
+	if rangeHeader := strings.TrimSpace(c.GetHeader("Range")); rangeHeader != "" {
+		req.Header.Set("Range", rangeHeader)
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -168,7 +172,7 @@ func VideoProxy(c *gin.Context) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Upstream returned status %d for %s", resp.StatusCode, videoURL))
 		videoProxyError(c, http.StatusBadGateway, "server_error",
 			fmt.Sprintf("Upstream service returned status %d", resp.StatusCode))
@@ -183,9 +187,23 @@ func VideoProxy(c *gin.Context) {
 
 	c.Writer.Header().Set("Cache-Control", "public, max-age=86400")
 	c.Writer.WriteHeader(resp.StatusCode)
-	if _, err = io.Copy(c.Writer, resp.Body); err != nil {
+	if _, err = io.Copy(c.Writer, resp.Body); err != nil && !isClientCanceledVideoProxyError(c, err) {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to stream video content: %s", err.Error()))
 	}
+}
+
+func isClientCanceledVideoProxyError(c *gin.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, http.ErrAbortHandler) {
+		return true
+	}
+	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "context canceled") || strings.Contains(msg, "broken pipe") || strings.Contains(msg, "client disconnected")
 }
 
 func extractStoredVideoURL(task *model.Task) string {

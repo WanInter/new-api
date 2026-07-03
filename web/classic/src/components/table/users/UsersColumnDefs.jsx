@@ -146,6 +146,11 @@ const renderQuotaUsage = (text, record, t) => {
   const used = parseInt(record.used_quota) || 0;
   const remain = parseInt(record.quota) || 0;
   const total = used + remain;
+  const refund = parseInt(record.refund_quota) || 0;
+  const recharge =
+    record.recharge_quota !== undefined
+      ? parseInt(record.recharge_quota) || 0
+      : Math.max(total - refund, 0);
   const percent = total > 0 ? (remain / total) * 100 : 0;
   const popoverContent = (
     <div className='text-xs p-2'>
@@ -155,8 +160,14 @@ const renderQuotaUsage = (text, record, t) => {
       <Paragraph copyable={{ content: renderQuota(remain) }}>
         {t('剩余额度')}: {renderQuota(remain)} ({percent.toFixed(0)}%)
       </Paragraph>
+      <Paragraph copyable={{ content: renderQuota(recharge) }}>
+        {t('充值额度')}: {renderQuota(recharge)}
+      </Paragraph>
+      <Paragraph copyable={{ content: renderQuota(refund) }}>
+        {t('退款额度')}: {renderQuota(refund)}
+      </Paragraph>
       <Paragraph copyable={{ content: renderQuota(total) }}>
-        {t('总额度')}: {renderQuota(total)}
+        {t('总额度（充值 + 退款）')}: {renderQuota(total)}
       </Paragraph>
     </div>
   );

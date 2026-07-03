@@ -3644,6 +3644,8 @@
     "并确认自行承担部署": "confirm that I bear legal responsibility arising from deployment",
     "运营和收费行为产生的法律责任": "operation and charging behavior",
     "，": ", ",
-    "、": ", "
+    "、": ", ",
+    "退款额度": "返金クォータ",
+    "总额度（充值 + 退款）": "総クォータ（チャージ + 返金）"
   }
 }
