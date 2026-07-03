@@ -538,7 +538,7 @@ func GetUserTopUps(c *gin.Context) {
 	}
 
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(topups)
+	pageInfo.SetItems(model.AttachTopUpUserInfo(topups))
 	common.ApiSuccess(c, pageInfo)
 }
 
@@ -563,7 +563,7 @@ func GetAllTopUps(c *gin.Context) {
 	}
 
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(topups)
+	pageInfo.SetItems(model.AttachTopUpUserInfo(topups))
 	common.ApiSuccess(c, pageInfo)
 }
 

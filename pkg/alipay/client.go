@@ -51,22 +51,28 @@ type QROrderResponse struct {
 }
 
 type QueryOrderResult struct {
-	OutTradeNo     string
-	TradeNo        string
-	TradeStatus    string
-	TotalAmount    decimal.Decimal
-	BuyerPayAmount decimal.Decimal
+	OutTradeNo     string          `json:"out_trade_no"`
+	TradeNo        string          `json:"trade_no"`
+	TradeStatus    string          `json:"trade_status"`
+	TotalAmount    decimal.Decimal `json:"total_amount"`
+	BuyerPayAmount decimal.Decimal `json:"buyer_pay_amount"`
+	BuyerLogonID   string          `json:"buyer_logon_id,omitempty"`
+	BuyerUserID    string          `json:"buyer_user_id,omitempty"`
+	BuyerUserName  string          `json:"buyer_user_name,omitempty"`
 }
 
 type NotificationResult struct {
-	AppID          string
-	SellerID       string
-	OutTradeNo     string
-	TradeNo        string
-	TradeStatus    string
-	TotalAmount    decimal.Decimal
-	BuyerPayAmount decimal.Decimal
-	RawForm        string // 支付宝回调表单的完整规范化查询串（url.Values.Encode），保留多值 key 语义
+	AppID          string          `json:"app_id,omitempty"`
+	SellerID       string          `json:"seller_id,omitempty"`
+	OutTradeNo     string          `json:"out_trade_no"`
+	TradeNo        string          `json:"trade_no,omitempty"`
+	TradeStatus    string          `json:"trade_status"`
+	TotalAmount    decimal.Decimal `json:"total_amount"`
+	BuyerPayAmount decimal.Decimal `json:"buyer_pay_amount"`
+	BuyerLogonID   string          `json:"buyer_logon_id,omitempty"`
+	BuyerUserID    string          `json:"buyer_user_id,omitempty"`
+	BuyerUserName  string          `json:"buyer_user_name,omitempty"`
+	RawForm        string          `json:"-"` // 支付宝回调表单的完整规范化查询串（url.Values.Encode），保留多值 key 语义
 }
 
 type Client interface {
@@ -229,6 +235,9 @@ func (c *sdkClient) QueryOrder(ctx context.Context, outTradeNo string) (*QueryOr
 		TradeStatus:    string(result.TradeStatus),
 		TotalAmount:    totalAmount,
 		BuyerPayAmount: buyerPayAmount,
+		BuyerLogonID:   result.BuyerLogonId,
+		BuyerUserID:    result.BuyerUserId,
+		BuyerUserName:  result.BuyerUserName,
 	}, nil
 }
 

@@ -17,10 +17,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useState } from 'react'
-import { Search, Copy, Check, ChevronLeft, ChevronRight } from 'lucide-react'
+import {
+  Search,
+  Copy,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+} from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { formatCurrencyFromUSD } from '@/lib/currency'
-import { formatNumber } from '@/lib/format'
+import { cn } from '@/lib/utils'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import {
   AlertDialog,
@@ -53,10 +60,107 @@ import {
   getPaymentMethodName,
   formatTimestamp,
 } from '../../lib/billing'
+import type { TopupRecord } from '../../types'
 
 interface BillingHistoryDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+}
+
+function getUserDisplay(record: TopupRecord) {
+  return (
+    record.display_name ||
+    record.username ||
+    record.email ||
+    `${record.user_id}`
+  )
+}
+
+function getUserSubText(record: TopupRecord) {
+  const parts = [`ID: ${record.user_id}`]
+  if (record.username && record.username !== getUserDisplay(record)) {
+    parts.push(record.username)
+  }
+  if (record.user_group) {
+    parts.push(record.user_group)
+  }
+  return parts.join(' · ')
+}
+
+function getPaymentAccountDisplay(record: TopupRecord) {
+  return (
+    record.payment_account ||
+    record.buyer_user_name ||
+    record.buyer_logon_id ||
+    record.buyer_user_id ||
+    '-'
+  )
+}
+
+function getPaymentAccountSubText(record: TopupRecord) {
+  const parts = []
+  if (
+    record.buyer_user_name &&
+    record.buyer_user_name !== getPaymentAccountDisplay(record)
+  ) {
+    parts.push(record.buyer_user_name)
+  }
+  if (
+    record.buyer_logon_id &&
+    record.buyer_logon_id !== getPaymentAccountDisplay(record)
+  ) {
+    parts.push(record.buyer_logon_id)
+  }
+  if (
+    record.buyer_user_id &&
+    record.buyer_user_id !== getPaymentAccountDisplay(record)
+  ) {
+    parts.push(record.buyer_user_id)
+  }
+  return parts.join(' · ')
+}
+
+function formatPaymentAmount(record: TopupRecord) {
+  const provider = record.payment_provider || ''
+  const method = record.payment_method || ''
+  const symbol =
+    provider === 'stripe' || method === 'stripe' || provider === 'waffo'
+      ? '$'
+      : '¥'
+  return `${symbol}${Number(record.money || 0).toFixed(2)}`
+}
+
+function formatCompletionTime(record: TopupRecord, fallback: string) {
+  return record.complete_time && record.complete_time > 0
+    ? formatTimestamp(record.complete_time)
+    : fallback
+}
+
+function DetailItem({
+  label,
+  value,
+  mono,
+  className,
+}: {
+  label: string
+  value: string | number
+  mono?: boolean
+  className?: string
+}) {
+  return (
+    <div className='bg-muted/20 rounded-lg border p-3'>
+      <div className='text-muted-foreground text-xs font-medium'>{label}</div>
+      <div
+        className={cn(
+          'mt-1 text-sm font-semibold break-words',
+          mono && 'font-mono text-xs',
+          className
+        )}
+      >
+        {value}
+      </div>
+    </div>
+  )
 }
 
 export function BillingHistoryDialog({
@@ -80,6 +184,7 @@ export function BillingHistoryDialog({
   } = useBillingHistory()
 
   const [confirmTradeNo, setConfirmTradeNo] = useState<string | null>(null)
+  const [detailRecord, setDetailRecord] = useState<TopupRecord | null>(null)
   const { copyToClipboard, copiedText } = useCopyToClipboard({ notify: false })
 
   const totalPages = Math.ceil(total / pageSize)
@@ -102,12 +207,11 @@ export function BillingHistoryDialog({
         description={t(
           'View your topup transaction records and payment history'
         )}
-        contentClassName='flex max-h-[calc(100dvh-2rem)] flex-col max-sm:w-screen max-sm:max-w-none max-sm:rounded-none max-sm:p-4 sm:max-w-4xl'
+        contentClassName='flex max-h-[calc(100dvh-2rem)] flex-col max-sm:w-screen max-sm:max-w-none max-sm:rounded-none max-sm:p-4 sm:max-w-5xl'
         contentHeight='auto'
         bodyClassName='space-y-3'
       >
         <div className='min-h-0 space-y-3'>
-          {/* Search and Filter Bar */}
           <div className='flex items-center gap-2'>
             <div className='relative flex-1'>
               <Search className='text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2' />
@@ -144,8 +248,7 @@ export function BillingHistoryDialog({
             </Select>
           </div>
 
-          {/* Records List */}
-          <ScrollArea className='max-h-[min(54vh,520px)] pr-3 sm:pr-4'>
+          <ScrollArea className='max-h-[min(56vh,560px)] pr-3 sm:pr-4'>
             {loading ? (
               <div className='space-y-3'>
                 {Array.from({ length: 5 }).map((_, i) => (
@@ -157,7 +260,8 @@ export function BillingHistoryDialog({
                       </div>
                       <Skeleton className='h-5 w-16' />
                     </div>
-                    <div className='mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4'>
+                    <div className='mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4'>
+                      <Skeleton className='h-3 w-full' />
                       <Skeleton className='h-3 w-full' />
                       <Skeleton className='h-3 w-full' />
                       <Skeleton className='h-3 w-full' />
@@ -180,16 +284,16 @@ export function BillingHistoryDialog({
               <div className='space-y-3'>
                 {records.map((record) => {
                   const statusConfig = getStatusConfig(record.status)
+                  const completeTime = formatCompletionTime(record, '-')
                   return (
                     <div
                       key={record.id}
-                      className='rounded-lg border p-3 sm:p-4'
+                      className='bg-card rounded-xl border p-3 shadow-sm sm:p-4'
                     >
-                      {/* Header Row */}
                       <div className='flex items-start justify-between gap-2'>
                         <div className='flex-1 space-y-1'>
-                          <div className='flex min-w-0 items-center gap-2'>
-                            <code className='text-foreground truncate font-mono text-sm'>
+                          <div className='flex min-w-0 flex-wrap items-center gap-2'>
+                            <code className='text-foreground max-w-full truncate font-mono text-sm'>
                               {record.trade_no}
                             </code>
                             <Button
@@ -206,7 +310,7 @@ export function BillingHistoryDialog({
                             </Button>
                             {isAdmin && record.user_id != null && (
                               <StatusBadge
-                                label={`${t('User ID')}: ${record.user_id}`}
+                                label={getUserDisplay(record)}
                                 variant='neutral'
                                 size='sm'
                                 copyText={String(record.user_id)}
@@ -214,6 +318,7 @@ export function BillingHistoryDialog({
                             )}
                           </div>
                           <div className='text-muted-foreground text-xs'>
+                            {t('Created')}:{' '}
                             {formatTimestamp(record.create_time)}
                           </div>
                         </div>
@@ -225,8 +330,7 @@ export function BillingHistoryDialog({
                         />
                       </div>
 
-                      {/* Details Grid */}
-                      <div className='mt-3 grid grid-cols-2 gap-3 sm:mt-4 sm:grid-cols-3 sm:gap-4'>
+                      <div className='mt-3 grid grid-cols-2 gap-3 sm:mt-4 sm:grid-cols-6 sm:gap-4'>
                         <div className='space-y-1'>
                           <Label className='text-muted-foreground text-xs'>
                             {t('Payment Method')}
@@ -237,7 +341,7 @@ export function BillingHistoryDialog({
                         </div>
                         <div className='space-y-1'>
                           <Label className='text-muted-foreground text-xs'>
-                            {t('Amount')}
+                            {t('Credited Amount')}
                           </Label>
                           <div className='text-sm font-semibold'>
                             {formatCurrencyFromUSD(record.amount, {
@@ -249,27 +353,49 @@ export function BillingHistoryDialog({
                         </div>
                         <div className='space-y-1'>
                           <Label className='text-muted-foreground text-xs'>
-                            {t('Payment')}
+                            {t('Payment Account')}
                           </Label>
-                          <div className='text-sm font-semibold text-red-600'>
-                            {formatNumber(record.money)}
+                          <div className='text-sm font-medium'>
+                            {getPaymentAccountDisplay(record)}
                           </div>
                         </div>
-                      </div>
-
-                      {/* Admin Actions */}
-                      {isAdmin && record.status === 'pending' && (
-                        <div className='mt-4 flex justify-end'>
+                        <div className='space-y-1'>
+                          <Label className='text-muted-foreground text-xs'>
+                            {t('Paid Amount')}
+                          </Label>
+                          <div className='text-sm font-semibold text-red-600'>
+                            {formatPaymentAmount(record)}
+                          </div>
+                        </div>
+                        <div className='space-y-1'>
+                          <Label className='text-muted-foreground text-xs'>
+                            {t('Completed At')}
+                          </Label>
+                          <div className='text-sm font-medium'>
+                            {completeTime}
+                          </div>
+                        </div>
+                        <div className='flex items-end justify-end gap-2'>
                           <Button
                             size='sm'
                             variant='outline'
-                            onClick={() => setConfirmTradeNo(record.trade_no)}
-                            disabled={completing}
+                            onClick={() => setDetailRecord(record)}
                           >
-                            {t('Complete Order')}
+                            <Eye className='mr-1.5 h-3.5 w-3.5' />
+                            {t('Details')}
                           </Button>
+                          {isAdmin && record.status === 'pending' && (
+                            <Button
+                              size='sm'
+                              variant='outline'
+                              onClick={() => setConfirmTradeNo(record.trade_no)}
+                              disabled={completing}
+                            >
+                              {t('Complete Order')}
+                            </Button>
+                          )}
                         </div>
-                      )}
+                      </div>
                     </div>
                   )
                 })}
@@ -277,7 +403,6 @@ export function BillingHistoryDialog({
             )}
           </ScrollArea>
 
-          {/* Pagination */}
           {!loading && records.length > 0 && (
             <div className='flex flex-col items-center gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between'>
               <div className='text-muted-foreground text-xs sm:text-sm'>
@@ -314,7 +439,82 @@ export function BillingHistoryDialog({
         </div>
       </Dialog>
 
-      {/* Confirm Complete Order Dialog */}
+      <Dialog
+        open={!!detailRecord}
+        onOpenChange={(nextOpen) => !nextOpen && setDetailRecord(null)}
+        title={t('Top-up Order Details')}
+        description={t('Audit fields for payment reconciliation and support')}
+        contentClassName='max-sm:w-[calc(100vw-1.5rem)] sm:max-w-2xl'
+        contentHeight='auto'
+        bodyClassName='space-y-4'
+      >
+        {detailRecord && (
+          <div className='space-y-4 py-2'>
+            <div className='bg-muted/20 flex flex-wrap items-center justify-between gap-2 rounded-xl border p-3'>
+              <code className='max-w-full truncate font-mono text-sm font-semibold'>
+                {detailRecord.trade_no}
+              </code>
+              <StatusBadge
+                label={getStatusConfig(detailRecord.status).label}
+                variant={getStatusConfig(detailRecord.status).variant}
+                showDot
+                copyable={false}
+              />
+            </div>
+            <div className='grid gap-3 sm:grid-cols-2'>
+              {isAdmin && (
+                <DetailItem
+                  label={t('User')}
+                  value={`${getUserDisplay(detailRecord)} (${getUserSubText(detailRecord)})`}
+                />
+              )}
+              <DetailItem
+                label={t('Payment Method')}
+                value={getPaymentMethodName(detailRecord.payment_method, t)}
+              />
+              <DetailItem
+                label={t('Payment Provider')}
+                value={detailRecord.payment_provider || '-'}
+              />
+              <DetailItem
+                label={t('Payment Mode')}
+                value={detailRecord.payment_mode || '-'}
+              />
+              <DetailItem
+                label={t('Payment Account')}
+                value={getPaymentAccountDisplay(detailRecord)}
+              />
+              <DetailItem
+                label={t('Payment Account Details')}
+                value={getPaymentAccountSubText(detailRecord) || '-'}
+              />
+              <DetailItem
+                label={t('Credited Amount')}
+                value={formatCurrencyFromUSD(detailRecord.amount, {
+                  digitsLarge: 2,
+                  digitsSmall: 2,
+                  abbreviate: false,
+                })}
+              />
+              <DetailItem
+                label={t('Paid Amount')}
+                value={formatPaymentAmount(detailRecord)}
+                className='text-red-600'
+              />
+              <DetailItem
+                label={t('Created At')}
+                value={formatTimestamp(detailRecord.create_time)}
+              />
+              <DetailItem
+                label={t('Completed At')}
+                value={formatCompletionTime(detailRecord, '-')}
+              />
+              <DetailItem label={t('Record ID')} value={detailRecord.id} mono />
+            </div>
+          </div>
+        )}
+      </Dialog>
+
       <AlertDialog
         open={!!confirmTradeNo}
         onOpenChange={(open) => !open && setConfirmTradeNo(null)}

@@ -45,6 +45,10 @@ export const STATUS_CONFIG: Record<TopupStatus, StatusConfig> = {
     variant: 'danger',
     label: 'Expired',
   },
+  failed: {
+    variant: 'danger',
+    label: 'Failed',
+  },
 }
 
 /**
@@ -65,6 +69,8 @@ export const PAYMENT_METHOD_NAMES: Record<string, string> = {
   wechat_pay: 'WeChat Pay',
   creem: 'Creem',
   waffo: 'Waffo',
+  waffo_pancake: 'Waffo Pancake',
+  balance: 'Balance',
 }
 
 /**

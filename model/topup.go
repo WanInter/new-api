@@ -3,6 +3,8 @@ package model
 import (
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -24,6 +26,148 @@ type TopUp struct {
 	CreateTime      int64   `json:"create_time"`
 	CompleteTime    int64   `json:"complete_time"`
 	Status          string  `json:"status"`
+}
+
+// TopUpRecord extends a top-up order with non-sensitive user summary fields
+// for admin-facing billing tables. It intentionally avoids embedding sensitive
+// fields such as password, access token, or user settings.
+type TopUpRecord struct {
+	*TopUp
+	Username       string `json:"username,omitempty"`
+	DisplayName    string `json:"display_name,omitempty"`
+	Email          string `json:"email,omitempty"`
+	UserGroup      string `json:"user_group,omitempty"`
+	BuyerLogonID   string `json:"buyer_logon_id,omitempty"`
+	BuyerUserID    string `json:"buyer_user_id,omitempty"`
+	BuyerUserName  string `json:"buyer_user_name,omitempty"`
+	PaymentAccount string `json:"payment_account,omitempty"`
+}
+
+func AttachTopUpUserInfo(topups []*TopUp) []*TopUpRecord {
+	records := make([]*TopUpRecord, 0, len(topups))
+	if len(topups) == 0 {
+		return records
+	}
+
+	userIdSet := make(map[int]struct{})
+	for _, topUp := range topups {
+		if topUp == nil {
+			continue
+		}
+		if topUp.UserId > 0 {
+			userIdSet[topUp.UserId] = struct{}{}
+		}
+	}
+
+	type topUpUserSummary struct {
+		Id          int
+		Username    string
+		DisplayName string
+		Email       string
+		UserGroup   string
+	}
+
+	usersById := make(map[int]topUpUserSummary)
+	if len(userIdSet) > 0 {
+		ids := make([]int, 0, len(userIdSet))
+		for id := range userIdSet {
+			ids = append(ids, id)
+		}
+
+		var users []topUpUserSummary
+		if err := DB.Model(&User{}).
+			Select(fmt.Sprintf("id, username, display_name, email, %s AS user_group", commonGroupCol)).
+			Where("id IN ?", ids).
+			Find(&users).Error; err == nil {
+			for _, user := range users {
+				usersById[user.Id] = user
+			}
+		} else {
+			common.SysError("failed to attach topup user info: " + err.Error())
+		}
+	}
+
+	for _, topUp := range topups {
+		if topUp == nil {
+			continue
+		}
+		record := &TopUpRecord{TopUp: topUp}
+		if user, ok := usersById[topUp.UserId]; ok {
+			record.Username = user.Username
+			record.DisplayName = user.DisplayName
+			record.Email = user.Email
+			record.UserGroup = user.UserGroup
+		}
+		attachTopUpPaymentAccount(record)
+		records = append(records, record)
+	}
+
+	return records
+}
+
+func attachTopUpPaymentAccount(record *TopUpRecord) {
+	if record == nil || record.TopUp == nil || strings.TrimSpace(record.ProviderPayload) == "" {
+		return
+	}
+
+	values := extractTopUpProviderPayloadValues(record.ProviderPayload)
+	record.BuyerUserName = firstNonEmptyString(values["buyer_user_name"], values["buyer_name"], values["buyer_real_name"])
+	record.BuyerLogonID = firstNonEmptyString(values["buyer_logon_id"], values["buyer_login_id"], values["buyer_account"])
+	record.BuyerUserID = firstNonEmptyString(values["buyer_user_id"], values["buyer_id"], values["buyer_open_id"])
+	// PaymentAccount is intended for human-readable buyer info in billing lists.
+	// Opaque provider IDs (buyer_user_id / buyer_open_id) remain available in
+	// detail fields but should not be shown as the primary account label.
+	record.PaymentAccount = firstNonEmptyString(record.BuyerUserName, record.BuyerLogonID)
+}
+
+func extractTopUpProviderPayloadValues(payload string) map[string]string {
+	values := make(map[string]string)
+	payload = strings.TrimSpace(payload)
+	if payload == "" {
+		return values
+	}
+
+	if strings.HasPrefix(payload, "{") {
+		var obj map[string]interface{}
+		if err := common.UnmarshalJsonStr(payload, &obj); err == nil {
+			flattenTopUpProviderPayload(values, "", obj)
+		}
+		return values
+	}
+
+	if parsed, err := url.ParseQuery(payload); err == nil {
+		for key, list := range parsed {
+			if len(list) > 0 {
+				values[key] = list[0]
+			}
+		}
+	}
+	return values
+}
+
+func flattenTopUpProviderPayload(values map[string]string, prefix string, obj map[string]interface{}) {
+	for key, value := range obj {
+		name := key
+		if prefix != "" {
+			name = prefix + "." + key
+		}
+		switch typed := value.(type) {
+		case string:
+			values[key] = typed
+			values[name] = typed
+		case map[string]interface{}:
+			flattenTopUpProviderPayload(values, name, typed)
+		}
+	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 const (

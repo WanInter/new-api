@@ -257,7 +257,7 @@ export interface UserWalletData {
 /**
  * Topup record status
  */
-export type TopupStatus = 'success' | 'pending' | 'expired'
+export type TopupStatus = 'success' | 'pending' | 'expired' | 'failed'
 
 /**
  * Topup billing record
@@ -267,6 +267,14 @@ export interface TopupRecord {
   id: number
   /** User ID */
   user_id: number
+  /** Username */
+  username?: string
+  /** Display name */
+  display_name?: string
+  /** User email */
+  email?: string
+  /** User group */
+  user_group?: string
   /** Topup amount (quota) */
   amount: number
   /** Payment amount (actual money paid) */
@@ -275,6 +283,18 @@ export interface TopupRecord {
   trade_no: string
   /** Payment method type */
   payment_method: string
+  /** Payment provider */
+  payment_provider?: string
+  /** Payment mode */
+  payment_mode?: string
+  /** Buyer payment account/name from payment provider */
+  payment_account?: string
+  /** Buyer Alipay logon ID */
+  buyer_logon_id?: string
+  /** Buyer provider user ID */
+  buyer_user_id?: string
+  /** Buyer provider user name */
+  buyer_user_name?: string
   /** Creation timestamp */
   create_time: number
   /** Completion timestamp */

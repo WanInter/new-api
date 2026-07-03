@@ -17,12 +17,15 @@ func ParseNotification(values url.Values) (*NotificationResult, error) {
 	}
 
 	result := &NotificationResult{
-		AppID:       values.Get("app_id"),
-		SellerID:    values.Get("seller_id"),
-		OutTradeNo:  values.Get("out_trade_no"),
-		TradeNo:     values.Get("trade_no"),
-		TradeStatus: values.Get("trade_status"),
-		RawForm:     normalizeValues(values),
+		AppID:         values.Get("app_id"),
+		SellerID:      values.Get("seller_id"),
+		OutTradeNo:    values.Get("out_trade_no"),
+		TradeNo:       values.Get("trade_no"),
+		TradeStatus:   values.Get("trade_status"),
+		BuyerLogonID:  values.Get("buyer_logon_id"),
+		BuyerUserID:   firstNonEmpty(values.Get("buyer_user_id"), values.Get("buyer_id")),
+		BuyerUserName: values.Get("buyer_user_name"),
+		RawForm:       normalizeValues(values),
 	}
 
 	if total := values.Get("total_amount"); total != "" {
@@ -53,4 +56,13 @@ func normalizeValues(values url.Values) string {
 		copied[key] = append([]string(nil), list...)
 	}
 	return copied.Encode()
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
