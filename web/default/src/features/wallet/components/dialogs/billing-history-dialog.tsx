@@ -293,7 +293,7 @@ export function BillingHistoryDialog({
                       <div className='flex items-start justify-between gap-2'>
                         <div className='flex-1 space-y-1'>
                           <div className='flex min-w-0 flex-wrap items-center gap-2'>
-                            <code className='text-foreground max-w-full truncate font-mono text-sm'>
+                            <code className='text-foreground max-w-full whitespace-normal break-all font-mono text-sm'>
                               {record.trade_no}
                             </code>
                             <Button
@@ -451,7 +451,7 @@ export function BillingHistoryDialog({
         {detailRecord && (
           <div className='space-y-4 py-2'>
             <div className='bg-muted/20 flex flex-wrap items-center justify-between gap-2 rounded-xl border p-3'>
-              <code className='max-w-full truncate font-mono text-sm font-semibold'>
+              <code className='max-w-full whitespace-normal break-all font-mono text-sm font-semibold'>
                 {detailRecord.trade_no}
               </code>
               <StatusBadge

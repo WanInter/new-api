@@ -277,22 +277,21 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
         title: <NoWrap>{t('订单号')}</NoWrap>,
         dataIndex: 'trade_no',
         key: 'trade_no',
-        width: 430,
+        width: 375,
         render: (text) => (
-          <Text
-            copyable
-            ellipsis={{ showTooltip: true }}
-            style={{ maxWidth: 400 }}
-          >
-            {text}
-          </Text>
+          <div className='flex w-full items-center gap-2 whitespace-nowrap'>
+            <span className='font-mono text-sm'>{text || '-'}</span>
+            <span className='inline-flex w-5 shrink-0 justify-center'>
+              <Text copyable={{ content: text }} />
+            </span>
+          </div>
         ),
       },
       {
         title: <NoWrap>{t('支付方式')}</NoWrap>,
         dataIndex: 'payment_method',
         key: 'payment_method',
-        width: 110,
+        width: 90,
         render: (pm) => <NoWrap>{renderPaymentMethod(pm)}</NoWrap>,
       },
       ...(userIsAdmin
@@ -301,22 +300,26 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
               title: <NoWrap>{t('用户')}</NoWrap>,
               dataIndex: 'user_id',
               key: 'user_id',
-              width: 300,
+              width: 190,
               render: (_, record) => (
                 <div style={{ minWidth: 0 }}>
-                  <Text
-                    strong
-                    copyable={{ content: String(record.user_id || '') }}
-                    ellipsis={{ showTooltip: true }}
-                    style={{ maxWidth: 280 }}
-                  >
-                    {getUserDisplay(record)}
-                  </Text>
+                  <div className='flex min-w-0 items-center gap-1 whitespace-nowrap'>
+                    <Text
+                      strong
+                      ellipsis={{ showTooltip: true }}
+                      style={{ maxWidth: 150 }}
+                    >
+                      {getUserDisplay(record)}
+                    </Text>
+                    <Text
+                      copyable={{ content: String(record.user_id || '') }}
+                    />
+                  </div>
                   <div className='text-xs text-gray-500'>
                     <Text
                       type='tertiary'
                       ellipsis={{ showTooltip: true }}
-                      style={{ maxWidth: 280 }}
+                      style={{ maxWidth: 170 }}
                     >
                       {getUserSubText(record)}
                     </Text>
@@ -329,35 +332,22 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
       {
         title: <NoWrap>{t('支付账号')}</NoWrap>,
         key: 'payment_account',
-        width: 180,
+        width: 110,
         render: (_, record) => (
-          <div style={{ minWidth: 0 }}>
-            <Text
-              strong
-              ellipsis={{ showTooltip: true }}
-              style={{ maxWidth: 160 }}
-            >
-              {getPaymentAccountDisplay(record)}
-            </Text>
-            {getPaymentAccountSubText(record) && (
-              <div className='text-xs text-gray-500'>
-                <Text
-                  type='tertiary'
-                  ellipsis={{ showTooltip: true }}
-                  style={{ maxWidth: 160 }}
-                >
-                  {getPaymentAccountSubText(record)}
-                </Text>
-              </div>
-            )}
-          </div>
+          <Text
+            strong
+            ellipsis={{ showTooltip: true }}
+            style={{ maxWidth: 90 }}
+          >
+            {getPaymentAccountDisplay(record)}
+          </Text>
         ),
       },
       {
         title: <NoWrap>{t('到账额度')}</NoWrap>,
         dataIndex: 'amount',
         key: 'amount',
-        width: 150,
+        width: 105,
         render: (amount, record) => {
           if (isSubscriptionTopup(record)) {
             return (
@@ -378,7 +368,7 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
         title: <NoWrap>{t('实付金额')}</NoWrap>,
         dataIndex: 'money',
         key: 'money',
-        width: 120,
+        width: 105,
         render: (money, record) => (
           <NoWrap>
             <Text type='danger'>{formatPaymentMoney(money, record)}</Text>
@@ -389,7 +379,7 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
         title: <NoWrap>{t('状态')}</NoWrap>,
         dataIndex: 'status',
         key: 'status',
-        width: 100,
+        width: 90,
         render: (status) => <NoWrap>{renderStatusBadge(status)}</NoWrap>,
       },
     ];
@@ -399,7 +389,7 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
       baseColumns.push({
         title: <NoWrap>{t('操作')}</NoWrap>,
         key: 'action',
-        width: 130,
+        width: 105,
         render: (_, record) => {
           const actions = [];
           if (record.status === 'pending') {
@@ -449,7 +439,7 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
       title: <NoWrap>{t('完成时间')}</NoWrap>,
       dataIndex: 'complete_time',
       key: 'complete_time',
-      width: 178,
+      width: 165,
       render: (_, record) => <NoWrap>{formatCompleteTime(record)}</NoWrap>,
     });
 
@@ -457,7 +447,7 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
       title: <NoWrap>{t('创建时间')}</NoWrap>,
       dataIndex: 'create_time',
       key: 'create_time',
-      width: 178,
+      width: 165,
       render: (time) => <NoWrap>{timestamp2string(time)}</NoWrap>,
     });
 
@@ -471,7 +461,7 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
         visible={visible}
         onCancel={onCancel}
         footer={null}
-        width={isMobile ? '100vw' : 'min(98vw, 1920px)'}
+        width={isMobile ? '100vw' : 'min(96vw, 1680px)'}
         bodyStyle={{ maxHeight: 'calc(100vh - 180px)', overflow: 'hidden' }}
       >
         <div className='mb-3'>
@@ -498,7 +488,7 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
             onPageSizeChange: handlePageSizeChange,
           }}
           size='small'
-          scroll={{ x: userIsAdmin ? 1900 : 1680, y: 'calc(100vh - 330px)' }}
+          scroll={{ x: userIsAdmin ? 1500 : 1300, y: 'calc(100vh - 330px)' }}
           empty={
             <Empty
               image={
