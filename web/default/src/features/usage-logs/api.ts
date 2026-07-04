@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
+import type { UsageLog } from './data/schema'
 import { buildQueryParams } from './lib/utils'
 import type {
   GetLogsParams,
@@ -65,6 +66,38 @@ async function fetchLogStats<T>(
   return res.data
 }
 
+function stripUserOnlyLogRoutingDetails(
+  response: GetLogsResponse
+): GetLogsResponse {
+  const data = response?.data
+  if (!data) return response
+  const items = data.items as UsageLog[] | undefined
+  if (!Array.isArray(items)) return response
+
+  return {
+    ...response,
+    data: {
+      ...data,
+      items: items.map((item) => {
+        if (typeof item?.other !== 'string' || item.other.length === 0) {
+          return item
+        }
+        try {
+          const other = JSON.parse(item.other) as Record<string, unknown>
+          delete other.is_model_mapped
+          delete other.upstream_model_name
+          return {
+            ...item,
+            other: JSON.stringify(other),
+          }
+        } catch {
+          return item
+        }
+      }),
+    },
+  }
+}
+
 // ============================================================================
 // Common Log APIs
 // ============================================================================
@@ -74,7 +107,7 @@ export const getAllLogs = (params: GetLogsParams = {}) =>
 
 export const getUserLogs = (
   params: Omit<GetLogsParams, 'username' | 'channel'> = {}
-) => fetchLogs('/api/log', params, false)
+) => fetchLogs('/api/log', params, false).then(stripUserOnlyLogRoutingDetails)
 
 export const getLogStats = (params: GetLogStatsParams = {}) =>
   fetchLogStats('/api/log', params, true)

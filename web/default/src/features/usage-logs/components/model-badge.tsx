@@ -30,6 +30,7 @@ import { StatusBadge } from '@/components/status-badge'
 interface ModelBadgeProps {
   modelName: string
   actualModel?: string
+  showActualModel?: boolean
   className?: string
 }
 
@@ -125,7 +126,7 @@ function ModelBadgeContent(props: ModelBadgeProps) {
 export function ModelBadge(props: ModelBadgeProps) {
   const { t } = useTranslation()
 
-  if (!props.actualModel) {
+  if (!props.showActualModel || !props.actualModel) {
     return <ModelBadgeContent {...props} />
   }
 

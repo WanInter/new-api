@@ -221,15 +221,19 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		var buf bytes.Buffer
 		writer := multipart.NewWriter(&buf)
 		writer.WriteField("model", info.UpstreamModelName)
-		if seconds := normalizeVideoSecondsFromForm(formData.Value); seconds != "" {
-			writer.WriteField("seconds", seconds)
-		}
-		for key, values := range formData.Value {
-			if key == "model" || key == "seconds" {
-				continue
+		if shouldUseOtoySeedanceMiniReference(info) {
+			writeOtoySeedanceMiniReferenceMultipartFields(writer, formData.Value)
+		} else {
+			if seconds := normalizeVideoSecondsFromForm(formData.Value); seconds != "" {
+				writer.WriteField("seconds", seconds)
 			}
-			for _, v := range values {
-				writer.WriteField(key, v)
+			for key, values := range formData.Value {
+				if key == "model" || key == "seconds" {
+					continue
+				}
+				for _, v := range values {
+					writer.WriteField(key, v)
+				}
 			}
 		}
 		for fieldName, fileHeaders := range formData.File {
@@ -268,6 +272,73 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 
 	return common.ReaderOnly(storage), nil
+}
+
+func writeOtoySeedanceMiniReferenceMultipartFields(writer *multipart.Writer, values map[string][]string) {
+	writeValues := func(key string, vals []string) {
+		for _, v := range vals {
+			v = strings.TrimSpace(v)
+			if v != "" {
+				_ = writer.WriteField(key, v)
+			}
+		}
+	}
+
+	allowedPassthrough := map[string]bool{
+		"prompt":         true,
+		"video_urls":     true,
+		"audio_urls":     true,
+		"resolution":     true,
+		"aspect_ratio":   true,
+		"generate_audio": true,
+		"end_user_id":    true,
+	}
+	for key, vals := range values {
+		if allowedPassthrough[key] {
+			writeValues(key, vals)
+		}
+	}
+
+	if len(values["aspect_ratio"]) == 0 {
+		writeValues("aspect_ratio", values["ratio"])
+	}
+	if duration, ok := normalizeVideoDurationString(firstFormValue(values, "duration")); ok {
+		_ = writer.WriteField("duration", duration)
+	} else if duration, ok := normalizeVideoDurationString(firstFormValue(values, "seconds")); ok {
+		_ = writer.WriteField("duration", duration)
+	}
+
+	imageValues := append([]string{}, values["image_urls"]...)
+	imageValues = append(imageValues, values["images"]...)
+	imageValues = append(imageValues, values["image"]...)
+	imageValues = append(imageValues, values["input_reference"]...)
+	imageValues = append(imageValues, values["file_paths"]...)
+	writeValues("image_urls", uniqueStrings(imageValues))
+
+	if len(values["generate_audio"]) == 0 {
+		_ = writer.WriteField("generate_audio", "true")
+	}
+}
+
+func firstFormValue(values map[string][]string, key string) string {
+	if len(values[key]) == 0 {
+		return ""
+	}
+	return values[key][0]
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]bool)
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
 }
 
 func shouldUseOtoySeedanceMiniReference(info *relaycommon.RelayInfo) bool {

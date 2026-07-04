@@ -1,6 +1,8 @@
 package sora
 
 import (
+	"bytes"
+	"mime/multipart"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -256,6 +258,39 @@ func TestApplyOtoySeedanceMiniReferenceRequest(t *testing.T) {
 	require.Equal(t, []string{"https://example.com/ref.png", "https://example.com/ref-from-file-path.png"}, body["image_urls"])
 	require.Equal(t, "image-to-video", body["type"])
 	require.Equal(t, true, body["generate_audio"])
+}
+
+func TestWriteOtoySeedanceMiniReferenceMultipartFields(t *testing.T) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	writeOtoySeedanceMiniReferenceMultipartFields(writer, map[string][]string{
+		"prompt":          {"make a video"},
+		"duration":        {"15"},
+		"seconds":         {"15"},
+		"ratio":           {"9:16"},
+		"resolution":      {"720p"},
+		"functionMode":    {"omni_reference"},
+		"response_format": {"url"},
+		"file_paths":      {"https://example.com/ref-from-file-path.png"},
+		"image_urls":      {"https://example.com/ref.png"},
+	})
+	require.NoError(t, writer.Close())
+
+	reader := multipart.NewReader(bytes.NewReader(buf.Bytes()), writer.Boundary())
+	form, err := reader.ReadForm(1 << 20)
+	require.NoError(t, err)
+
+	require.Equal(t, []string{"make a video"}, form.Value["prompt"])
+	require.Equal(t, []string{"15"}, form.Value["duration"])
+	require.Equal(t, []string{"9:16"}, form.Value["aspect_ratio"])
+	require.Equal(t, []string{"720p"}, form.Value["resolution"])
+	require.Equal(t, []string{"true"}, form.Value["generate_audio"])
+	require.Equal(t, []string{"https://example.com/ref.png", "https://example.com/ref-from-file-path.png"}, form.Value["image_urls"])
+	require.NotContains(t, form.Value, "seconds")
+	require.NotContains(t, form.Value, "ratio")
+	require.NotContains(t, form.Value, "functionMode")
+	require.NotContains(t, form.Value, "response_format")
+	require.NotContains(t, form.Value, "file_paths")
 }
 
 func TestNormalizeVideoDurationStringAllowsAuto(t *testing.T) {
