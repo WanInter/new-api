@@ -2,6 +2,8 @@ package service
 
 import (
 	"encoding/base64"
+	"io"
+	"mime"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -13,6 +15,72 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+const requestBodyLogPreviewLimit = 16 * 1024
+
+func AppendRequestBodyAdminInfo(ctx *gin.Context, adminInfo map[string]interface{}) {
+	if ctx == nil || ctx.Request == nil || ctx.Request.Body == nil || adminInfo == nil {
+		return
+	}
+	storage, err := common.GetBodyStorage(ctx)
+	if err != nil || storage == nil || storage.Size() == 0 {
+		return
+	}
+
+	currentPos, _ := storage.Seek(0, io.SeekCurrent)
+	defer func() {
+		_, _ = storage.Seek(currentPos, io.SeekStart)
+		ctx.Request.Body = io.NopCloser(storage)
+	}()
+
+	contentType := ctx.Request.Header.Get("Content-Type")
+	mediaType, _, parseErr := mime.ParseMediaType(contentType)
+	if parseErr != nil {
+		mediaType = contentType
+	}
+	mediaType = strings.ToLower(mediaType)
+
+	bodyInfo := map[string]interface{}{
+		"content_type": contentType,
+		"size":         storage.Size(),
+	}
+	if !isTextRequestBodyMediaType(mediaType) {
+		bodyInfo["omitted_reason"] = "non_text_body"
+		adminInfo["request_body"] = bodyInfo
+		return
+	}
+
+	if _, err = storage.Seek(0, io.SeekStart); err != nil {
+		return
+	}
+	buf, err := io.ReadAll(io.LimitReader(storage, int64(requestBodyLogPreviewLimit+1)))
+	if err != nil {
+		return
+	}
+	truncated := len(buf) > requestBodyLogPreviewLimit || storage.Size() > int64(requestBodyLogPreviewLimit)
+	if len(buf) > requestBodyLogPreviewLimit {
+		buf = buf[:requestBodyLogPreviewLimit]
+	}
+	bodyInfo["preview"] = strings.ToValidUTF8(string(buf), "�")
+	bodyInfo["truncated"] = truncated
+	bodyInfo["limit"] = requestBodyLogPreviewLimit
+	adminInfo["request_body"] = bodyInfo
+}
+
+func isTextRequestBodyMediaType(mediaType string) bool {
+	if mediaType == "" {
+		return false
+	}
+	if strings.HasPrefix(mediaType, "text/") {
+		return true
+	}
+	switch mediaType {
+	case "application/json", "application/x-ndjson", "application/xml", "application/x-www-form-urlencoded":
+		return true
+	default:
+		return strings.HasSuffix(mediaType, "+json") || strings.HasSuffix(mediaType, "+xml")
+	}
+}
 
 func appendRequestPath(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {
 	if other == nil {
@@ -71,6 +139,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	}
 
 	AppendChannelAffinityAdminInfo(ctx, adminInfo)
+	AppendRequestBodyAdminInfo(ctx, adminInfo)
 
 	other["admin_info"] = adminInfo
 	appendRequestPath(ctx, relayInfo, other)

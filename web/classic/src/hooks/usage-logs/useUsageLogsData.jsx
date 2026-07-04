@@ -43,6 +43,69 @@ import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 import ParamOverrideEntry from '../../components/table/usage-logs/components/ParamOverrideEntry';
 
+const formatByteSize = (bytes) => {
+  if (
+    bytes === undefined ||
+    bytes === null ||
+    !Number.isFinite(Number(bytes))
+  ) {
+    return '-';
+  }
+  const n = Number(bytes);
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = n / 1024;
+  let idx = 0;
+  while (value >= 1024 && idx < units.length - 1) {
+    value /= 1024;
+    idx += 1;
+  }
+  return `${value.toFixed(value >= 10 ? 1 : 2)} ${units[idx]}`;
+};
+
+const renderRequestBodyInfo = (requestBody, t) => {
+  if (!requestBody) return null;
+  const lines = [
+    requestBody.content_type
+      ? `${t('内容类型')}：${requestBody.content_type}`
+      : null,
+    `${t('大小')}：${formatByteSize(requestBody.size)}`,
+    requestBody.truncated
+      ? `${t('已截断')}：${formatByteSize(requestBody.limit)} ${t('预览上限')}`
+      : null,
+  ].filter(Boolean);
+
+  return (
+    <div style={{ maxWidth: 720, lineHeight: 1.6 }}>
+      <div style={{ marginBottom: 8, whiteSpace: 'pre-line' }}>
+        {lines.join('\n')}
+      </div>
+      {requestBody.omitted_reason ? (
+        <div style={{ color: 'var(--semi-color-text-2)' }}>
+          {t('非文本请求体已省略')}
+        </div>
+      ) : requestBody.preview ? (
+        <pre
+          style={{
+            maxHeight: 260,
+            overflow: 'auto',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            background: 'var(--semi-color-fill-0)',
+            border: '1px solid var(--semi-color-border)',
+            borderRadius: 6,
+            padding: 10,
+            margin: 0,
+            fontSize: 12,
+          }}
+        >
+          {requestBody.preview}
+        </pre>
+      ) : null}
+    </div>
+  );
+};
+
 export const useLogsData = () => {
   const { t } = useTranslation();
 
@@ -564,6 +627,12 @@ export const useLogsData = () => {
         expandDataLocal.push({
           key: t('请求路径'),
           value: other.request_path,
+        });
+      }
+      if (isAdminUser && other?.admin_info?.request_body) {
+        expandDataLocal.push({
+          key: t('请求体'),
+          value: renderRequestBodyInfo(other.admin_info.request_body, t),
         });
       }
       if (isAdminUser && other?.stream_status) {

@@ -80,6 +80,19 @@ function timingTextColorClass(
   return 'text-rose-600'
 }
 
+function formatByteSize(bytes: number | undefined): string {
+  if (bytes == null || !Number.isFinite(bytes)) return '-'
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB']
+  let value = bytes / 1024
+  let idx = 0
+  while (value >= 1024 && idx < units.length - 1) {
+    value /= 1024
+    idx += 1
+  }
+  return `${value.toFixed(value >= 10 ? 1 : 2)} ${units[idx]}`
+}
+
 function DetailRow(props: {
   label: React.ReactNode
   value: React.ReactNode
@@ -427,6 +440,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const showAdminIp =
     !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
   const adminInfo = other?.admin_info
+  const requestBody = props.isAdmin ? adminInfo?.request_body : undefined
   const topupAuditFields =
     isTopup && props.isAdmin && adminInfo
       ? ([
@@ -702,6 +716,57 @@ export function DetailsDialog(props: DetailsDialogProps) {
           </DetailSection>
         )}
 
+        {/* Request body preview (admin only) */}
+        {requestBody && (
+          <DetailSection label={t('Request Body')}>
+            {requestBody.content_type && (
+              <DetailRow
+                label={t('Content Type')}
+                value={requestBody.content_type}
+                mono
+              />
+            )}
+            <DetailRow
+              label={t('Size')}
+              value={formatByteSize(requestBody.size)}
+              mono
+            />
+            {requestBody.truncated && (
+              <DetailRow
+                label={t('Truncated')}
+                value={`${formatByteSize(requestBody.limit)} ${t('preview limit')}`}
+                mono
+              />
+            )}
+            {requestBody.omitted_reason ? (
+              <DetailRow
+                label={t('Preview')}
+                value={t('Non-text request body omitted')}
+              />
+            ) : requestBody.preview ? (
+              <div className='bg-background/60 relative mt-1 max-h-64 overflow-y-auto rounded border p-2 font-mono text-[11px] leading-relaxed wrap-break-word whitespace-pre-wrap'>
+                <Button
+                  variant='ghost'
+                  size='sm'
+                  className='absolute top-1.5 right-1.5 h-5 w-5 p-0'
+                  onClick={() => copyToClipboard(requestBody.preview || '')}
+                  title={t('Copy to clipboard')}
+                  aria-label={t('Copy to clipboard')}
+                >
+                  {copiedText === requestBody.preview ? (
+                    <Check className='size-3 text-green-600' />
+                  ) : (
+                    <Copy className='size-3' />
+                  )}
+                </Button>
+                <pre className='min-w-0 pr-6 whitespace-pre-wrap'>
+                  {requestBody.preview}
+                </pre>
+              </div>
+            ) : null}
+          </DetailSection>
+        )}
+
         {/* Reject reason (admin only) */}
         {props.isAdmin && other?.reject_reason && (
           <DetailSection
@@ -933,20 +998,22 @@ export function DetailsDialog(props: DetailsDialogProps) {
         )}
 
         {/* Model mapping */}
-        {props.isAdmin && other?.is_model_mapped && other?.upstream_model_name && (
-          <DetailSection label={t('Model Mapping')}>
-            <DetailRow
-              label={t('Request Model')}
-              value={props.log.model_name}
-              mono
-            />
-            <DetailRow
-              label={t('Actual Model')}
-              value={other.upstream_model_name}
-              mono
-            />
-          </DetailSection>
-        )}
+        {props.isAdmin &&
+          other?.is_model_mapped &&
+          other?.upstream_model_name && (
+            <DetailSection label={t('Model Mapping')}>
+              <DetailRow
+                label={t('Request Model')}
+                value={props.log.model_name}
+                mono
+              />
+              <DetailRow
+                label={t('Actual Model')}
+                value={other.upstream_model_name}
+                mono
+              />
+            </DetailSection>
+          )}
 
         {/* Token breakdown (for consume/error types with token data) */}
         {isDisplayableType(props.log.type) && other && (

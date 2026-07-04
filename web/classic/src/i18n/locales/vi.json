@@ -1,5 +1,10 @@
 {
   "translation": {
+    "内容类型": "Loại nội dung",
+    "大小": "Kích thước",
+    "已截断": "Đã cắt bớt",
+    "预览上限": "giới hạn xem trước",
+    "非文本请求体已省略": "Đã bỏ qua nội dung yêu cầu không phải văn bản",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_one": " + Tìm kiếm Web {{count}} lần / 1K lần * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_other": " + Tìm kiếm Web {{count}} lần / 1K lần * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + 图片生成调用 {{symbol}}{{price}} / 1次 * {{ratioType}} {{ratio}}": " + Gọi tạo hình ảnh {{symbol}}{{price}} / 1 lần * {{ratioType}} {{ratio}}",
