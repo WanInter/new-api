@@ -265,6 +265,7 @@ func TestWriteOtoySeedanceMiniReferenceMultipartFields(t *testing.T) {
 	writer := multipart.NewWriter(&buf)
 	writeOtoySeedanceMiniReferenceMultipartFields(writer, map[string][]string{
 		"prompt":          {"make a video"},
+		"type":            {"custom-image-to-video"},
 		"duration":        {"15"},
 		"seconds":         {"15"},
 		"ratio":           {"9:16"},
@@ -281,6 +282,7 @@ func TestWriteOtoySeedanceMiniReferenceMultipartFields(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, []string{"make a video"}, form.Value["prompt"])
+	require.Equal(t, []string{"custom-image-to-video"}, form.Value["type"])
 	require.Equal(t, []string{"15"}, form.Value["duration"])
 	require.Equal(t, []string{"9:16"}, form.Value["aspect_ratio"])
 	require.Equal(t, []string{"720p"}, form.Value["resolution"])
@@ -291,6 +293,22 @@ func TestWriteOtoySeedanceMiniReferenceMultipartFields(t *testing.T) {
 	require.NotContains(t, form.Value, "functionMode")
 	require.NotContains(t, form.Value, "response_format")
 	require.NotContains(t, form.Value, "file_paths")
+}
+
+func TestWriteOtoySeedanceMiniReferenceMultipartFieldsDefaultsType(t *testing.T) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	writeOtoySeedanceMiniReferenceMultipartFields(writer, map[string][]string{
+		"prompt": {"make a video"},
+	})
+	require.NoError(t, writer.Close())
+
+	reader := multipart.NewReader(bytes.NewReader(buf.Bytes()), writer.Boundary())
+	form, err := reader.ReadForm(1 << 20)
+	require.NoError(t, err)
+
+	require.Equal(t, []string{"image-to-video"}, form.Value["type"])
+	require.Equal(t, []string{"true"}, form.Value["generate_audio"])
 }
 
 func TestNormalizeVideoDurationStringAllowsAuto(t *testing.T) {

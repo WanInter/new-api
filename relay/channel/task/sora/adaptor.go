@@ -286,6 +286,7 @@ func writeOtoySeedanceMiniReferenceMultipartFields(writer *multipart.Writer, val
 
 	allowedPassthrough := map[string]bool{
 		"prompt":         true,
+		"type":           true,
 		"video_urls":     true,
 		"audio_urls":     true,
 		"resolution":     true,
@@ -315,6 +316,9 @@ func writeOtoySeedanceMiniReferenceMultipartFields(writer *multipart.Writer, val
 	imageValues = append(imageValues, values["file_paths"]...)
 	writeValues("image_urls", uniqueStrings(imageValues))
 
+	if len(values["type"]) == 0 {
+		_ = writer.WriteField("type", "image-to-video")
+	}
 	if len(values["generate_audio"]) == 0 {
 		_ = writer.WriteField("generate_audio", "true")
 	}
