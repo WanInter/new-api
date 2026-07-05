@@ -225,7 +225,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 	if resp != nil && resp.StatusCode != http.StatusOK {
 		responseBody, _ := io.ReadAll(resp.Body)
-		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
+		message := sanitizeTaskUpstreamError(responseBody, info)
+		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", message), "fail_to_fetch_task", resp.StatusCode)
 	}
 
 	// 10. 返回 OtherRatios 给下游（header 必须在 DoResponse 写 body 之前设置）
@@ -260,6 +261,21 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		Platform:       platform,
 		Quota:          finalQuota,
 	}, nil
+}
+
+func sanitizeTaskUpstreamError(responseBody []byte, info *relaycommon.RelayInfo) string {
+	message := string(responseBody)
+	if info == nil {
+		return message
+	}
+
+	upstreamModelName := strings.TrimSpace(info.UpstreamModelName)
+	originModelName := strings.TrimSpace(info.OriginModelName)
+	if upstreamModelName == "" || originModelName == "" || upstreamModelName == originModelName {
+		return message
+	}
+
+	return strings.ReplaceAll(message, upstreamModelName, originModelName)
 }
 
 func shouldApplyTaskOtherRatios(info *relaycommon.RelayInfo, modelName string) bool {

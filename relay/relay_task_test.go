@@ -81,6 +81,21 @@ func TestShouldApplyTaskOtherRatiosSkipsFixedModelPrice(t *testing.T) {
 	assert.False(t, shouldApplyTaskOtherRatios(info, "grok-image-video"))
 }
 
+func TestSanitizeTaskUpstreamErrorReplacesMappedModelName(t *testing.T) {
+	body := []byte(`{"message":"Request validation failed for model \"otoy-image-to-video-seedance-2-0-mini-reference-to-video\"."}`)
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "Seedance2.0-cheap",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "otoy-image-to-video-seedance-2-0-mini-reference-to-video",
+		},
+	}
+
+	got := sanitizeTaskUpstreamError(body, info)
+
+	assert.NotContains(t, got, "otoy-image-to-video-seedance-2-0-mini-reference-to-video")
+	assert.Contains(t, got, "Seedance2.0-cheap")
+}
+
 func TestShouldApplyTaskOtherRatiosKeepsDynamicRatioBilling(t *testing.T) {
 	info := &relaycommon.RelayInfo{
 		PriceData: types.PriceData{
