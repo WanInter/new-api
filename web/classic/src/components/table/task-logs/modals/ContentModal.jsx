@@ -29,6 +29,7 @@ const ContentModal = ({
   setIsModalOpen,
   modalContent,
   isVideo,
+  isImage,
 }) => {
   const { t } = useTranslation();
   const [videoError, setVideoError] = useState(false);
@@ -56,6 +57,50 @@ const ContentModal = ({
 
   const handleOpenInNewTab = () => {
     window.open(modalContent, '_blank');
+  };
+
+  const renderImageContent = () => {
+    return (
+      <div style={{ textAlign: 'center' }}>
+        <img
+          src={modalContent}
+          alt={t('图片')}
+          style={{
+            maxWidth: '100%',
+            maxHeight: '65vh',
+            objectFit: 'contain',
+            borderRadius: '8px',
+          }}
+        />
+        <div style={{ marginTop: '16px' }}>
+          <Button
+            icon={<IconExternalOpen />}
+            onClick={handleOpenInNewTab}
+            style={{ marginRight: '8px' }}
+          >
+            {t('在新标签页中打开')}
+          </Button>
+          <Button icon={<IconCopy />} onClick={handleCopyUrl}>
+            {t('复制链接')}
+          </Button>
+        </div>
+        <div
+          style={{
+            marginTop: '16px',
+            padding: '8px',
+            backgroundColor: '#f8f9fa',
+            borderRadius: '4px',
+          }}
+        >
+          <Text
+            type='tertiary'
+            style={{ fontSize: '10px', wordBreak: 'break-all' }}
+          >
+            {modalContent}
+          </Text>
+        </div>
+      </div>
+    );
   };
 
   const renderVideoContent = () => {
@@ -159,16 +204,18 @@ const ContentModal = ({
       onCancel={() => setIsModalOpen(false)}
       closable={null}
       bodyStyle={{
-        height: isVideo ? '70vh' : '400px',
+        height: isVideo ? '70vh' : isImage ? 'auto' : '400px',
         maxHeight: '80vh',
         overflow: 'auto',
         padding: isVideo && videoError ? '0' : '24px',
       }}
-      width={isVideo ? '90vw' : 800}
-      style={isVideo ? { maxWidth: 960 } : undefined}
+      width={isVideo ? '90vw' : isImage ? '80vw' : 800}
+      style={isVideo || isImage ? { maxWidth: 960 } : undefined}
     >
       {isVideo ? (
         renderVideoContent()
+      ) : isImage ? (
+        renderImageContent()
       ) : (
         <p style={{ whiteSpace: 'pre-line' }}>{modalContent}</p>
       )}

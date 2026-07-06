@@ -3829,6 +3829,9 @@
     "，": ", ",
     "、": ", ",
     "退款额度": "Refund quota",
-    "总额度（充值 + 退款）": "Total quota (top-up + refund)"
+    "总额度（充值 + 退款）": "Total quota (top-up + refund)",
+    "文生图": "Text to Image",
+    "图片": "Image",
+    "点击预览图片": "Click to preview image"
   }
 }

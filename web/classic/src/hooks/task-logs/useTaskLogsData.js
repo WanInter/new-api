@@ -73,6 +73,10 @@ export const useTaskLogsData = () => {
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
   const [videoUrl, setVideoUrl] = useState('');
 
+  // Image preview modal state
+  const [isImageModalOpen, setIsImageModalOpen] = useState(false);
+  const [imageUrl, setImageUrl] = useState('');
+
   // Audio preview modal state
   const [isAudioModalOpen, setIsAudioModalOpen] = useState(false);
   const [audioClips, setAudioClips] = useState([]);
@@ -286,6 +290,11 @@ export const useTaskLogsData = () => {
     setIsVideoModalOpen(true);
   };
 
+  const openImageModal = (url) => {
+    setImageUrl(url);
+    setIsImageModalOpen(true);
+  };
+
   const openAudioModal = (clips) => {
     setAudioClips(clips);
     setIsAudioModalOpen(true);
@@ -333,6 +342,11 @@ export const useTaskLogsData = () => {
     setIsVideoModalOpen,
     videoUrl,
 
+    // Image preview modal
+    isImageModalOpen,
+    setIsImageModalOpen,
+    imageUrl,
+
     // Audio preview modal
     isAudioModalOpen,
     setIsAudioModalOpen,
@@ -371,6 +385,7 @@ export const useTaskLogsData = () => {
     copyText,
     openContentModal,
     openVideoModal,
+    openImageModal,
     openAudioModal,
     enrichLogs,
     syncPageData,

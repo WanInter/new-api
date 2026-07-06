@@ -33,6 +33,7 @@ import {
   Hash,
   Video,
   Sparkles,
+  Image,
 } from 'lucide-react';
 import {
   TASK_ACTION_FIRST_TAIL_GENERATE,
@@ -40,6 +41,7 @@ import {
   TASK_ACTION_REFERENCE_GENERATE,
   TASK_ACTION_TEXT_GENERATE,
   TASK_ACTION_REMIX_GENERATE,
+  TASK_ACTION_IMAGE_GENERATE,
 } from '../../../constants/common.constant';
 import { CHANNEL_OPTIONS } from '../../../constants/channel.constants';
 import { stringToColor } from '../../../helpers/render';
@@ -134,6 +136,12 @@ const renderType = (type, t) => {
           {t('视频Remix')}
         </Tag>
       );
+    case TASK_ACTION_IMAGE_GENERATE:
+      return (
+        <Tag color='cyan' shape='circle' prefixIcon={<Image size={14} />}>
+          {t('文生图')}
+        </Tag>
+      );
     default:
       return (
         <Tag color='white' shape='circle' prefixIcon={<HelpCircle size={14} />}>
@@ -162,6 +170,12 @@ const renderPlatform = (platform, t) => {
       return (
         <Tag color='green' shape='circle'>
           Suno
+        </Tag>
+      );
+    case 'image':
+      return (
+        <Tag color='cyan' shape='circle'>
+          {t('图片')}
         </Tag>
       );
     default:
@@ -236,6 +250,58 @@ const renderStatus = (type, t) => {
   }
 };
 
+function parseTaskObject(data) {
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    return data;
+  }
+  if (typeof data !== 'string') return undefined;
+  try {
+    const parsed = JSON.parse(data);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeImageDataUrl(value) {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  if (value.startsWith('http') || value.startsWith('data:')) return value;
+  return `data:image/png;base64,${value}`;
+}
+
+function getImageTaskUrl(record) {
+  if (
+    record?.result_url?.startsWith('http') ||
+    record?.result_url?.startsWith('data:')
+  ) {
+    return record.result_url;
+  }
+
+  const data = parseTaskObject(record?.data);
+  const results = data?.output?.results;
+  if (Array.isArray(results)) {
+    for (const item of results) {
+      const url = normalizeImageDataUrl(item?.url);
+      if (url) return url;
+      const b64 = normalizeImageDataUrl(item?.b64_image);
+      if (b64) return b64;
+    }
+  }
+
+  const images = data?.data;
+  if (Array.isArray(images)) {
+    for (const item of images) {
+      const url = normalizeImageDataUrl(item?.url);
+      if (url) return url;
+      const b64 = normalizeImageDataUrl(item?.b64_json);
+      if (b64) return b64;
+    }
+  }
+  return undefined;
+}
+
 export const getTaskLogsColumns = ({
   t,
   COLUMN_KEYS,
@@ -244,6 +310,7 @@ export const getTaskLogsColumns = ({
   isAdminUser,
   openVideoModal,
   openAudioModal,
+  openImageModal,
 }) => {
   return [
     {
@@ -428,6 +495,21 @@ export const getTaskLogsColumns = ({
               }}
             >
               {t('点击预览音乐')}
+            </a>
+          );
+        }
+
+        const imageUrl = getImageTaskUrl(record);
+        if (record.status === 'SUCCESS' && record.platform === 'image' && imageUrl) {
+          return (
+            <a
+              href='#'
+              onClick={(e) => {
+                e.preventDefault();
+                openImageModal(imageUrl);
+              }}
+            >
+              {t('点击预览图片')}
             </a>
           );
         }

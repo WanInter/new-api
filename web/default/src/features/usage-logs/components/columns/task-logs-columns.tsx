@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 /* eslint-disable react-refresh/only-export-components */
 import { useState, useMemo } from 'react'
 import type { ColumnDef } from '@tanstack/react-table'
-import { Music } from 'lucide-react'
+import { ImageIcon, Music } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatTimestampToDate } from '@/lib/format'
@@ -38,6 +38,7 @@ import {
   type AudioClip,
 } from '../dialogs/audio-preview-dialog'
 import { FailReasonDialog } from '../dialogs/fail-reason-dialog'
+import { ImageDialog } from '../dialogs/image-dialog'
 import { useUsageLogsContext } from '../usage-logs-provider'
 import {
   createDurationColumn,
@@ -61,6 +62,92 @@ function parseTaskData(data: unknown): unknown[] {
     }
   }
   return []
+}
+
+function parseTaskObject(data: unknown): Record<string, unknown> | undefined {
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    return data as Record<string, unknown>
+  }
+  if (typeof data !== 'string') return undefined
+  try {
+    const parsed = JSON.parse(data)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function normalizeImageDataUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined
+  if (value.startsWith('http') || value.startsWith('data:')) return value
+  return `data:image/png;base64,${value}`
+}
+
+function getImageTaskUrl(log: TaskLog): string | undefined {
+  if (
+    log.result_url?.startsWith('http') ||
+    log.result_url?.startsWith('data:')
+  ) {
+    return log.result_url
+  }
+
+  const data = parseTaskObject(log.data)
+  const output = data?.output as Record<string, unknown> | undefined
+  const results = output?.results
+  if (Array.isArray(results)) {
+    for (const item of results) {
+      if (!item || typeof item !== 'object') continue
+      const result = item as Record<string, unknown>
+      const url = normalizeImageDataUrl(result.url)
+      if (url) return url
+      const b64 = normalizeImageDataUrl(result.b64_image)
+      if (b64) return b64
+    }
+  }
+
+  const images = data?.data
+  if (Array.isArray(images)) {
+    for (const item of images) {
+      if (!item || typeof item !== 'object') continue
+      const image = item as Record<string, unknown>
+      const url = normalizeImageDataUrl(image.url)
+      if (url) return url
+      const b64 = normalizeImageDataUrl(image.b64_json)
+      if (b64) return b64
+    }
+  }
+  return undefined
+}
+
+function ImagePreviewCell({ log }: { log: TaskLog }) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const imageUrl = useMemo(() => getImageTaskUrl(log), [log])
+
+  if (!imageUrl) return null
+
+  return (
+    <>
+      <button
+        type='button'
+        className='group flex items-center gap-1 text-left text-xs'
+        onClick={() => setOpen(true)}
+      >
+        <ImageIcon className='text-muted-foreground size-3' />
+        <span className='text-foreground leading-snug group-hover:underline'>
+          {t('View the generated image')}
+        </span>
+      </button>
+      <ImageDialog
+        imageUrl={imageUrl}
+        taskId={log.task_id}
+        open={open}
+        onOpenChange={setOpen}
+      />
+    </>
+  )
 }
 
 function AudioPreviewCell({ log }: { log: TaskLog }) {
@@ -288,6 +375,10 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
         const isSuccess = status === TASK_STATUS.SUCCESS
         const resultUrl = log.result_url || failReason
         const isUrl = resultUrl?.startsWith('http')
+
+        if (isSuccess && log.platform === 'image') {
+          return <ImagePreviewCell log={log} />
+        }
 
         if (isSuccess && isVideoTask && isUrl) {
           const videoUrl = `/v1/videos/${log.task_id}/content`

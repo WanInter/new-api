@@ -3683,6 +3683,9 @@
     "，": ", ",
     "、": ", ",
     "退款额度": "Quota remboursé",
-    "总额度（充值 + 退款）": "Quota total (recharge + remboursement)"
+    "总额度（充值 + 退款）": "Quota total (recharge + remboursement)",
+    "文生图": "Texte vers image",
+    "图片": "Image",
+    "点击预览图片": "Cliquer pour prévisualiser l’image"
   }
 }

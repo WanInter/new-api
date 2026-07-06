@@ -1,0 +1,121 @@
+name: Build Docker Image on Push
+
+on:
+  push:
+    branches:
+      - "**"
+    paths:
+      - "common/**"
+      - "constant/**"
+      - "controller/**"
+      - "dto/**"
+      - "i18n/**"
+      - "logger/**"
+      - "middleware/**"
+      - "model/**"
+      - "oauth/**"
+      - "pkg/**"
+      - "relay/**"
+      - "router/**"
+      - "service/**"
+      - "setting/**"
+      - "types/**"
+      - "web/**"
+      - "main.go"
+      - "go.mod"
+      - "go.sum"
+      - "Dockerfile"
+      - "VERSION"
+      - ".dockerignore"
+      - ".github/workflows/build-image-on-push.yml"
+
+concurrency:
+  group: build-image-on-push-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and push Docker image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Prepare image tags
+        id: meta
+        env:
+          IMAGE: yzg963/new-api
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -eu
+
+          ref_slug="$(printf '%s' "${REF_NAME}" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's#[^a-z0-9_.-]+#-#g; s#^-+##; s#-+$##' \
+            | cut -c1-100)"
+          if [ -z "${ref_slug}" ]; then
+            ref_slug="branch"
+          fi
+
+          short_sha="$(printf '%s' "${SHA}" | cut -c1-8)"
+          tag="waninter"
+          echo "${tag}" > VERSION
+
+          tags="${IMAGE}:${tag}"
+          case "${ref_slug}" in
+            main|master)
+              tags="$(printf '%s\n%s:latest' "${tags}" "${IMAGE}")"
+              ;;
+          esac
+
+          {
+            echo "tag=${tag}"
+            echo "tags<<EOF"
+            echo "${tags}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Extract metadata labels
+        id: docker_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: yzg963/new-api
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
+          cache-from: type=gha,scope=new-api-push
+          cache-to: type=gha,scope=new-api-push,mode=max
+          provenance: false
+          sbom: false
+
+      - name: Print image refs
+        run: |
+          set -eu
+          echo "Image tag: ${{ steps.meta.outputs.tag }}"
+          echo "Image tags:"
+          printf '%s\n' '${{ steps.meta.outputs.tags }}'
+          echo "Digest: ${{ steps.build.outputs.digest }}"

@@ -440,8 +440,14 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			task.FinishTime = now
 		}
 		if strings.HasPrefix(taskResult.Url, "data:") {
-			// data: URI (e.g. Vertex base64 encoded video) — keep in Data, not in ResultURL
-			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+			if task.Platform == constant.TaskPlatformImage {
+				// Image tasks can return directly displayable data URLs.
+				// Keep them as the result URL; the video proxy cannot extract image b64 payloads.
+				task.PrivateData.ResultURL = taskResult.Url
+			} else {
+				// data: URI (e.g. Vertex base64 encoded video) — keep in Data, not in ResultURL
+				task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+			}
 		} else if taskResult.Url != "" {
 			// Direct upstream URL (e.g. Kling, Ali, Doubao, etc.).
 			// Some providers return URLs that are not reachable by clients (e.g. vidgen.x.ai),
