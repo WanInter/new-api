@@ -50,3 +50,5 @@ waninter_api_doc.xml
 # Local generated pricing/export artifacts
 docs/pricing.json
 scripts/
+.worktree
+.worktrees

@@ -128,6 +128,7 @@ func main() {
 		}
 		return a
 	}
+	service.ExecuteLocalImageTaskFunc = relay.ExecuteLocalImageTask
 
 	// Channel upstream model update check task
 	controller.StartChannelUpstreamModelUpdateTask()
