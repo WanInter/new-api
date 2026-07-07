@@ -27,23 +27,24 @@ import (
 
 const imageTaskRequestKey = "image_task_request"
 
+var localAsyncSubmitBody = []byte(`{"local_async":true}`)
+
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
 	channelType int
 	apiKey      string
 	baseURL     string
+	nativeAsync bool
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.channelType = info.ChannelType
 	a.apiKey = info.ApiKey
 	a.baseURL = info.ChannelBaseUrl
+	a.nativeAsync = false
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
-	if a.channelType != constant.ChannelTypeAli {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("async image task only supports Ali channel currently"), "unsupported_channel", http.StatusBadRequest)
-	}
 	if info.RelayMode != relayconstant.RelayModeImagesGenerations {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("unsupported async image relay mode: %d", info.RelayMode), "unsupported_relay_mode", http.StatusBadRequest)
 	}
@@ -52,10 +53,11 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
-	if model_setting.IsSyncImageModel(imageReq.Model) {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("model %s does not support native async image task", imageReq.Model), "unsupported_model", http.StatusBadRequest)
-	}
+	a.refreshNativeAsync(info, imageReq.Model)
 
+	if info.TaskRelayInfo == nil {
+		info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+	}
 	info.Action = constant.TaskActionImageGenerate
 	info.Request = imageReq
 	c.Set(imageTaskRequestKey, imageReq)
@@ -74,12 +76,14 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		ratios["n"] = float64(imageN)
 	}
 
-	aliReq, err := convertToAliImageRequest(info, *imageReq)
-	if err != nil {
-		return ratios
-	}
-	if aliReq.Parameters.PromptExtendValue() {
-		ratios["prompt_extend"] = 2
+	if a.channelType == constant.ChannelTypeAli {
+		aliReq, err := convertToAliImageRequest(info, *imageReq)
+		if err != nil {
+			return ratios
+		}
+		if aliReq.Parameters.PromptExtendValue() {
+			ratios["prompt_extend"] = 2
+		}
 	}
 	return ratios
 }
@@ -92,9 +96,21 @@ func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *rela
 	return 0
 }
 
+func (a *TaskAdaptor) refreshNativeAsync(info *relaycommon.RelayInfo, requestModel string) {
+	effectiveModel := firstNonEmpty(upstreamModelName(info), requestModel)
+	a.nativeAsync = a.channelType == constant.ChannelTypeAli && !model_setting.IsSyncImageModel(effectiveModel)
+}
+
+func upstreamModelName(info *relaycommon.RelayInfo) string {
+	if info == nil || info.ChannelMeta == nil {
+		return ""
+	}
+	return info.UpstreamModelName
+}
+
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	if a.channelType != constant.ChannelTypeAli {
-		return "", fmt.Errorf("unsupported async image channel type: %d", a.channelType)
+	if !a.nativeAsync {
+		return "", nil
 	}
 	return fmt.Sprintf("%s/api/v1/services/aigc/text2image/image-synthesis", a.baseURL), nil
 }
@@ -102,7 +118,9 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) error {
 	req.Header.Set("Authorization", "Bearer "+a.apiKey)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-DashScope-Async", "enable")
+	if a.nativeAsync {
+		req.Header.Set("X-DashScope-Async", "enable")
+	}
 	return nil
 }
 
@@ -110,6 +128,16 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	imageReq, err := getImageTaskRequest(c)
 	if err != nil {
 		return nil, err
+	}
+
+	a.refreshNativeAsync(info, imageReq.Model)
+
+	if !a.nativeAsync {
+		bodyBytes, err := common.Marshal(imageReq)
+		if err != nil {
+			return nil, errors.Wrap(err, "marshal_local_image_request_failed")
+		}
+		return bytes.NewReader(bodyBytes), nil
 	}
 
 	aliReq, err := convertToAliImageRequest(info, *imageReq)
@@ -125,10 +153,29 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 }
 
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+	if !a.nativeAsync {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewReader(localAsyncSubmitBody)),
+			Header:     make(http.Header),
+		}, nil
+	}
 	return channel.DoTaskApiRequest(a, c, info, requestBody)
 }
 
 func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, taskErr *dto.TaskError) {
+	if !a.nativeAsync {
+		c.JSON(http.StatusOK, gin.H{
+			"id":      info.PublicTaskID,
+			"object":  "image.task",
+			"created": common.GetTimestamp(),
+			"model":   info.OriginModelName,
+			"status":  "queued",
+			"task_id": info.PublicTaskID,
+		})
+		return info.PublicTaskID, localAsyncSubmitBody, nil
+	}
+
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
@@ -156,6 +203,37 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	})
 
 	return aliResp.Output.TaskId, responseBody, nil
+}
+
+func (a *TaskAdaptor) BuildPrivateData(c *gin.Context, info *relaycommon.RelayInfo) (*model.TaskPrivateData, error) {
+	if a.nativeAsync {
+		return nil, nil
+	}
+
+	imageReq, err := getImageTaskRequest(c)
+	if err != nil {
+		return nil, err
+	}
+	request := *imageReq
+	request.Stream = nil
+	if mappedModel := upstreamModelName(info); mappedModel != "" {
+		request.Model = mappedModel
+	}
+	requestBytes, err := common.Marshal(request)
+	if err != nil {
+		return nil, errors.Wrap(err, "marshal_local_image_task_request_failed")
+	}
+
+	return &model.TaskPrivateData{
+		Key: info.ApiKey,
+		LocalImageTask: &model.LocalImageTaskPrivateData{
+			Request:     requestBytes,
+			ChannelType: info.ChannelType,
+			APIType:     info.ApiType,
+			BaseURL:     info.ChannelBaseUrl,
+			APIVersion:  info.ApiVersion,
+		},
+	}, nil
 }
 
 func (a *TaskAdaptor) GetModelList() []string {
@@ -186,6 +264,10 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+	if taskResult, ok := parseLocalImageTaskResult(respBody); ok {
+		return taskResult, nil
+	}
+
 	var aliResp aliapi.AliResponse
 	if err := common.Unmarshal(respBody, &aliResp); err != nil {
 		return nil, errors.Wrap(err, "unmarshal async image task result failed")
@@ -207,6 +289,23 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Status = string(model.TaskStatusQueued)
 	}
 	return &taskResult, nil
+}
+
+func parseLocalImageTaskResult(respBody []byte) (*relaycommon.TaskInfo, bool) {
+	var localResp struct {
+		Status     string `json:"status"`
+		ResultURL  string `json:"result_url"`
+		FailReason string `json:"fail_reason"`
+	}
+	if err := common.Unmarshal(respBody, &localResp); err != nil || strings.TrimSpace(localResp.Status) == "" {
+		return nil, false
+	}
+	return &relaycommon.TaskInfo{
+		Code:   0,
+		Status: localResp.Status,
+		Url:    localResp.ResultURL,
+		Reason: localResp.FailReason,
+	}, true
 }
 
 func getImageTaskRequest(c *gin.Context) (*dto.ImageRequest, error) {

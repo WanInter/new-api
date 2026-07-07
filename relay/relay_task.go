@@ -27,7 +27,12 @@ type TaskSubmitResult struct {
 	TaskData       []byte
 	Platform       constant.TaskPlatform
 	Quota          int
+	PrivateData    *model.TaskPrivateData
 	//PerCallPrice   types.PriceData
+}
+
+type taskPrivateDataProvider interface {
+	BuildPrivateData(c *gin.Context, info *relaycommon.RelayInfo) (*model.TaskPrivateData, error)
 }
 
 // ResolveOriginTask 处理基于已有任务的提交（remix / continuation）：
@@ -243,6 +248,14 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, taskErr
 	}
 
+	var privateData *model.TaskPrivateData
+	if provider, ok := adaptor.(taskPrivateDataProvider); ok {
+		privateData, err = provider.BuildPrivateData(c, info)
+		if err != nil {
+			return nil, service.TaskErrorWrapper(err, "build_private_data_failed", http.StatusInternalServerError)
+		}
+	}
+
 	// 11. 提交后计费调整：让适配器根据上游实际返回调整 OtherRatios
 	finalQuota := info.PriceData.Quota
 	if shouldApplyTaskOtherRatios(info, modelName) {
@@ -260,6 +273,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		TaskData:       taskData,
 		Platform:       platform,
 		Quota:          finalQuota,
+		PrivateData:    privateData,
 	}, nil
 }
 
@@ -313,15 +327,16 @@ func recalcQuotaFromRatios(info *relaycommon.RelayInfo, ratios map[string]float6
 }
 
 var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp *dto.TaskError){
-	relayconstant.RelayModeSunoFetchByID:  sunoFetchByIDRespBodyBuilder,
-	relayconstant.RelayModeSunoFetch:      sunoFetchRespBodyBuilder,
-	relayconstant.RelayModeVideoFetchByID: videoFetchByIDRespBodyBuilder,
+	relayconstant.RelayModeSunoFetchByID:     sunoFetchByIDRespBodyBuilder,
+	relayconstant.RelayModeSunoFetch:         sunoFetchRespBodyBuilder,
+	relayconstant.RelayModeVideoFetchByID:    videoFetchByIDRespBodyBuilder,
+	relayconstant.RelayModeImagesGenerations: videoFetchByIDRespBodyBuilder,
 }
 
 func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
 	respBuilder, ok := fetchRespBuilders[relayMode]
 	if !ok {
-		taskResp = service.TaskErrorWrapperLocal(errors.New("invalid_relay_mode"), "invalid_relay_mode", http.StatusBadRequest)
+		return service.TaskErrorWrapperLocal(errors.New("invalid_relay_mode"), "invalid_relay_mode", http.StatusBadRequest)
 	}
 
 	respBody, taskErr := respBuilder(c)
@@ -412,10 +427,12 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
 
-	// Gemini/Vertex 支持实时查询：用户 fetch 时直接从上游拉取最新状态
-	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI); len(realtimeResp) > 0 {
-		respBody = realtimeResp
-		return
+	// Gemini/Vertex 视频任务支持实时查询；图片任务使用本地任务状态，避免误查视频上游。
+	if originTask.Platform != constant.TaskPlatformImage {
+		if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI); len(realtimeResp) > 0 {
+			respBody = realtimeResp
+			return
+		}
 	}
 
 	// OpenAI Video API 格式: 走各 adaptor 的 ConvertToOpenAIVideo

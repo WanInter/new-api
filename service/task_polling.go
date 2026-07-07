@@ -35,6 +35,9 @@ type TaskPollingAdaptor interface {
 // 打破 service -> relay -> relay/channel -> service 的循环依赖。
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
 
+// ExecuteLocalImageTaskFunc 由 main 包注入，用于执行本地异步图片任务。
+var ExecuteLocalImageTaskFunc func(ctx context.Context, task *model.Task, ch *model.Channel, key string, proxy string) (*http.Response, error)
+
 // sweepTimedOutTasks 在主轮询之前独立清理超时任务。
 // 每次最多处理 100 条，剩余的下个周期继续处理。
 // 使用 per-task CAS (UpdateWithStatus) 防止覆盖被正常轮询已推进的任务。
@@ -359,10 +362,19 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	if privateData.Key != "" {
 		key = privateData.Key
 	}
-	resp, err := adaptor.FetchTask(baseURL, key, map[string]any{
-		"task_id": task.GetUpstreamTaskID(),
-		"action":  task.Action,
-	}, proxy)
+	var resp *http.Response
+	var err error
+	if task.Platform == constant.TaskPlatformImage && task.PrivateData.LocalImageTask != nil {
+		if ExecuteLocalImageTaskFunc == nil {
+			return fmt.Errorf("local image task executor not found")
+		}
+		resp, err = ExecuteLocalImageTaskFunc(ctx, task, ch, key, proxy)
+	} else {
+		resp, err = adaptor.FetchTask(baseURL, key, map[string]any{
+			"task_id": task.GetUpstreamTaskID(),
+			"action":  task.Action,
+		}, proxy)
+	}
 	if err != nil {
 		return fmt.Errorf("fetchTask failed for task %s: %w", taskId, err)
 	}
