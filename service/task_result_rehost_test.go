@@ -76,3 +76,10 @@ func TestReplaceRehostedImageDataURLInJSON(t *testing.T) {
 	require.NotContains(t, string(updated), "b64_json")
 	require.Contains(t, string(updated), newURL)
 }
+
+func TestImageTaskFailureDataDoesNotExposeBase64(t *testing.T) {
+	data := imageTaskFailureData("upload failed")
+	require.NotContains(t, string(data), "data:image")
+	require.NotContains(t, string(data), "b64_json")
+	require.Contains(t, string(data), "upload failed")
+}

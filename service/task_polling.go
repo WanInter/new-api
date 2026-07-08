@@ -458,6 +458,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 					task.Status = model.TaskStatusFailure
 					task.Progress = taskcommon.ProgressComplete
 					task.FailReason = err.Error()
+					task.Data = imageTaskFailureData(task.FailReason)
 					taskResult.Progress = taskcommon.ProgressComplete
 					if quota != 0 {
 						shouldRefund = true
@@ -538,6 +539,17 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 
 	return nil
+}
+
+func imageTaskFailureData(reason string) []byte {
+	data, err := common.Marshal(map[string]string{
+		"status":      string(model.TaskStatusFailure),
+		"fail_reason": reason,
+	})
+	if err != nil {
+		return nil
+	}
+	return data
 }
 
 func completeImageDataURLResult(ctx context.Context, task *model.Task, taskResult *relaycommon.TaskInfo) error {
