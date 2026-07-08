@@ -125,8 +125,16 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func convertOpenAIImageToGeminiGenerateContent(request dto.ImageRequest) (dto.GeminiChatRequest, error) {
+	request, err := normalizeGeminiImageRequest(request)
+	if err != nil {
+		return dto.GeminiChatRequest{}, err
+	}
 	generationConfig := dto.GeminiChatGenerationConfig{
 		ResponseModalities: []string{"IMAGE"},
+	}
+	if request.N != nil && *request.N > 0 {
+		candidateCount := int(*request.N)
+		generationConfig.CandidateCount = &candidateCount
 	}
 	if request.Size != "" || request.Quality != "" {
 		imageConfig := buildGeminiImageConfig(request)
@@ -149,6 +157,36 @@ func convertOpenAIImageToGeminiGenerateContent(request dto.ImageRequest) (dto.Ge
 		},
 		GenerationConfig: generationConfig,
 	}, nil
+}
+
+type geminiImageParameters struct {
+	Size    string `json:"size,omitempty"`
+	N       *uint  `json:"n,omitempty"`
+	Quality string `json:"quality,omitempty"`
+}
+
+func normalizeGeminiImageRequest(request dto.ImageRequest) (dto.ImageRequest, error) {
+	if request.Extra == nil {
+		return request, nil
+	}
+	parametersJSON, ok := request.Extra["parameters"]
+	if !ok || len(parametersJSON) == 0 {
+		return request, nil
+	}
+	var parameters geminiImageParameters
+	if err := common.Unmarshal(parametersJSON, &parameters); err != nil {
+		return dto.ImageRequest{}, fmt.Errorf("invalid parameters field: %w", err)
+	}
+	if request.Size == "" {
+		request.Size = parameters.Size
+	}
+	if request.N == nil {
+		request.N = parameters.N
+	}
+	if request.Quality == "" {
+		request.Quality = parameters.Quality
+	}
+	return request, nil
 }
 
 func buildGeminiImageConfig(request dto.ImageRequest) map[string]any {

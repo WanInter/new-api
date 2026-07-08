@@ -18,12 +18,18 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go/ptr"
+)
+
+const (
+	defaultTaskResultRehostPrefix = "generated/newapi/videos"
+	imageTaskResultRehostPrefix   = "generated/newapi/images"
 )
 
 type taskResultRehostConfig struct {
@@ -113,6 +119,7 @@ func RehostTaskResultDataURL(ctx context.Context, task *model.Task, dataURL stri
 		return "", err
 	}
 
+	cfg = cfg.withDataURLPrefix(task)
 	objectKey := cfg.objectKey(task, dataURL, ext)
 	if err := cfg.upload(ctx, objectKey, bytes.NewReader(body), contentType); err != nil {
 		return "", err
@@ -146,7 +153,7 @@ func loadTaskResultRehostConfig() taskResultRehostConfig {
 		Bucket:          strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_BUCKET", "")),
 		Region:          strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_REGION", "")),
 		PublicBaseURL:   strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_PUBLIC_BASE_URL", "")),
-		Prefix:          strings.Trim(strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_PREFIX", "generated/newapi/videos")), "/"),
+		Prefix:          strings.Trim(strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_PREFIX", defaultTaskResultRehostPrefix)), "/"),
 		AccessKeyID:     strings.TrimSpace(os.Getenv("TASK_RESULT_REHOST_ACCESS_KEY_ID")),
 		AccessKeySecret: strings.TrimSpace(os.Getenv("TASK_RESULT_REHOST_ACCESS_KEY_SECRET")),
 		Proxy:           strings.TrimSpace(os.Getenv("TASK_RESULT_REHOST_PROXY")),
@@ -190,7 +197,14 @@ func (c taskResultRehostConfig) enabledForURL(rawURL string) bool {
 }
 
 func (c taskResultRehostConfig) enabledForDataURL(dataURL string) bool {
-	return c.Enabled && strings.HasPrefix(strings.TrimSpace(dataURL), "data:")
+	return strings.HasPrefix(strings.TrimSpace(dataURL), "data:")
+}
+
+func (c taskResultRehostConfig) withDataURLPrefix(task *model.Task) taskResultRehostConfig {
+	if task != nil && task.Platform == constant.TaskPlatformImage && c.Prefix == defaultTaskResultRehostPrefix {
+		c.Prefix = imageTaskResultRehostPrefix
+	}
+	return c
 }
 
 func (c taskResultRehostConfig) validate() error {

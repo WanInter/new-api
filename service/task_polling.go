@@ -453,20 +453,17 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		}
 		if strings.HasPrefix(taskResult.Url, "data:") {
 			if task.Platform == constant.TaskPlatformImage {
-				// Image tasks may return data URLs from local async execution. Rehost them when
-				// object storage is configured, because clients should receive durable URLs.
-				resultURL := taskResult.Url
-				if TaskResultRehostEnabledForDataURL(resultURL) {
-					rehostedURL, err := RehostTaskResultDataURL(ctx, task, resultURL)
-					if err != nil {
-						logger.LogError(ctx, fmt.Sprintf("Task %s data URL result rehost failed: %s", task.TaskID, err.Error()))
-					} else if strings.TrimSpace(rehostedURL) != "" {
-						task.Data = replaceRehostedImageDataURLInJSON(task.Data, resultURL, rehostedURL)
-						taskResult.Url = rehostedURL
-						resultURL = rehostedURL
+				if err := completeImageDataURLResult(ctx, task, taskResult); err != nil {
+					logger.LogError(ctx, fmt.Sprintf("Task %s data URL result rehost failed: %s", task.TaskID, err.Error()))
+					task.Status = model.TaskStatusFailure
+					task.Progress = taskcommon.ProgressComplete
+					task.FailReason = err.Error()
+					taskResult.Progress = taskcommon.ProgressComplete
+					if quota != 0 {
+						shouldRefund = true
 					}
+					break
 				}
-				task.PrivateData.ResultURL = resultURL
 			} else {
 				// data: URI (e.g. Vertex base64 encoded video) — keep in Data, not in ResultURL
 				task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
@@ -540,6 +537,24 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		RefundTaskQuota(ctx, task, task.FailReason)
 	}
 
+	return nil
+}
+
+func completeImageDataURLResult(ctx context.Context, task *model.Task, taskResult *relaycommon.TaskInfo) error {
+	resultURL := taskResult.Url
+	if TaskResultRehostEnabledForDataURL(resultURL) {
+		rehostedURL, err := RehostTaskResultDataURL(ctx, task, resultURL)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(rehostedURL) == "" {
+			return fmt.Errorf("rehost image data URL returned empty URL")
+		}
+		task.Data = replaceRehostedImageDataURLInJSON(task.Data, resultURL, rehostedURL)
+		taskResult.Url = rehostedURL
+		resultURL = rehostedURL
+	}
+	task.PrivateData.ResultURL = resultURL
 	return nil
 }
 

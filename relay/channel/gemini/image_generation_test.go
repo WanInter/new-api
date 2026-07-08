@@ -44,6 +44,39 @@ func TestConvertImageRequestSupportsGeminiImageModels(t *testing.T) {
 	require.Equal(t, "2K", imageConfig["imageSize"])
 }
 
+func TestConvertImageRequestUsesParametersForGeminiImageModels(t *testing.T) {
+	adaptor := &Adaptor{}
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gemini-2.5-flash-image",
+		},
+	}
+
+	var request dto.ImageRequest
+	require.NoError(t, common.Unmarshal([]byte(`{
+		"model": "nano-banana-2",
+		"prompt": "draw a cat",
+		"parameters": {
+			"size": "1024*1792",
+			"n": 2,
+			"quality": "high"
+		}
+	}`), &request))
+
+	converted, err := adaptor.ConvertImageRequest(nil, info, request)
+	require.NoError(t, err)
+
+	geminiRequest, ok := converted.(dto.GeminiChatRequest)
+	require.True(t, ok)
+	require.NotNil(t, geminiRequest.GenerationConfig.CandidateCount)
+	require.Equal(t, 2, *geminiRequest.GenerationConfig.CandidateCount)
+
+	var imageConfig map[string]string
+	require.NoError(t, common.Unmarshal(geminiRequest.GenerationConfig.ImageConfig, &imageConfig))
+	require.Equal(t, "9:16", imageConfig["aspectRatio"])
+	require.Equal(t, "2K", imageConfig["imageSize"])
+}
+
 func TestGeminiGenerateContentImageHandlerReturnsOpenAIImageResponse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
