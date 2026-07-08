@@ -18,7 +18,9 @@ var (
 	maskDomainPattern = regexp.MustCompile(`\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b`)
 	maskIPPattern     = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
 	// maskApiKeyPattern matches patterns like 'api_key:xxx' or "api_key:xxx" to mask the API key value
-	maskApiKeyPattern = regexp.MustCompile(`(['"]?)api_key:([^\s'"]+)(['"]?)`)
+	maskApiKeyPattern            = regexp.MustCompile(`(['"]?)api_key:([^\s'"]+)(['"]?)`)
+	waninterRequestFailedPattern = regexp.MustCompile(`(?i)\bwaninter\s+(request failed with status(?: code)?\s+\d+)`)
+	waninterBrandPattern         = regexp.MustCompile(`(?i)\bwaninter\b`)
 )
 
 const LocalLogContentLimit = 2048
@@ -29,6 +31,14 @@ func LocalLogPreview(content string) string {
 		return content
 	}
 	return fmt.Sprintf("%s... [truncated, original_length=%d, limit=%d]", content[:LocalLogContentLimit], len(content), LocalLogContentLimit)
+}
+
+// CleanUserVisibleErrorMessage removes deployment-specific branding and masks
+// sensitive network details from error messages returned to API callers.
+func CleanUserVisibleErrorMessage(message string) string {
+	message = MaskSensitiveInfo(message)
+	message = waninterRequestFailedPattern.ReplaceAllString(message, "$1")
+	return waninterBrandPattern.ReplaceAllString(message, "upstream")
 }
 
 func GetStringIfEmpty(str string, defaultValue string) string {
