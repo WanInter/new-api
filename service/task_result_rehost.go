@@ -1,8 +1,10 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -46,6 +48,11 @@ func TaskResultRehostEnabledForURL(rawURL string) bool {
 	return cfg.enabledForURL(rawURL)
 }
 
+func TaskResultRehostEnabledForDataURL(dataURL string) bool {
+	cfg := loadTaskResultRehostConfig()
+	return cfg.enabledForDataURL(dataURL)
+}
+
 func RehostTaskResultURL(ctx context.Context, task *model.Task, rawURL string, proxy string) (string, error) {
 	cfg := loadTaskResultRehostConfig()
 	if !cfg.enabledForURL(rawURL) {
@@ -80,6 +87,38 @@ func RehostTaskResultURL(ctx context.Context, task *model.Task, rawURL string, p
 	}
 	publicURL := strings.TrimRight(cfg.PublicBaseURL, "/") + "/" + strings.TrimLeft(objectKey, "/")
 	logger.LogInfo(ctx, fmt.Sprintf("task result rehosted: task=%s source_host=%s object=%s", task.TaskID, sourceHost(rawURL), objectKey))
+	return publicURL, nil
+}
+
+func RehostTaskResultDataURL(ctx context.Context, task *model.Task, dataURL string) (string, error) {
+	cfg := loadTaskResultRehostConfig()
+	if !cfg.enabledForDataURL(dataURL) {
+		return strings.TrimSpace(dataURL), nil
+	}
+	if task == nil {
+		return "", fmt.Errorf("task is nil")
+	}
+	if cfg.Backend != "aliyun_oss" && cfg.Backend != "s3" {
+		return "", fmt.Errorf("unsupported task result rehost backend: %s", cfg.Backend)
+	}
+	if err := cfg.validate(); err != nil {
+		return "", err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
+	defer cancel()
+
+	body, contentType, ext, err := decodeRehostDataURL(dataURL, cfg.MaxBytes)
+	if err != nil {
+		return "", err
+	}
+
+	objectKey := cfg.objectKey(task, dataURL, ext)
+	if err := cfg.upload(ctx, objectKey, bytes.NewReader(body), contentType); err != nil {
+		return "", err
+	}
+	publicURL := strings.TrimRight(cfg.PublicBaseURL, "/") + "/" + strings.TrimLeft(objectKey, "/")
+	logger.LogInfo(ctx, fmt.Sprintf("task data URL result rehosted: task=%s object=%s", task.TaskID, objectKey))
 	return publicURL, nil
 }
 
@@ -148,6 +187,10 @@ func (c taskResultRehostConfig) enabledForURL(rawURL string) bool {
 		}
 	}
 	return false
+}
+
+func (c taskResultRehostConfig) enabledForDataURL(dataURL string) bool {
+	return c.Enabled && strings.HasPrefix(strings.TrimSpace(dataURL), "data:")
 }
 
 func (c taskResultRehostConfig) validate() error {
@@ -225,6 +268,48 @@ func extensionFromContentTypeOrURL(contentType, rawURL string) string {
 		}
 	}
 	return "mp4"
+}
+
+func decodeRehostDataURL(dataURL string, maxBytes int64) ([]byte, string, string, error) {
+	contentType, payload, err := parseBase64DataURL(dataURL)
+	if err != nil {
+		return nil, "", "", err
+	}
+	decoded, err := io.ReadAll(io.LimitReader(base64.NewDecoder(base64.StdEncoding, strings.NewReader(payload)), maxBytes+1))
+	if err != nil {
+		return nil, "", "", fmt.Errorf("decode data URL failed: %w", err)
+	}
+	if int64(len(decoded)) > maxBytes {
+		return nil, "", "", fmt.Errorf("data URL source too large: %d > %d", len(decoded), maxBytes)
+	}
+	return decoded, contentType, extensionFromContentTypeOrURL(contentType, ""), nil
+}
+
+func parseBase64DataURL(dataURL string) (string, string, error) {
+	meta, payload, ok := strings.Cut(strings.TrimSpace(dataURL), ",")
+	if !ok || !strings.HasPrefix(meta, "data:") {
+		return "", "", fmt.Errorf("invalid data URL")
+	}
+	mediaPart := strings.TrimPrefix(meta, "data:")
+	parts := strings.Split(mediaPart, ";")
+	contentType := strings.TrimSpace(parts[0])
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	base64Encoded := false
+	for _, part := range parts[1:] {
+		if strings.EqualFold(strings.TrimSpace(part), "base64") {
+			base64Encoded = true
+			break
+		}
+	}
+	if !base64Encoded {
+		return "", "", fmt.Errorf("data URL is not base64 encoded")
+	}
+	if strings.TrimSpace(payload) == "" {
+		return "", "", fmt.Errorf("data URL payload is empty")
+	}
+	return contentType, payload, nil
 }
 
 func (c taskResultRehostConfig) objectKey(task *model.Task, rawURL, ext string) string {

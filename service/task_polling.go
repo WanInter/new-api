@@ -453,9 +453,20 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		}
 		if strings.HasPrefix(taskResult.Url, "data:") {
 			if task.Platform == constant.TaskPlatformImage {
-				// Image tasks can return directly displayable data URLs.
-				// Keep them as the result URL; the video proxy cannot extract image b64 payloads.
-				task.PrivateData.ResultURL = taskResult.Url
+				// Image tasks may return data URLs from local async execution. Rehost them when
+				// object storage is configured, because clients should receive durable URLs.
+				resultURL := taskResult.Url
+				if TaskResultRehostEnabledForDataURL(resultURL) {
+					rehostedURL, err := RehostTaskResultDataURL(ctx, task, resultURL)
+					if err != nil {
+						logger.LogError(ctx, fmt.Sprintf("Task %s data URL result rehost failed: %s", task.TaskID, err.Error()))
+					} else if strings.TrimSpace(rehostedURL) != "" {
+						task.Data = replaceRehostedImageDataURLInJSON(task.Data, resultURL, rehostedURL)
+						taskResult.Url = rehostedURL
+						resultURL = rehostedURL
+					}
+				}
+				task.PrivateData.ResultURL = resultURL
 			} else {
 				// data: URI (e.g. Vertex base64 encoded video) — keep in Data, not in ResultURL
 				task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
@@ -549,6 +560,74 @@ func replaceRehostedURLInJSON(data []byte, oldURL, newURL string) []byte {
 		return data
 	}
 	return updated
+}
+
+func replaceRehostedImageDataURLInJSON(data []byte, oldDataURL, newURL string) []byte {
+	if len(data) == 0 || strings.TrimSpace(oldDataURL) == "" || strings.TrimSpace(newURL) == "" {
+		return data
+	}
+	_, b64Payload, err := parseBase64DataURL(oldDataURL)
+	if err != nil {
+		return replaceRehostedURLInJSON(data, oldDataURL, newURL)
+	}
+	var payload any
+	if err := common.Unmarshal(data, &payload); err != nil {
+		return data
+	}
+	changed := replaceImageDataValue(&payload, oldDataURL, b64Payload, newURL)
+	if !changed {
+		return data
+	}
+	updated, err := common.Marshal(payload)
+	if err != nil {
+		return data
+	}
+	return updated
+}
+
+func replaceImageDataValue(value *any, oldDataURL, oldB64, newURL string) bool {
+	if value == nil {
+		return false
+	}
+	switch v := (*value).(type) {
+	case string:
+		if strings.TrimSpace(v) == oldDataURL {
+			*value = newURL
+			return true
+		}
+	case []any:
+		changed := false
+		for i := range v {
+			if replaceImageDataValue(&v[i], oldDataURL, oldB64, newURL) {
+				changed = true
+			}
+		}
+		return changed
+	case map[string]any:
+		changed := false
+		for k := range v {
+			item := v[k]
+			if (k == "b64_json" || k == "b64_image") && strings.TrimSpace(stringValue(item)) == oldB64 {
+				delete(v, k)
+				v["url"] = newURL
+				changed = true
+				continue
+			}
+			if replaceImageDataValue(&item, oldDataURL, oldB64, newURL) {
+				v[k] = item
+				changed = true
+			}
+		}
+		return changed
+	}
+	return false
+}
+
+func stringValue(value any) string {
+	if s, ok := value.(string); ok {
+		return s
+	}
+	return ""
 }
 
 func replaceURLValue(value *any, oldURL, newURL string) bool {
