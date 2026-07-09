@@ -23,6 +23,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const (
+	localImageGenerationPath = "/v1/images/generations"
+	localImageEditPath       = "/v1/images/edits"
+)
+
 type localImagePollResponse struct {
 	Status     string            `json:"status"`
 	ResultURL  string            `json:"result_url,omitempty"`
@@ -112,14 +117,15 @@ func executeLocalImageTask(ctx context.Context, task *model.Task, ch *model.Chan
 		return localImagePollResponse{}, fmt.Errorf("unmarshal local image request failed: %w", err)
 	}
 
+	relayMode, requestPath := localImageRequestMode(apiType, imageReq)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/images/generations", bytes.NewReader(privateData.Request))
+	c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, requestPath, bytes.NewReader(privateData.Request))
 	c.Request.Header.Set("Content-Type", "application/json")
 	setLocalImageContext(c, task, ch, key, proxy)
 
 	info := &relaycommon.RelayInfo{
-		RelayMode:       relayconstant.RelayModeImagesGenerations,
+		RelayMode:       relayMode,
 		RelayFormat:     types.RelayFormatOpenAIImage,
 		OriginModelName: task.Properties.OriginModelName,
 		RequestURLPath:  c.Request.URL.Path,
@@ -181,6 +187,22 @@ func executeLocalImageTask(ctx context.Context, task *model.Task, ch *model.Chan
 		ResultURL: resultURL,
 		Data:      imageResp,
 	}, nil
+}
+
+func localImageRequestMode(apiType int, imageReq dto.ImageRequest) (int, string) {
+	if apiType == constant.APITypeOpenAI && hasLocalImageReference(imageReq) {
+		return relayconstant.RelayModeImagesEdits, localImageEditPath
+	}
+	return relayconstant.RelayModeImagesGenerations, localImageGenerationPath
+}
+
+func hasLocalImageReference(imageReq dto.ImageRequest) bool {
+	return rawJSONHasValue(imageReq.Images) || rawJSONHasValue(imageReq.Image)
+}
+
+func rawJSONHasValue(raw []byte) bool {
+	value := strings.TrimSpace(string(raw))
+	return value != "" && value != "null" && value != `""` && value != "[]" && value != "{}"
 }
 
 func buildLocalImageRequestBody(c *gin.Context, adaptor channel.Adaptor, info *relaycommon.RelayInfo, imageReq dto.ImageRequest) (io.Reader, error) {
