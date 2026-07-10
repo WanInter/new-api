@@ -214,7 +214,7 @@ func buildLocalImageRequestBody(c *gin.Context, adaptor channel.Adaptor, info *r
 	if buffer, ok := convertedRequest.(*bytes.Buffer); ok {
 		return buffer, nil
 	}
-	jsonData, err := common.Marshal(convertedRequest)
+	jsonData, err := marshalLocalImageConvertedRequest(convertedRequest)
 	if err != nil {
 		return nil, fmt.Errorf("marshal local image request failed: %w", err)
 	}
@@ -225,6 +225,20 @@ func buildLocalImageRequestBody(c *gin.Context, adaptor channel.Adaptor, info *r
 		}
 	}
 	return bytes.NewReader(jsonData), nil
+}
+
+func marshalLocalImageConvertedRequest(convertedRequest any) ([]byte, error) {
+	switch request := convertedRequest.(type) {
+	case dto.ImageRequest:
+		return request.MarshalJSONWithExtra()
+	case *dto.ImageRequest:
+		if request == nil {
+			return nil, fmt.Errorf("converted local image request is nil")
+		}
+		return request.MarshalJSONWithExtra()
+	default:
+		return common.Marshal(convertedRequest)
+	}
 }
 
 func setLocalImageContext(c *gin.Context, task *model.Task, ch *model.Channel, key string, proxy string) {

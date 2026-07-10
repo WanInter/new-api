@@ -69,6 +69,16 @@ func (i *ImageRequest) UnmarshalJSON(data []byte) error {
 
 // 序列化时需要重新把字段平铺
 func (r ImageRequest) MarshalJSON() ([]byte, error) {
+	return r.marshalJSON(false)
+}
+
+// MarshalJSONWithExtra preserves provider-specific fields for relay paths that
+// explicitly require the original image request shape.
+func (r ImageRequest) MarshalJSONWithExtra() ([]byte, error) {
+	return r.marshalJSON(true)
+}
+
+func (r ImageRequest) marshalJSON(includeExtra bool) ([]byte, error) {
 	// 将已定义字段转为 map
 	type Alias ImageRequest
 	alias := Alias(r)
@@ -82,13 +92,13 @@ func (r ImageRequest) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 
-	// 不能合并ExtraFields！！！！！！！！
-	// 合并 ExtraFields
-	//for k, v := range r.Extra {
-	//	if _, exists := baseMap[k]; !exists {
-	//		baseMap[k] = v
-	//	}
-	//}
+	if includeExtra {
+		for k, v := range r.Extra {
+			if _, exists := baseMap[k]; !exists {
+				baseMap[k] = v
+			}
+		}
+	}
 
 	return common.Marshal(baseMap)
 }

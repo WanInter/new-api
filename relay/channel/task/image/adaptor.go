@@ -133,7 +133,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	a.refreshNativeAsync(info, imageReq.Model)
 
 	if !a.nativeAsync {
-		bodyBytes, err := common.Marshal(imageReq)
+		bodyBytes, err := imageReq.MarshalJSONWithExtra()
 		if err != nil {
 			return nil, errors.Wrap(err, "marshal_local_image_request_failed")
 		}
@@ -219,7 +219,7 @@ func (a *TaskAdaptor) BuildPrivateData(c *gin.Context, info *relaycommon.RelayIn
 	if mappedModel := upstreamModelName(info); mappedModel != "" {
 		request.Model = mappedModel
 	}
-	requestBytes, err := common.Marshal(request)
+	requestBytes, err := request.MarshalJSONWithExtra()
 	if err != nil {
 		return nil, errors.Wrap(err, "marshal_local_image_task_request_failed")
 	}

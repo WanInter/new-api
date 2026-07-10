@@ -13,6 +13,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -135,8 +136,19 @@ func TestEstimateBillingIgnoresAliPromptExtendForNonAliChannel(t *testing.T) {
 
 func TestBuildPrivateDataStoresLocalImageSnapshot(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	imageReq := &dto.ImageRequest{Model: "origin-model", Prompt: "cat"}
-	c.Set(imageTaskRequestKey, imageReq)
+	var imageReq dto.ImageRequest
+	require.NoError(t, common.Unmarshal([]byte(`{
+		"model":"origin-model",
+		"prompt":"cat",
+		"parameters":{
+			"size":"1K",
+			"n":1,
+			"prompt_extend":true,
+			"watermark":false,
+			"aspect_ratio":"9:16"
+		}
+	}`), &imageReq))
+	c.Set(imageTaskRequestKey, &imageReq)
 	info := &relaycommon.RelayInfo{
 		ChannelMeta: &relaycommon.ChannelMeta{
 			ChannelType:       constant.ChannelTypeOpenAI,
@@ -157,10 +169,17 @@ func TestBuildPrivateDataStoresLocalImageSnapshot(t *testing.T) {
 	require.Equal(t, constant.ChannelTypeOpenAI, privateData.LocalImageTask.ChannelType)
 	require.Equal(t, constant.APITypeOpenAI, privateData.LocalImageTask.APIType)
 	require.Equal(t, "https://upstream.example.com", privateData.LocalImageTask.BaseURL)
-	var stored dto.ImageRequest
+	var stored map[string]any
 	require.NoError(t, common.Unmarshal(privateData.LocalImageTask.Request, &stored))
-	require.Equal(t, "mapped-model", stored.Model)
-	require.Equal(t, "cat", stored.Prompt)
+	assert.Equal(t, "mapped-model", stored["model"])
+	assert.Equal(t, "cat", stored["prompt"])
+	assert.Equal(t, map[string]any{
+		"size":          "1K",
+		"n":             float64(1),
+		"prompt_extend": true,
+		"watermark":     false,
+		"aspect_ratio":  "9:16",
+	}, stored["parameters"])
 }
 
 func TestParseTaskResultLocalImageResponse(t *testing.T) {
