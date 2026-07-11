@@ -93,7 +93,7 @@
 | Vidu | `Vidu` | `relay/channel/task/vidu` | `viduq2`, `viduq1`, `vidu2.0`, `vidu1.5` | `/ent/v2/text2video|img2video|start-end2video|reference2video` | `Token` | 文生、图生、首尾帧、参考图；按图片数自动 action | `tasks/{id}/creations`，提取 `creations[0].url` |
 | Xinghe | `XingheVideo` | `relay/channel/task/xinghe` | `xinghe-mini`, `xinghe-fast`, `xinghe-2.0` | `/api/generate-video` | Bearer | 默认 duration/ratio/resolution；metadata 扩展 | `task_status` 和 nested metadata/result_urls |
 | AGGC | `AGGC` | `relay/channel/task/aggc` | `seedance-2.0` | `/api/v1/prot/generate` | `x-api-key` | 多输入：images/image_urls/video_urls/audio_urls；参数规整到 params | Sora-compatible 输出，提取 output URL |
-| Yobox | `Yobox` | `relay/channel/task/yobox` | `seedance2`, `seedance-2.0`, `seedance-2.0-fast` | `/async/tasks` | Bearer | Seedance 任务；图生、首尾帧、参考图、音频/分辨率参数 | 多种嵌套 outputs 兼容，失败原因提取 |
+| Yobox | `Yobox` | `relay/channel/task/yobox` | `seedance2`, `seedance-2.0`, `seedance-2.0-fast` | `/async/tasks` | Bearer | Seedance 任务；图生、参考图、音频/分辨率参数 | 多种嵌套 outputs 兼容，失败原因提取 |
 | Suno | `suno` platform | `relay/channel/task/suno` | `suno_music`, `suno_lyrics` | `/suno/submit/{action}` | Bearer | 音乐/歌词，不是视频，但走 task 框架 | 使用专用批量轮询，不走通用 `ParseTaskResult` |
 
 ## 视频标准入参到上游的常见映射

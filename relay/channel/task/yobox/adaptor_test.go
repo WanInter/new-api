@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,21 +28,60 @@ func TestConvertToRequestPayloadSeedance2UsesInputReference(t *testing.T) {
 	require.Contains(t, string(body), `"seconds":"12"`)
 }
 
-func TestConvertToRequestPayloadSeedance20UsesInputObject(t *testing.T) {
-	adaptor := &TaskAdaptor{}
-	payload, err := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
-		Model:    "seedance-2.0",
-		Prompt:   "run",
-		Duration: 6,
-		Images:   []string{"https://example.com/start.png", "https://example.com/end.png"},
-	}, &relaycommon.RelayInfo{})
-	require.NoError(t, err)
+func TestConvertToRequestPayloadSeedance20AlwaysUsesImageReferences(t *testing.T) {
+	testCases := []struct {
+		name     string
+		model    string
+		images   []string
+		expected []map[string]any
+	}{
+		{
+			name:     "one image",
+			model:    "seedance-2.0",
+			images:   []string{"https://example.com/1.png"},
+			expected: []map[string]any{{"url": "https://example.com/1.png", "strength": "MID"}},
+		},
+		{
+			name:   "two images",
+			model:  "seedance-2.0",
+			images: []string{"https://example.com/1.png", "https://example.com/2.png"},
+			expected: []map[string]any{
+				{"url": "https://example.com/1.png", "strength": "MID"},
+				{"url": "https://example.com/2.png", "strength": "MID"},
+			},
+		},
+		{
+			name:   "three images with fast model",
+			model:  "seedance-2.0-fast",
+			images: []string{"https://example.com/1.png", "https://example.com/2.png", "https://example.com/3.png"},
+			expected: []map[string]any{
+				{"url": "https://example.com/1.png", "strength": "MID"},
+				{"url": "https://example.com/2.png", "strength": "MID"},
+				{"url": "https://example.com/3.png", "strength": "MID"},
+			},
+		},
+	}
 
-	body, err := common.Marshal(payload)
-	require.NoError(t, err)
-	require.Contains(t, string(body), `"input":`)
-	require.Contains(t, string(body), `"start_frames":["https://example.com/start.png"]`)
-	require.Contains(t, string(body), `"end_frames":["https://example.com/end.png"]`)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload, err := (&TaskAdaptor{}).convertToRequestPayload(&relaycommon.TaskSubmitReq{
+				Model:    testCase.model,
+				Prompt:   "run",
+				Duration: 6,
+				Images:   testCase.images,
+			}, &relaycommon.RelayInfo{})
+			require.NoError(t, err)
+
+			body, ok := payload.(map[string]any)
+			require.True(t, ok)
+			input, ok := body["input"].(map[string]any)
+			require.True(t, ok)
+
+			assert.Equal(t, testCase.expected, input["image_references"])
+			assert.NotContains(t, input, "start_frames")
+			assert.NotContains(t, input, "end_frames")
+		})
+	}
 }
 
 func TestConvertToRequestPayloadDefaultsSeedance20Resolution(t *testing.T) {
