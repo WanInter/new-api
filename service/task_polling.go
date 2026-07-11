@@ -64,6 +64,8 @@ func sweepTimedOutTasks(ctx context.Context) {
 		task.Status = model.TaskStatusFailure
 		task.Progress = "100%"
 		task.FinishTime = now
+		task.ExecutionLeaseOwner = ""
+		task.ExecutionLeaseUntil = 0
 		if isLegacy {
 			task.FailReason = legacyReason
 		} else {
@@ -92,14 +94,36 @@ func sweepTimedOutTasks(ctx context.Context) {
 
 // TaskPollingLoop 主轮询循环，每 15 秒检查一次未完成的任务
 func TaskPollingLoop() {
+	localImageDispatcher := newLocalImageTaskDispatcher(
+		constant.LocalImageTaskConcurrency,
+		time.Duration(constant.LocalImageTaskLeaseSeconds)*time.Second,
+		runLeasedLocalImageTask,
+	)
+	common.SysLog(fmt.Sprintf(
+		"local async image executor started with concurrency %d and lease %ds",
+		localImageDispatcher.Concurrency(),
+		int(localImageDispatcher.LeaseDuration()/time.Second),
+	))
+	go localImageDispatcher.Run(context.Background(), localImageDispatchInterval, constant.TaskQueryLimit)
 	for {
 		time.Sleep(time.Duration(15) * time.Second)
 		common.SysLog("任务进度轮询开始")
 		ctx := context.TODO()
 		sweepTimedOutTasks(ctx)
-		allTasks := model.GetAllUnFinishSyncTasks(constant.TaskQueryLimit)
+		allTasks := model.GetUnfinishedPollingTasks(constant.TaskQueryLimit)
 		platformTask := make(map[constant.TaskPlatform][]*model.Task)
 		for _, t := range allTasks {
+			if isLocalImageExecutionTask(t) {
+				if !t.IsLocalImageTask {
+					if err := model.MarkTaskAsLocalImage(t.ID); err != nil {
+						logger.LogError(ctx, fmt.Sprintf("mark legacy local image task %s failed: %s", t.TaskID, err.Error()))
+					} else {
+						t.IsLocalImageTask = true
+					}
+				}
+				localImageDispatcher.TryDispatch(t)
+				continue
+			}
 			platformTask[t.Platform] = append(platformTask[t.Platform], t)
 		}
 		for platform, tasks := range platformTask {
@@ -345,17 +369,21 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 }
 
 func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *model.Channel, taskId string, taskM map[string]*model.Task) error {
-	baseURL := constant.ChannelBaseURLs[ch.Type]
-	if ch.GetBaseURL() != "" {
-		baseURL = ch.GetBaseURL()
-	}
-	proxy := ch.GetSetting().Proxy
-
 	task := taskM[taskId]
 	if task == nil {
 		logger.LogError(ctx, fmt.Sprintf("Task %s not found in taskM", taskId))
 		return fmt.Errorf("task %s not found", taskId)
 	}
+	return updateTask(ctx, adaptor, ch, task, "")
+}
+
+func updateTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *model.Channel, task *model.Task, leaseOwner string) error {
+	taskId := task.GetUpstreamTaskID()
+	baseURL := constant.ChannelBaseURLs[ch.Type]
+	if ch.GetBaseURL() != "" {
+		baseURL = ch.GetBaseURL()
+	}
+	proxy := ch.GetSetting().Proxy
 	key := ch.Key
 
 	privateData := task.PrivateData
@@ -511,20 +539,35 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 
 	isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
+	leaseLost := false
 	if isDone && snap.Status != task.Status {
-		won, err := task.UpdateWithStatus(snap.Status)
+		if leaseOwner != "" {
+			task.ExecutionLeaseOwner = ""
+			task.ExecutionLeaseUntil = 0
+		}
+		won, err := updateTaskWithExecutionGuard(task, snap.Status, leaseOwner)
 		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("UpdateWithStatus failed for task %s: %s", task.TaskID, err.Error()))
 			shouldRefund = false
 			shouldSettle = false
+			if leaseOwner != "" {
+				return fmt.Errorf("persist local image task %s failed: %w", task.TaskID, err)
+			}
 		} else if !won {
-			logger.LogWarn(ctx, fmt.Sprintf("Task %s already transitioned by another process, skip billing", task.TaskID))
+			logger.LogWarn(ctx, fmt.Sprintf("Task %s already transitioned or lost its execution lease, skip billing", task.TaskID))
 			shouldRefund = false
 			shouldSettle = false
+			leaseLost = leaseOwner != ""
 		}
 	} else if !snap.Equal(task.Snapshot()) {
-		if _, err := task.UpdateWithStatus(snap.Status); err != nil {
+		won, err := updateTaskWithExecutionGuard(task, snap.Status, leaseOwner)
+		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("Failed to update task %s: %s", task.TaskID, err.Error()))
+			if leaseOwner != "" {
+				return fmt.Errorf("persist local image task %s failed: %w", task.TaskID, err)
+			}
+		} else if !won && leaseOwner != "" {
+			leaseLost = true
 		}
 	} else {
 		// No changes, skip update
@@ -537,8 +580,18 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	if shouldRefund {
 		RefundTaskQuota(ctx, task, task.FailReason)
 	}
+	if leaseLost {
+		return errTaskExecutionLeaseLost
+	}
 
 	return nil
+}
+
+func updateTaskWithExecutionGuard(task *model.Task, fromStatus model.TaskStatus, leaseOwner string) (bool, error) {
+	if leaseOwner != "" {
+		return task.UpdateWithStatusAndLease(fromStatus, leaseOwner)
+	}
+	return task.UpdateWithStatus(fromStatus)
 }
 
 func imageTaskFailureData(reason string) []byte {

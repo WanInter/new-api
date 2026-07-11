@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -235,4 +236,145 @@ func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, winCount, "exactly one goroutine should win the CAS")
+}
+
+func TestTaskExecutionLeaseLifecycle(t *testing.T) {
+	truncateTables(t)
+	now := time.Now().Unix()
+	task := &Task{
+		TaskID:   "task_execution_lease_lifecycle",
+		Platform: constant.TaskPlatformImage,
+		Status:   TaskStatusNotStart,
+		Progress: "0%",
+		Data:     json.RawMessage(`{}`),
+	}
+	insertTask(t, task)
+
+	claimed, err := TryClaimTaskExecutionLease(task.ID, "worker-1", now, now+300)
+	require.NoError(t, err)
+	assert.True(t, claimed)
+
+	var claimedTask Task
+	require.NoError(t, DB.First(&claimedTask, task.ID).Error)
+	assert.Equal(t, "worker-1", claimedTask.ExecutionLeaseOwner)
+	assert.Equal(t, now+300, claimedTask.ExecutionLeaseUntil)
+	assert.EqualValues(t, TaskStatusInProgress, claimedTask.Status)
+	assert.Equal(t, "30%", claimedTask.Progress)
+	assert.Equal(t, now, claimedTask.StartTime)
+	assert.Equal(t, 1, claimedTask.ExecutionAttempts)
+
+	claimed, err = TryClaimTaskExecutionLease(task.ID, "worker-2", now, now+300)
+	require.NoError(t, err)
+	assert.False(t, claimed)
+
+	retryAt := now + 15
+	retried, err := RetryTaskExecutionLease(task.ID, "worker-1", retryAt)
+	require.NoError(t, err)
+	assert.True(t, retried)
+
+	var queuedTask Task
+	require.NoError(t, DB.First(&queuedTask, task.ID).Error)
+	assert.EqualValues(t, TaskStatusQueued, queuedTask.Status)
+	assert.Equal(t, "20%", queuedTask.Progress)
+	assert.Empty(t, queuedTask.ExecutionLeaseOwner)
+	assert.Equal(t, retryAt, queuedTask.ExecutionLeaseUntil)
+}
+
+func TestTaskExecutionLeaseExpiredClaimRejectsStaleOwner(t *testing.T) {
+	truncateTables(t)
+	now := time.Now().Unix()
+	task := &Task{
+		TaskID:   "task_execution_lease_transfer",
+		Platform: constant.TaskPlatformImage,
+		Status:   TaskStatusNotStart,
+		Data:     json.RawMessage(`{}`),
+	}
+	insertTask(t, task)
+
+	claimed, err := TryClaimTaskExecutionLease(task.ID, "worker-old", now, now+300)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NoError(t, DB.Model(&Task{}).Where("id = ?", task.ID).UpdateColumn("execution_lease_until", now-1).Error)
+
+	claimed, err = TryClaimTaskExecutionLease(task.ID, "worker-new", now, now+600)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	renewed, err := RenewTaskExecutionLease(task.ID, "worker-old", now+900)
+	require.NoError(t, err)
+	assert.False(t, renewed)
+	released, err := ReleaseTaskExecutionLease(task.ID, "worker-old")
+	require.NoError(t, err)
+	assert.False(t, released)
+
+	staleTask := &Task{
+		ID:                  task.ID,
+		TaskID:              task.TaskID,
+		Platform:            constant.TaskPlatformImage,
+		Status:              TaskStatusSuccess,
+		Progress:            "100%",
+		ExecutionLeaseOwner: "worker-old",
+		Data:                json.RawMessage(`{}`),
+	}
+	won, err := staleTask.UpdateWithStatusAndLease(TaskStatusInProgress, "worker-old")
+	require.NoError(t, err)
+	assert.False(t, won)
+
+	var current Task
+	require.NoError(t, DB.First(&current, task.ID).Error)
+	assert.Equal(t, "worker-new", current.ExecutionLeaseOwner)
+	assert.EqualValues(t, TaskStatusInProgress, current.Status)
+}
+
+func TestTaskInsertMarksLocalImageTask(t *testing.T) {
+	truncateTables(t)
+	task := &Task{
+		TaskID:   "task_insert_local_image_marker",
+		Platform: constant.TaskPlatformImage,
+		Status:   TaskStatusNotStart,
+		PrivateData: TaskPrivateData{
+			LocalImageTask: &LocalImageTaskPrivateData{},
+		},
+	}
+
+	require.NoError(t, task.Insert())
+
+	var reloaded Task
+	require.NoError(t, DB.First(&reloaded, task.ID).Error)
+	assert.True(t, reloaded.IsLocalImageTask)
+}
+
+func TestPollingQueriesIsolateLocalImageTasks(t *testing.T) {
+	truncateTables(t)
+	now := time.Now().Unix()
+	localImage := &Task{
+		TaskID:           "task_polling_local_image",
+		Platform:         constant.TaskPlatformImage,
+		Status:           TaskStatusQueued,
+		IsLocalImageTask: true,
+		PrivateData: TaskPrivateData{
+			LocalImageTask: &LocalImageTaskPrivateData{},
+		},
+	}
+	video := &Task{
+		TaskID:   "task_polling_video",
+		Platform: constant.TaskPlatformSuno,
+		Status:   TaskStatusQueued,
+	}
+	insertTask(t, localImage)
+	insertTask(t, video)
+
+	pollingTasks := GetUnfinishedPollingTasks(1)
+	require.Len(t, pollingTasks, 1)
+	assert.Equal(t, video.ID, pollingTasks[0].ID)
+
+	localTasks, err := GetPendingLocalImageTasks(now, 1)
+	require.NoError(t, err)
+	require.Len(t, localTasks, 1)
+	assert.Equal(t, localImage.ID, localTasks[0].ID)
+
+	require.NoError(t, DB.Model(localImage).UpdateColumn("execution_lease_until", now+60).Error)
+	localTasks, err = GetPendingLocalImageTasks(now, 1)
+	require.NoError(t, err)
+	assert.Empty(t, localTasks)
 }

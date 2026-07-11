@@ -81,7 +81,7 @@ func TestLocalImageRequestModeKeepsNonOpenAIProviderGeneration(t *testing.T) {
 	require.Equal(t, localImageGenerationPath, path)
 }
 
-func TestBuildLocalImageRequestBodyPreservesOpenAIExtraParameters(t *testing.T) {
+func TestBuildLocalImageRequestBodyFlattensOpenAIParameters(t *testing.T) {
 	var imageReq dto.ImageRequest
 	require.NoError(t, common.Unmarshal([]byte(`{
 		"model":"nano-banana-pro",
@@ -102,7 +102,7 @@ func TestBuildLocalImageRequestBodyPreservesOpenAIExtraParameters(t *testing.T) 
 	info := &relaycommon.RelayInfo{
 		RelayMode:   relayconstant.RelayModeImagesGenerations,
 		RelayFormat: types.RelayFormatOpenAIImage,
-		ChannelMeta: &relaycommon.ChannelMeta{},
+		ChannelMeta: &relaycommon.ChannelMeta{ApiType: constant.APITypeOpenAI},
 	}
 
 	body, err := buildLocalImageRequestBody(c, &openai.Adaptor{}, info, imageReq)
@@ -112,11 +112,46 @@ func TestBuildLocalImageRequestBodyPreservesOpenAIExtraParameters(t *testing.T) 
 
 	var upstream map[string]any
 	require.NoError(t, common.Unmarshal(bodyBytes, &upstream))
-	assert.Equal(t, map[string]any{
-		"size":          "1K",
-		"n":             float64(1),
-		"prompt_extend": true,
-		"watermark":     false,
-		"aspect_ratio":  "9:16",
-	}, upstream["parameters"])
+	assert.Equal(t, "1K", upstream["size"])
+	assert.Equal(t, "9:16", upstream["aspect_ratio"])
+	assert.Equal(t, float64(1), upstream["n"])
+	assert.Equal(t, true, upstream["prompt_extend"])
+	assert.Equal(t, false, upstream["watermark"])
+	assert.NotContains(t, upstream, "parameters")
+}
+
+func TestNormalizeLocalImageRequestKeepsExplicitTopLevelValues(t *testing.T) {
+	var imageReq dto.ImageRequest
+	require.NoError(t, common.Unmarshal([]byte(`{
+		"model":"nano-banana-pro",
+		"prompt":"cat",
+		"size":"2K",
+		"aspect_ratio":"16:9",
+		"parameters":{"size":"1K","aspect_ratio":"9:16"}
+	}`), &imageReq))
+
+	require.NoError(t, normalizeLocalImageRequest(constant.APITypeOpenAI, &imageReq))
+	requestJSON, err := imageReq.MarshalJSONWithExtra()
+	require.NoError(t, err)
+	var normalized map[string]any
+	require.NoError(t, common.Unmarshal(requestJSON, &normalized))
+	assert.Equal(t, "2K", normalized["size"])
+	assert.Equal(t, "16:9", normalized["aspect_ratio"])
+	assert.NotContains(t, normalized, "parameters")
+}
+
+func TestNormalizeLocalImageRequestKeepsNativeParameters(t *testing.T) {
+	var imageReq dto.ImageRequest
+	require.NoError(t, common.Unmarshal([]byte(`{
+		"model":"wanx-v1",
+		"prompt":"cat",
+		"parameters":{"size":"1024*1792","aspect_ratio":"9:16"}
+	}`), &imageReq))
+
+	require.NoError(t, normalizeLocalImageRequest(constant.APITypeAli, &imageReq))
+	requestJSON, err := imageReq.MarshalJSONWithExtra()
+	require.NoError(t, err)
+	var unchanged map[string]any
+	require.NoError(t, common.Unmarshal(requestJSON, &unchanged))
+	assert.Contains(t, unchanged, "parameters")
 }

@@ -3,6 +3,7 @@ package relay
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -206,6 +207,9 @@ func rawJSONHasValue(raw []byte) bool {
 }
 
 func buildLocalImageRequestBody(c *gin.Context, adaptor channel.Adaptor, info *relaycommon.RelayInfo, imageReq dto.ImageRequest) (io.Reader, error) {
+	if err := normalizeLocalImageRequest(info.ApiType, &imageReq); err != nil {
+		return nil, err
+	}
 	convertedRequest, err := adaptor.ConvertImageRequest(c, info, imageReq)
 	if err != nil {
 		return nil, fmt.Errorf("convert local image request failed: %w", err)
@@ -225,6 +229,44 @@ func buildLocalImageRequestBody(c *gin.Context, adaptor channel.Adaptor, info *r
 		}
 	}
 	return bytes.NewReader(jsonData), nil
+}
+
+func normalizeLocalImageRequest(apiType int, request *dto.ImageRequest) error {
+	if apiType != constant.APITypeOpenAI || request == nil || request.Extra == nil {
+		return nil
+	}
+	parametersJSON, ok := request.Extra["parameters"]
+	if !ok {
+		return nil
+	}
+
+	var parameters map[string]json.RawMessage
+	if err := common.Unmarshal(parametersJSON, &parameters); err != nil {
+		return fmt.Errorf("invalid local image parameters: %w", err)
+	}
+	payloadJSON, err := request.MarshalJSONWithExtra()
+	if err != nil {
+		return fmt.Errorf("marshal local image request for normalization failed: %w", err)
+	}
+	var payload map[string]json.RawMessage
+	if err := common.Unmarshal(payloadJSON, &payload); err != nil {
+		return fmt.Errorf("unmarshal local image request for normalization failed: %w", err)
+	}
+	delete(payload, "parameters")
+	for key, value := range parameters {
+		if _, exists := payload[key]; !exists {
+			payload[key] = value
+		}
+	}
+
+	normalizedJSON, err := common.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal normalized local image request failed: %w", err)
+	}
+	if err := common.Unmarshal(normalizedJSON, request); err != nil {
+		return fmt.Errorf("unmarshal normalized local image request failed: %w", err)
+	}
+	return nil
 }
 
 func marshalLocalImageConvertedRequest(convertedRequest any) ([]byte, error) {

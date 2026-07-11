@@ -154,6 +154,15 @@ func initConstantEnv() {
 	constant.TaskQueryLimit = GetEnvOrDefault("TASK_QUERY_LIMIT", 1000)
 	// 异步任务超时时间（分钟），超过此时间未完成的任务将被标记为失败并退款。0 表示禁用。
 	constant.TaskTimeoutMinutes = GetEnvOrDefault("TASK_TIMEOUT_MINUTES", 1440)
+	// 本地异步图片使用独立的有界执行器，避免阻塞视频任务状态轮询。
+	constant.LocalImageTaskConcurrency = GetEnvOrDefault("LOCAL_IMAGE_TASK_CONCURRENCY", 4)
+	if constant.LocalImageTaskConcurrency < 1 {
+		constant.LocalImageTaskConcurrency = 1
+	}
+	constant.LocalImageTaskLeaseSeconds = GetEnvOrDefault("LOCAL_IMAGE_TASK_LEASE_SECONDS", 300)
+	if constant.LocalImageTaskLeaseSeconds < 30 {
+		constant.LocalImageTaskLeaseSeconds = 30
+	}
 
 	soraPatchStr := GetEnvOrDefaultString("TASK_PRICE_PATCH", "")
 	if soraPatchStr != "" {

@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
+	"gorm.io/gorm"
 )
 
 type TaskStatus string
@@ -63,6 +65,12 @@ type Task struct {
 	// 禁止返回给用户，内部可能包含key等隐私信息
 	PrivateData TaskPrivateData `json:"-" gorm:"column:private_data;type:json"`
 	Data        json.RawMessage `json:"data" gorm:"type:json"`
+	// Execution lease fields coordinate one-shot local task execution across instances.
+	// A future lease deadline with an empty owner is the retry-not-before time.
+	IsLocalImageTask    bool   `json:"-" gorm:"index;index:idx_task_local_image_schedule,priority:1;default:false"`
+	ExecutionLeaseOwner string `json:"-" gorm:"type:varchar(191)"`
+	ExecutionLeaseUntil int64  `json:"-" gorm:"index:idx_task_local_image_schedule,priority:2;default:0"`
+	ExecutionAttempts   int    `json:"-" gorm:"default:0"`
 }
 
 func (t *Task) SetData(data any) {
@@ -324,6 +332,60 @@ func GetAllUnFinishSyncTasks(limit int) []*Task {
 	return tasks
 }
 
+func GetUnfinishedPollingTasks(limit int) []*Task {
+	var tasks []*Task
+	err := DB.Where("status != ?", TaskStatusFailure).
+		Where("status != ?", TaskStatusSuccess).
+		Where("is_local_image_task = ?", false).
+		Limit(limit).
+		Order("id").
+		Find(&tasks).Error
+	if err != nil {
+		return nil
+	}
+	return tasks
+}
+
+func GetPendingLocalImageTasks(now int64, limit int) ([]*Task, error) {
+	if limit < 1 {
+		return nil, nil
+	}
+	var tasks []*Task
+	err := DB.Where("is_local_image_task = ?", true).
+		Where("status != ?", TaskStatusFailure).
+		Where("status != ?", TaskStatusSuccess).
+		Where("execution_lease_until IS NULL OR execution_lease_until <= ?", now).
+		Limit(limit).
+		Order("id").
+		Find(&tasks).Error
+	return tasks, err
+}
+
+func GetLegacyLocalImageTaskCandidates(afterID int64, limit int) ([]*Task, error) {
+	if limit < 1 {
+		return nil, nil
+	}
+	var tasks []*Task
+	err := DB.Where("platform = ?", constant.TaskPlatformImage).
+		Where("is_local_image_task = ?", false).
+		Where("status != ?", TaskStatusFailure).
+		Where("status != ?", TaskStatusSuccess).
+		Where("id > ?", afterID).
+		Limit(limit).
+		Order("id").
+		Find(&tasks).Error
+	return tasks, err
+}
+
+func MarkTaskAsLocalImage(taskID int64) error {
+	if taskID <= 0 {
+		return errors.New("invalid local image task id")
+	}
+	return DB.Model(&Task{}).
+		Where("id = ?", taskID).
+		UpdateColumn("is_local_image_task", true).Error
+}
+
 func GetByOnlyTaskId(taskId string) (*Task, bool, error) {
 	if taskId == "" {
 		return nil, false, nil
@@ -368,9 +430,8 @@ func GetByTaskIds(userId int, taskIds []any) ([]*Task, error) {
 }
 
 func (Task *Task) Insert() error {
-	var err error
-	err = DB.Create(Task).Error
-	return err
+	Task.IsLocalImageTask = Task.PrivateData.LocalImageTask != nil
+	return DB.Create(Task).Error
 }
 
 type taskSnapshot struct {
@@ -420,6 +481,96 @@ func (Task *Task) Update() error {
 // zero rows, which silently bypasses the CAS guard.
 func (t *Task) UpdateWithStatus(fromStatus TaskStatus) (bool, error) {
 	result := DB.Model(t).Where("status = ?", fromStatus).Select("*").Updates(t)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
+func (t *Task) UpdateWithStatusAndLease(fromStatus TaskStatus, leaseOwner string) (bool, error) {
+	if leaseOwner == "" {
+		return false, errors.New("task execution lease owner is required")
+	}
+	result := DB.Model(t).
+		Where("status = ?", fromStatus).
+		Where("execution_lease_owner = ?", leaseOwner).
+		Select("*").
+		Updates(t)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
+func TryClaimTaskExecutionLease(taskID int64, owner string, now, leaseUntil int64) (bool, error) {
+	if taskID <= 0 || owner == "" || leaseUntil <= now {
+		return false, errors.New("invalid task execution lease claim")
+	}
+	result := DB.Model(&Task{}).
+		Where("id = ?", taskID).
+		Where("platform = ?", constant.TaskPlatformImage).
+		Where("status != ? AND status != ?", TaskStatusFailure, TaskStatusSuccess).
+		Where("execution_lease_until IS NULL OR execution_lease_until <= ?", now).
+		UpdateColumns(map[string]any{
+			"execution_lease_owner": owner,
+			"execution_lease_until": leaseUntil,
+			"execution_attempts":    gorm.Expr("execution_attempts + ?", 1),
+			"status":                TaskStatusInProgress,
+			"progress":              "30%",
+			"start_time":            now,
+		})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
+func RenewTaskExecutionLease(taskID int64, owner string, leaseUntil int64) (bool, error) {
+	if taskID <= 0 || owner == "" || leaseUntil <= 0 {
+		return false, errors.New("invalid task execution lease renewal")
+	}
+	result := DB.Model(&Task{}).
+		Where("id = ?", taskID).
+		Where("execution_lease_owner = ?", owner).
+		Where("status != ? AND status != ?", TaskStatusFailure, TaskStatusSuccess).
+		UpdateColumn("execution_lease_until", leaseUntil)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
+func RetryTaskExecutionLease(taskID int64, owner string, retryAt int64) (bool, error) {
+	if taskID <= 0 || owner == "" || retryAt <= 0 {
+		return false, errors.New("invalid task execution lease retry")
+	}
+	result := DB.Model(&Task{}).
+		Where("id = ?", taskID).
+		Where("status = ?", TaskStatusInProgress).
+		Where("execution_lease_owner = ?", owner).
+		UpdateColumns(map[string]any{
+			"execution_lease_owner": "",
+			"execution_lease_until": retryAt,
+			"status":                TaskStatusQueued,
+			"progress":              "20%",
+		})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
+func ReleaseTaskExecutionLease(taskID int64, owner string) (bool, error) {
+	if taskID <= 0 || owner == "" {
+		return false, errors.New("invalid task execution lease release")
+	}
+	result := DB.Model(&Task{}).
+		Where("id = ?", taskID).
+		Where("execution_lease_owner = ?", owner).
+		UpdateColumns(map[string]any{
+			"execution_lease_owner": "",
+			"execution_lease_until": 0,
+		})
 	if result.Error != nil {
 		return false, result.Error
 	}
