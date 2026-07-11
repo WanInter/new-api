@@ -51,14 +51,51 @@ func BuildBillingExprRequestInputFromRequest(request dto.Request, headers map[st
 }
 
 func readIncomingBillingExprBody(c *gin.Context) ([]byte, error) {
-	if c == nil || c.Request == nil || !isJSONContentType(c.Request.Header.Get("Content-Type")) {
+	if c == nil || c.Request == nil {
 		return nil, nil
 	}
+
+	contentType := c.Request.Header.Get("Content-Type")
+	if isMultipartContentType(contentType) {
+		return marshalMultipartValues(c)
+	}
+	if !isJSONContentType(contentType) {
+		return nil, nil
+	}
+
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
 		return nil, err
 	}
 	return storage.Bytes()
+}
+
+func marshalMultipartValues(c *gin.Context) ([]byte, error) {
+	form := c.Request.MultipartForm
+	if form == nil {
+		var err error
+		form, err = common.ParseMultipartFormReusable(c)
+		if err != nil {
+			return nil, err
+		}
+		c.Request.MultipartForm = form
+	}
+	if form == nil || len(form.Value) == 0 {
+		return nil, nil
+	}
+
+	values := make(map[string]interface{}, len(form.Value))
+	for key, formValues := range form.Value {
+		switch len(formValues) {
+		case 0:
+			continue
+		case 1:
+			values[key] = formValues[0]
+		default:
+			values[key] = append([]string(nil), formValues...)
+		}
+	}
+	return common.Marshal(values)
 }
 
 func cloneRequestInput(src billingexpr.RequestInput) billingexpr.RequestInput {
@@ -74,6 +111,11 @@ func cloneRequestInput(src billingexpr.RequestInput) billingexpr.RequestInput {
 func isJSONContentType(contentType string) bool {
 	contentType = strings.ToLower(strings.TrimSpace(contentType))
 	return strings.HasPrefix(contentType, "application/json")
+}
+
+func isMultipartContentType(contentType string) bool {
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	return strings.HasPrefix(contentType, "multipart/form-data")
 }
 
 func cloneStringMap(src map[string]string) map[string]string {
