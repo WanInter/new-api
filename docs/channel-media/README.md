@@ -87,6 +87,7 @@
 | Gemini Veo | `Gemini` | `relay/channel/task/gemini` | `veo-3.0-*`, `veo-3.1-*` | `/{version}/models/{model}:predictLongRunning` | `x-goog-api-key` | 文生视频、图片首帧；metadata 支持 `durationSeconds/resolution/aspectRatio` | Google operation 轮询，提取 `generatedVideos[].video.uri` |
 | Vertex Veo | `VertexAi` | `relay/channel/task/vertex` | 同 Gemini Veo | Vertex model URL `predictLongRunning` | service account OAuth token | Vertex 版 Veo；区域从模型/API version 推导 | operation response 转任务状态/URL |
 | Kling | `Kling` | `relay/channel/task/kling` | `kling-v1`, `kling-v1-6`, `kling-v2-master` | `/v1/videos/image2video` 或 `/v1/videos/text2video` | JWT Bearer（AK/SK） | 文生、图生、尾帧；New API relay 模式可加 `/kling` 前缀 | 上游 task status 转内部状态，URL 转 OpenAI Video |
+| Tencent VOD | `TencentVOD` | `relay/channel/task/tencentvod` | `kling-vod-1.6` 至 `kling-vod-3.0-omni` | `CreateAigcVideoTask` / `DescribeTaskDetail` | TC3-HMAC-SHA256（SecretId/SecretKey/SubAppId） | 腾讯云点播可灵文生、图生、参考图、首尾帧 | `AigcVideoTask` 状态和 `Output.FileInfos[].FileUrl` 转 OpenAI Video |
 | Jimeng Video | `Jimeng` | `relay/channel/task/jimeng` | `jimeng_vgfm_t2v_l20` | `?Action=CVSync2AsyncSubmitTask&Version=2022-08-31` | 火山签名或 Bearer relay | 文生/图生/首尾帧；multipart `input_reference` 转 base64 | 解析 query 结果 URL/状态 |
 | Jimeng Dimensio | `JimengDimensio` | `relay/channel/task/jimengdimensio` | `jimeng-video-seedance-2.0-*` | `/v1/videos/generations` | Bearer | Seedance/即梦尺寸化视频，默认 ratio/resolution/duration | Sora-compatible 输出 |
 | MiniMax Hailuo | `MiniMax` | `relay/channel/task/hailuo` | `MiniMax-Hailuo-2.3`, `T2V-01`, `I2V-01`, `S2V-01` 等 | `/v1/video_generation` | Bearer | 文生、图生、首尾帧、主体参考；模型有默认分辨率/时长 | `/v1/query/video_generation` 查询，成功后再 retrieve file 得下载 URL |
@@ -95,6 +96,66 @@
 | AGGC | `AGGC` | `relay/channel/task/aggc` | `seedance-2.0` | `/api/v1/prot/generate` | `x-api-key` | 多输入：images/image_urls/video_urls/audio_urls；参数规整到 params | Sora-compatible 输出，提取 output URL |
 | Yobox | `Yobox` | `relay/channel/task/yobox` | `seedance2`, `seedance-2.0`, `seedance-2.0-fast` | `/async/tasks` | Bearer | Seedance 任务；图生、参考图、音频/分辨率参数 | 多种嵌套 outputs 兼容，失败原因提取 |
 | Suno | `suno` platform | `relay/channel/task/suno` | `suno_music`, `suno_lyrics` | `/suno/submit/{action}` | Bearer | 音乐/歌词，不是视频，但走 task 框架 | 使用专用批量轮询，不走通用 `ParseTaskResult` |
+
+### Tencent VOD（腾讯云点播可灵）配置
+
+- 渠道类型：`Tencent VOD`（`ChannelTypeTencentVOD = 63`）
+- 默认 Base URL：`https://vod.tencentcloudapi.com`
+- 密钥格式：`SecretId|SecretKey|SubAppId`
+- 腾讯云服务/版本：`vod` / `2018-07-17`
+- 提交动作：`CreateAigcVideoTask`
+- 查询动作：`DescribeTaskDetail`
+
+支持的 New API 模型名：
+
+```text
+kling-vod-1.6
+kling-vod-2.0
+kling-vod-2.1
+kling-vod-2.5
+kling-vod-2.6
+kling-vod-o1
+kling-vod-3.0
+kling-vod-3.0-omni
+```
+
+这些模型分别映射到腾讯云 `ModelName=Kling` 与对应的 `ModelVersion`。也可以使用渠道模型映射，把自定义公开模型名映射到上述名称或直接映射到版本号（如 `3.0`）。
+
+通用请求示例：
+
+```json
+{
+  "model": "kling-vod-3.0",
+  "prompt": "一只橘猫坐在钢琴前演奏，镜头缓慢推进",
+  "duration": 5,
+  "size": "1280x720",
+  "metadata": {
+    "resolution": "720P",
+    "negative_prompt": "blurry, low quality",
+    "audio_generation": false,
+    "storage_mode": "Temporary"
+  }
+}
+```
+
+主要 `metadata` 字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `resolution` | `720P` 或 `1080P` |
+| `aspect_ratio` | 文生视频支持 `16:9`、`9:16`、`1:1` |
+| `negative_prompt` | 反向提示词 |
+| `enhance_prompt` | 是否自动优化提示词 |
+| `audio_generation` | 是否生成音频 |
+| `storage_mode` | `Temporary`（默认，URL 有效期由腾讯云决定）或 `Permanent` |
+| `image_usage` | `FirstFrame`（默认）或 `Reference`；多参考图必须使用 `Reference` |
+| `last_frame_url` / `image_tail` | 尾帧 URL；腾讯云当前要求 Kling 2.1 + 1080P |
+| `input_region` | 输入文件区域，如 `Mainland` 或 `Oversea` |
+| `scene_type` | Kling 特殊场景，如 `motion_control`、`avatar_i2v`、`lip_sync` |
+| `seed` | 随机种子 |
+| `ext_info` | 腾讯云模型特殊参数 JSON 字符串 |
+
+渠道只负责上游请求和任务状态转换，不内置腾讯云售卖价格。启用模型前必须在 New API 中配置模型价格或计费表达式，避免缺少价格导致请求被拒绝。
 
 ## 视频标准入参到上游的常见映射
 

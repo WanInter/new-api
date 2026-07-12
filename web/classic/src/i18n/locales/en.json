@@ -3832,6 +3832,8 @@
     "总额度（充值 + 退款）": "Total quota (top-up + refund)",
     "文生图": "Text to Image",
     "图片": "Image",
-    "点击预览图片": "Click to preview image"
+    "点击预览图片": "Click to preview image",
+    "腾讯云点播（可灵）": "Tencent VOD (Kling)",
+    "按照如下格式输入：SecretId|SecretKey|SubAppId": "Enter in the following format: SecretId|SecretKey|SubAppId"
   }
 }

@@ -433,6 +433,9 @@ export function ChannelMutateDrawer({
 
   // Get basic models for the current channel type
   const basicModels = useMemo(() => {
+    if (currentChannelTypeConfig.supportedModels?.length) {
+      return currentChannelTypeConfig.supportedModels
+    }
     if (!allModelsList.length) return []
     // Filter models based on common patterns for specific types
     if (currentType === 1) {
@@ -441,7 +444,7 @@ export function ChannelMutateDrawer({
       )
     }
     return allModelsList
-  }, [allModelsList, currentType])
+  }, [allModelsList, currentType, currentChannelTypeConfig.supportedModels])
 
   // Get prefill groups
   const prefillGroups = useMemo(
@@ -645,7 +648,12 @@ export function ChannelMutateDrawer({
         form.setValue('other', 'v2.1')
       }
     }
-  }, [currentType, isEditing, form])
+
+    const supportedModels = currentChannelTypeConfig.supportedModels
+    if (supportedModels?.length && !form.getValues('models')?.trim()) {
+      form.setValue('models', formatModelsArray(supportedModels))
+    }
+  }, [currentType, currentChannelTypeConfig, isEditing, form])
 
   useEffect(() => {
     if (currentType !== 45 || currentBaseUrl !== 'doubao-coding-plan') return

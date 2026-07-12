@@ -214,6 +214,11 @@ export const CHANNEL_OPTIONS = [
     color: 'blue',
     label: 'Yobox',
   },
+  {
+    value: 63,
+    color: 'teal',
+    label: '腾讯云点播（可灵）',
+  },
 ];
 
 // Channel types that support upstream model list fetching in UI.

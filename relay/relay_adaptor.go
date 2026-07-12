@@ -42,6 +42,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/kling"
 	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
 	"github.com/QuantumNous/new-api/relay/channel/task/suno"
+	tasktencentvod "github.com/QuantumNous/new-api/relay/channel/task/tencentvod"
 	taskvertex "github.com/QuantumNous/new-api/relay/channel/task/vertex"
 	taskVidu "github.com/QuantumNous/new-api/relay/channel/task/vidu"
 	taskxinghe "github.com/QuantumNous/new-api/relay/channel/task/xinghe"
@@ -165,6 +166,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &taskaggc.TaskAdaptor{}
 		case constant.ChannelTypeYobox:
 			return &taskyobox.TaskAdaptor{}
+		case constant.ChannelTypeTencentVOD:
+			return &tasktencentvod.TaskAdaptor{}
 		case constant.ChannelTypeVertexAi:
 			return &taskvertex.TaskAdaptor{}
 		case constant.ChannelTypeVidu:

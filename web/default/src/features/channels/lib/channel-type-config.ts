@@ -154,7 +154,8 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       baseUrl: 'Default: http://113.207.49.151:8045',
       key: 'Xinghe API Key',
       models: 'xinghe-mini,xinghe-fast,xinghe-2.0',
-      other: 'Video endpoint: POST /api/generate-video; requires at least one reference asset.',
+      other:
+        'Video endpoint: POST /api/generate-video; requires at least one reference asset.',
     },
   },
   61: {
@@ -164,10 +165,13 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
     defaultBaseUrl: 'https://aggc.site',
     supportedModels: ['seedance-2.0'],
     hints: {
-      baseUrl: 'Default host: https://aggc.site. Do not append /api/v1/prot or a trailing slash; the adaptor adds the generate, query, and balance paths automatically.',
+      baseUrl:
+        'Default host: https://aggc.site. Do not append /api/v1/prot or a trailing slash; the adaptor adds the generate, query, and balance paths automatically.',
       key: 'Use the AGGC provider key. Requests are authenticated with the x-api-key header, not Bearer Authorization.',
-      models: 'Expose the New API model names you want users to call. Use model mapping if the upstream model_id is different; for example, map your public model to seedance-2.0.',
-      other: 'Video task channel. Submit uses POST /api/v1/prot/generate, polling uses GET /api/v1/prot/query/{jobId}, and balance uses GET /api/v1/prot/balance. Remaining balance is shown as credits minus frozen_credits. Pricing is configured locally in New API, not synced from AGGC.',
+      models:
+        'Expose the New API model names you want users to call. Use model mapping if the upstream model_id is different; for example, map your public model to seedance-2.0.',
+      other:
+        'Video task channel. Submit uses POST /api/v1/prot/generate, polling uses GET /api/v1/prot/query/{jobId}, and balance uses GET /api/v1/prot/balance. Remaining balance is shown as credits minus frozen_credits. Pricing is configured locally in New API, not synced from AGGC.',
     },
   },
   62: {
@@ -177,10 +181,36 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
     defaultBaseUrl: 'https://max.yoboxai.com',
     supportedModels: ['seedance2', 'seedance-2.0', 'seedance-2.0-fast'],
     hints: {
-      baseUrl: 'Default host: https://max.yoboxai.com. The adaptor adds /async/tasks automatically.',
+      baseUrl:
+        'Default host: https://max.yoboxai.com. The adaptor adds /async/tasks automatically.',
       key: 'Use the Yobox API key. Requests are authenticated with the Bearer Authorization header.',
-      models: 'Expose seedance2, seedance-2.0, and seedance-2.0-fast. Use model mapping if the upstream model name differs.',
-      other: 'Video task channel. Submit uses POST /async/tasks, polling uses GET /async/tasks/{task_id}, and the adaptor normalizes seedance2 versus seedance-2.0 request shapes internally.',
+      models:
+        'Expose seedance2, seedance-2.0, and seedance-2.0-fast. Use model mapping if the upstream model name differs.',
+      other:
+        'Video task channel. Submit uses POST /async/tasks, polling uses GET /async/tasks/{task_id}, and the adaptor normalizes seedance2 versus seedance-2.0 request shapes internally.',
+    },
+  },
+  63: {
+    id: 63,
+    name: CHANNEL_TYPES[63],
+    icon: 'hunyuan',
+    defaultBaseUrl: 'https://vod.tencentcloudapi.com',
+    supportedModels: [
+      'kling-vod-1.6',
+      'kling-vod-2.0',
+      'kling-vod-2.1',
+      'kling-vod-2.5',
+      'kling-vod-2.6',
+      'kling-vod-o1',
+      'kling-vod-3.0',
+      'kling-vod-3.0-omni',
+    ],
+    hints: {
+      baseUrl: 'Default: https://vod.tencentcloudapi.com',
+      key: 'Format: SecretId|SecretKey|SubAppId',
+      models: 'Tencent VOD Kling models; configure local pricing before use.',
+      other:
+        'Uses Tencent Cloud VOD CreateAigcVideoTask and DescribeTaskDetail with TC3-HMAC-SHA256 signing.',
     },
   },
 }

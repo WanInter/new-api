@@ -86,6 +86,7 @@ func testChannel(channel *model.Channel, testUserID int, testModel string, endpo
 		constant.ChannelTypeVidu,
 		constant.ChannelTypeAGGC,
 		constant.ChannelTypeYobox,
+		constant.ChannelTypeTencentVOD,
 	}
 	if lo.Contains(unsupportedTestChannelTypes, channel.Type) {
 		channelTypeName := constant.GetChannelTypeName(channel.Type)

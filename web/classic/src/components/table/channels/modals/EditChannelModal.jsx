@@ -154,6 +154,8 @@ function type2secretPrompt(type) {
       return '按照如下格式输入: AccessKey|SecretAccessKey';
     case 57:
       return '请输入 JSON 格式的 OAuth 凭据（必须包含 access_token 和 account_id）';
+    case 63:
+      return '按照如下格式输入：SecretId|SecretKey|SubAppId';
     default:
       return '请输入渠道对应的鉴权密钥';
   }
@@ -671,6 +673,18 @@ const EditChannelModal = (props) => {
             ...prevInputs,
             base_url: 'https://ark.cn-beijing.volces.com',
           }));
+          break;
+        case 63:
+          localModels = [
+            'kling-vod-1.6',
+            'kling-vod-2.0',
+            'kling-vod-2.1',
+            'kling-vod-2.5',
+            'kling-vod-2.6',
+            'kling-vod-o1',
+            'kling-vod-3.0',
+            'kling-vod-3.0-omni',
+          ];
           break;
         default:
           localModels = getChannelModels(value);

@@ -379,6 +379,7 @@ export function getChannelIcon(channelType) {
     case 19: // 360 智脑
       return <Ai360.Color size={iconSize} />;
     case 23: // 腾讯混元
+    case 63: // 腾讯云点播
       return <Hunyuan.Color size={iconSize} />;
     case 31: // 零一万物
       return <Yi.Color size={iconSize} />;
