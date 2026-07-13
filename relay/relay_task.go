@@ -35,6 +35,10 @@ type taskPrivateDataProvider interface {
 	BuildPrivateData(c *gin.Context, info *relaycommon.RelayInfo) (*model.TaskPrivateData, error)
 }
 
+type taskUpstreamErrorSanitizer interface {
+	SanitizeTaskUpstreamError(responseBody []byte) string
+}
+
 // ResolveOriginTask 处理基于已有任务的提交（remix / continuation）：
 // 查找原始任务、从中提取模型名称、将渠道锁定到原始任务的渠道
 // （通过 info.LockedChannel，重试时复用同一渠道并轮换 key），
@@ -230,7 +234,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 	if resp != nil && resp.StatusCode != http.StatusOK {
 		responseBody, _ := io.ReadAll(resp.Body)
-		message := sanitizeTaskUpstreamError(responseBody, info)
+		message := sanitizeTaskUpstreamErrorResponse(responseBody, info, adaptor)
 		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", message), "fail_to_fetch_task", resp.StatusCode)
 	}
 
@@ -279,7 +283,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 func sanitizeTaskUpstreamError(responseBody []byte, info *relaycommon.RelayInfo) string {
 	message := string(responseBody)
-	if info == nil {
+	if info == nil || info.ChannelMeta == nil {
 		return message
 	}
 
@@ -290,6 +294,13 @@ func sanitizeTaskUpstreamError(responseBody []byte, info *relaycommon.RelayInfo)
 	}
 
 	return strings.ReplaceAll(message, upstreamModelName, originModelName)
+}
+
+func sanitizeTaskUpstreamErrorResponse(responseBody []byte, info *relaycommon.RelayInfo, adaptor any) string {
+	if sanitizer, ok := adaptor.(taskUpstreamErrorSanitizer); ok {
+		responseBody = []byte(sanitizer.SanitizeTaskUpstreamError(responseBody))
+	}
+	return sanitizeTaskUpstreamError(responseBody, info)
 }
 
 func shouldApplyTaskOtherRatios(info *relaycommon.RelayInfo, modelName string) bool {

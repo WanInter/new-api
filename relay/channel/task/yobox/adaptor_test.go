@@ -205,6 +205,16 @@ func TestDoResponseRedactsImageReferencesLimit(t *testing.T) {
 	assert.NotContains(t, taskErr.Message, "image_references")
 }
 
+func TestSanitizeTaskUpstreamErrorRedactsNestedImageReferencesLimit(t *testing.T) {
+	body := []byte(`{"success":false,"message":"{\"error\":\"sd-bak-3 最多支持 4 张 image_references\"}"}`)
+
+	message := (&TaskAdaptor{}).SanitizeTaskUpstreamError(body)
+
+	assert.Equal(t, yoboxGenericProcessingError, message)
+	assert.NotContains(t, message, "image_references")
+	assert.NotContains(t, message, "sd-bak-3")
+}
+
 func TestParseTaskResultRedactsImageReferencesLimit(t *testing.T) {
 	info, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{
 		"status": "FAILURE",

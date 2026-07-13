@@ -249,6 +249,13 @@ func sanitizeYoboxFailureReason(message string) (string, bool) {
 	return message, false
 }
 
+func (a *TaskAdaptor) SanitizeTaskUpstreamError(responseBody []byte) string {
+	if message, redacted := sanitizeYoboxFailureReason(string(responseBody)); redacted {
+		return message
+	}
+	return string(responseBody)
+}
+
 func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
 	ov := dto.NewOpenAIVideo()
 	ov.ID = originTask.TaskID

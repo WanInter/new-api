@@ -14,6 +14,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type testTaskUpstreamErrorSanitizer struct{}
+
+func (testTaskUpstreamErrorSanitizer) SanitizeTaskUpstreamError(_ []byte) string {
+	return "sanitized upstream error"
+}
+
 func TestTaskModel2DtoHidesInternalModelNames(t *testing.T) {
 	task := &model.Task{
 		Platform: constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeJimengDimensio)),
@@ -94,6 +100,15 @@ func TestSanitizeTaskUpstreamErrorReplacesMappedModelName(t *testing.T) {
 
 	assert.NotContains(t, got, "otoy-image-to-video-seedance-2-0-mini-reference-to-video")
 	assert.Contains(t, got, "Seedance2.0-cheap")
+}
+
+func TestSanitizeTaskUpstreamErrorResponseUsesAdaptorSanitizer(t *testing.T) {
+	body := []byte(`{"message":"sensitive provider detail"}`)
+
+	got := sanitizeTaskUpstreamErrorResponse(body, &relaycommon.RelayInfo{}, testTaskUpstreamErrorSanitizer{})
+
+	assert.Equal(t, "sanitized upstream error", got)
+	assert.NotContains(t, got, "sensitive provider detail")
 }
 
 func TestShouldApplyTaskOtherRatiosKeepsDynamicRatioBilling(t *testing.T) {
