@@ -23,6 +23,11 @@ import (
 	"github.com/pkg/errors"
 )
 
+const (
+	canvasStandardSeedanceModel   = "navos-local-seedance-154-36-180-7"
+	canvasStandardMaxVideoSeconds = 14
+)
+
 // ============================
 // Request / Response structures
 // ============================
@@ -200,10 +205,12 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 				if shouldUseVeoReferenceImages(info, bodyMap) {
 					applyVeoReferenceImages(bodyMap)
 				}
+				maxSeconds := maxVideoSecondsForModel(info)
+				clampJSONVideoDuration(bodyMap, maxSeconds)
 				if seconds, ok := normalizeVideoSeconds(bodyMap["seconds"]); ok {
-					bodyMap["seconds"] = seconds
+					bodyMap["seconds"] = clampNormalizedVideoSeconds(seconds, maxSeconds)
 				} else if seconds, ok := normalizeVideoSeconds(bodyMap["duration"]); ok {
-					bodyMap["seconds"] = seconds
+					bodyMap["seconds"] = clampNormalizedVideoSeconds(seconds, maxSeconds)
 				}
 			}
 			if newBody, err := common.Marshal(bodyMap); err == nil {
@@ -224,14 +231,18 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		if shouldUseOtoySeedanceMiniReference(info) {
 			writeOtoySeedanceMiniReferenceMultipartFields(writer, formData.Value)
 		} else {
+			maxSeconds := maxVideoSecondsForModel(info)
 			if seconds := normalizeVideoSecondsFromForm(formData.Value); seconds != "" {
-				writer.WriteField("seconds", seconds)
+				writer.WriteField("seconds", clampNormalizedVideoSeconds(seconds, maxSeconds))
 			}
 			for key, values := range formData.Value {
 				if key == "model" || key == "seconds" {
 					continue
 				}
 				for _, v := range values {
+					if key == "duration" {
+						v = clampRawVideoSeconds(v, maxSeconds)
+					}
 					writer.WriteField(key, v)
 				}
 			}
@@ -519,19 +530,19 @@ func collectVeoImages(body map[string]interface{}) []string {
 }
 
 func estimateVideoSeconds(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) int {
-	if seconds, ok := normalizeVideoSeconds(req.Seconds); ok {
-		return mustParsePositiveInt(seconds)
+	seconds := 0
+	if normalized, ok := normalizeVideoSeconds(req.Seconds); ok {
+		seconds = mustParsePositiveInt(normalized)
+	} else if req.Duration > 0 {
+		seconds = req.Duration
+	} else if normalized, ok := normalizeVideoSeconds(req.Metadata["duration"]); ok {
+		seconds = mustParsePositiveInt(normalized)
+	} else if isSeedanceGateway(info, req.Model) {
+		seconds = 15
+	} else {
+		seconds = 4
 	}
-	if req.Duration > 0 {
-		return req.Duration
-	}
-	if seconds, ok := normalizeVideoSeconds(req.Metadata["duration"]); ok {
-		return mustParsePositiveInt(seconds)
-	}
-	if isSeedanceGateway(info, req.Model) {
-		return 15
-	}
-	return 4
+	return clampVideoSeconds(seconds, maxVideoSecondsForModel(info))
 }
 
 func isSeedanceGateway(info *relaycommon.RelayInfo, modelName string) bool {
@@ -551,6 +562,49 @@ func mustParsePositiveInt(value string) int {
 		return 0
 	}
 	return parsed
+}
+
+func maxVideoSecondsForModel(info *relaycommon.RelayInfo) int {
+	if info == nil || info.ChannelMeta == nil {
+		return 0
+	}
+	if strings.TrimSpace(info.UpstreamModelName) == canvasStandardSeedanceModel {
+		return canvasStandardMaxVideoSeconds
+	}
+	return 0
+}
+
+func clampVideoSeconds(seconds, maxSeconds int) int {
+	if maxSeconds > 0 && seconds > maxSeconds {
+		return maxSeconds
+	}
+	return seconds
+}
+
+func clampNormalizedVideoSeconds(seconds string, maxSeconds int) string {
+	return strconv.Itoa(clampVideoSeconds(mustParsePositiveInt(seconds), maxSeconds))
+}
+
+func clampRawVideoSeconds(value string, maxSeconds int) string {
+	if maxSeconds <= 0 {
+		return value
+	}
+	seconds, ok := normalizeVideoSeconds(value)
+	if !ok {
+		return value
+	}
+	return clampNormalizedVideoSeconds(seconds, maxSeconds)
+}
+
+func clampJSONVideoDuration(body map[string]interface{}, maxSeconds int) {
+	if maxSeconds <= 0 {
+		return
+	}
+	seconds, ok := normalizeVideoSeconds(body["duration"])
+	if !ok {
+		return
+	}
+	body["duration"] = mustParsePositiveInt(clampNormalizedVideoSeconds(seconds, maxSeconds))
 }
 
 func normalizeVideoSecondsFromForm(values map[string][]string) string {

@@ -2,13 +2,19 @@ package sora
 
 import (
 	"bytes"
+	"io"
+	"mime"
 	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/system_setting"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -136,6 +142,110 @@ func TestNormalizeVideoSeconds(t *testing.T) {
 func TestNormalizeVideoSecondsFromFormUsesDurationFallback(t *testing.T) {
 	require.Equal(t, "15", normalizeVideoSecondsFromForm(map[string][]string{"duration": {"15s"}}))
 	require.Equal(t, "10", normalizeVideoSecondsFromForm(map[string][]string{"seconds": {"10s"}, "duration": {"15s"}}))
+}
+
+func TestBuildRequestBodyClampsCanvasStandardDuration(t *testing.T) {
+	tests := []struct {
+		name             string
+		upstreamModel    string
+		body             string
+		expectedDuration float64
+		expectedSeconds  string
+	}{
+		{
+			name:             "target model clamps duration and seconds",
+			upstreamModel:    canvasStandardSeedanceModel,
+			body:             `{"model":"alias","prompt":"test","duration":20,"seconds":"18s"}`,
+			expectedDuration: 14,
+			expectedSeconds:  "14",
+		},
+		{
+			name:             "target model preserves boundary",
+			upstreamModel:    canvasStandardSeedanceModel,
+			body:             `{"model":"alias","prompt":"test","duration":14}`,
+			expectedDuration: 14,
+			expectedSeconds:  "14",
+		},
+		{
+			name:             "target model clamps fractional duration above boundary",
+			upstreamModel:    canvasStandardSeedanceModel,
+			body:             `{"model":"alias","prompt":"test","duration":14.5}`,
+			expectedDuration: 14,
+			expectedSeconds:  "14",
+		},
+		{
+			name:             "other models are not clamped",
+			upstreamModel:    "other-video-model",
+			body:             `{"model":"alias","prompt":"test","duration":20}`,
+			expectedDuration: 20,
+			expectedSeconds:  "20",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(tt.body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+			body, err := (&TaskAdaptor{}).BuildRequestBody(c, &relaycommon.RelayInfo{
+				ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: tt.upstreamModel},
+			})
+			require.NoError(t, err)
+			data, err := io.ReadAll(body)
+			require.NoError(t, err)
+
+			var got map[string]any
+			require.NoError(t, common.Unmarshal(data, &got))
+			require.Equal(t, tt.upstreamModel, got["model"])
+			require.Equal(t, tt.expectedDuration, got["duration"])
+			require.Equal(t, tt.expectedSeconds, got["seconds"])
+		})
+	}
+}
+
+func TestBuildRequestBodyClampsCanvasStandardMultipartDuration(t *testing.T) {
+	var input bytes.Buffer
+	inputWriter := multipart.NewWriter(&input)
+	require.NoError(t, inputWriter.WriteField("model", "alias"))
+	require.NoError(t, inputWriter.WriteField("prompt", "test"))
+	require.NoError(t, inputWriter.WriteField("duration", "20s"))
+	require.NoError(t, inputWriter.WriteField("seconds", "18"))
+	require.NoError(t, inputWriter.Close())
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(input.Bytes()))
+	c.Request.Header.Set("Content-Type", inputWriter.FormDataContentType())
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	body, err := (&TaskAdaptor{}).BuildRequestBody(c, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: canvasStandardSeedanceModel},
+	})
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	_, params, err := mime.ParseMediaType(c.Request.Header.Get("Content-Type"))
+	require.NoError(t, err)
+	form, err := multipart.NewReader(bytes.NewReader(data), params["boundary"]).ReadForm(1 << 20)
+	require.NoError(t, err)
+	require.Equal(t, []string{canvasStandardSeedanceModel}, form.Value["model"])
+	require.Equal(t, []string{"14"}, form.Value["seconds"])
+	require.Equal(t, []string{"14"}, form.Value["duration"])
+}
+
+func TestEstimateBillingClampsCanvasStandardDuration(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set("task_request", relaycommon.TaskSubmitReq{Duration: 20})
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: canvasStandardSeedanceModel},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+
+	ratios := (&TaskAdaptor{}).EstimateBilling(c, info)
+
+	require.Equal(t, float64(canvasStandardMaxVideoSeconds), ratios["seconds"])
 }
 
 func TestApplyVeoReferenceImagesUsesIngredientsForMoreThanTwoImages(t *testing.T) {
