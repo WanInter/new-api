@@ -1,12 +1,17 @@
 package yobox
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -182,6 +187,34 @@ func TestParseTaskResultExtractsNestedFailureReason(t *testing.T) {
 	require.Equal(t, string(model.TaskStatusFailure), info.Status)
 	require.Equal(t, "下载图片失败，HTTP 404", info.Reason)
 	require.Equal(t, "100%", info.Progress)
+}
+
+func TestDoResponseRedactsImageReferencesLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	resp := &http.Response{
+		Body: io.NopCloser(strings.NewReader(`{
+			"success": false,
+			"message": "最多支持 4 张 image_references"
+		}`)),
+	}
+
+	_, _, taskErr := (&TaskAdaptor{}).DoResponse(c, resp, &relaycommon.RelayInfo{})
+	require.NotNil(t, taskErr)
+	assert.Equal(t, yoboxGenericProcessingError, taskErr.Message)
+	assert.NotContains(t, taskErr.Message, "image_references")
+}
+
+func TestParseTaskResultRedactsImageReferencesLimit(t *testing.T) {
+	info, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{
+		"status": "FAILURE",
+		"fail_reason": "最多支持 4 张 image_references"
+	}`))
+	require.NoError(t, err)
+
+	assert.Equal(t, string(model.TaskStatusFailure), info.Status)
+	assert.Equal(t, yoboxGenericProcessingError, info.Reason)
+	assert.NotContains(t, info.Reason, "image_references")
 }
 
 func TestConvertToOpenAIVideoIncludesResultURL(t *testing.T) {

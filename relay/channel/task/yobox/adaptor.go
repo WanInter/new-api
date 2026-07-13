@@ -21,8 +21,10 @@ import (
 )
 
 const (
-	defaultYoboxBaseURL = "https://max.yoboxai.com"
-	yoboxTasksPath      = "/async/tasks"
+	defaultYoboxBaseURL              = "https://max.yoboxai.com"
+	yoboxTasksPath                   = "/async/tasks"
+	yoboxImageReferencesLimitMessage = "最多支持 4 张 image_references"
+	yoboxGenericProcessingError      = "视频生成请求处理失败"
 )
 
 var modelList = []string{
@@ -182,7 +184,11 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
 	}
 	if !parsed.Success {
-		return "", nil, service.TaskErrorWrapperLocal(fmt.Errorf("yobox submit failed: %s", parsed.Message), "submit_failed", http.StatusBadRequest)
+		message, redacted := sanitizeYoboxFailureReason(parsed.Message)
+		if redacted {
+			return "", nil, service.TaskErrorWrapperLocal(errors.New(message), "submit_failed", http.StatusBadRequest)
+		}
+		return "", nil, service.TaskErrorWrapperLocal(fmt.Errorf("yobox submit failed: %s", message), "submit_failed", http.StatusBadRequest)
 	}
 
 	ov := dto.NewOpenAIVideo()
@@ -230,9 +236,17 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 	if status == model.TaskStatusFailure {
 		info.Progress = "100%"
-		info.Reason = firstNonEmpty(parsed.Data.FailReason, parsed.FailReason, parsed.Data.Data.FailReason, parsed.Data.Data.Error, parsed.Data.Data.Phase, parsed.Data.Error, parsed.Data.Phase, parsed.Message, "task failed")
+		info.Reason, _ = sanitizeYoboxFailureReason(firstNonEmpty(parsed.Data.FailReason, parsed.FailReason, parsed.Data.Data.FailReason, parsed.Data.Data.Error, parsed.Data.Data.Phase, parsed.Data.Error, parsed.Data.Phase, parsed.Message, "task failed"))
 	}
 	return info, nil
+}
+
+func sanitizeYoboxFailureReason(message string) (string, bool) {
+	message = strings.TrimSpace(message)
+	if strings.Contains(strings.ToLower(message), strings.ToLower(yoboxImageReferencesLimitMessage)) {
+		return yoboxGenericProcessingError, true
+	}
+	return message, false
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
