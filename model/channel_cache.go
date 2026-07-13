@@ -105,10 +105,10 @@ func SyncChannelCache(frequency int) {
 	}
 }
 
-func GetRandomSatisfiedChannel(group string, model string, retry int, requestPath string) (*Channel, error) {
+func GetRandomSatisfiedChannel(group string, model string, retry int, requestPath string, excludedChannelTypes ...int) (*Channel, error) {
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
-		return GetChannel(group, model, retry, requestPath)
+		return GetChannel(group, model, retry, requestPath, excludedChannelTypes...)
 	}
 
 	channelSyncLock.RLock()
@@ -116,11 +116,13 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 
 	// First, try to find channels with the exact model name.
 	channels := filterChannelsByRequestPath(group2model2channels[group][model], requestPath)
+	channels = filterChannelsByExcludedTypes(channels, excludedChannelTypes)
 
 	// If no channels found, try to find channels with the normalized model name.
 	if len(channels) == 0 {
 		normalizedModel := ratio_setting.FormatMatchingModelName(model)
 		channels = filterChannelsByRequestPath(group2model2channels[group][normalizedModel], requestPath)
+		channels = filterChannelsByExcludedTypes(channels, excludedChannelTypes)
 	}
 
 	if len(channels) == 0 {
@@ -200,6 +202,31 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	}
 	// return null if no channel is not found
 	return nil, errors.New("channel not found")
+}
+
+// filterChannelsByExcludedTypes removes request-incompatible channel types.
+// Caller must hold channelSyncLock (read lock).
+func filterChannelsByExcludedTypes(channels []int, excludedChannelTypes []int) []int {
+	if len(channels) == 0 || len(excludedChannelTypes) == 0 {
+		return channels
+	}
+	excluded := make(map[int]struct{}, len(excludedChannelTypes))
+	for _, channelType := range excludedChannelTypes {
+		excluded[channelType] = struct{}{}
+	}
+	filtered := make([]int, 0, len(channels))
+	for _, channelID := range channels {
+		channel, ok := channelsIDM[channelID]
+		if !ok {
+			// Preserve the existing consistency error for missing cached channels.
+			filtered = append(filtered, channelID)
+			continue
+		}
+		if _, blocked := excluded[channel.Type]; !blocked {
+			filtered = append(filtered, channelID)
+		}
+	}
+	return filtered
 }
 
 // filterChannelsByRequestPath restricts candidates by request path. Only Advanced
