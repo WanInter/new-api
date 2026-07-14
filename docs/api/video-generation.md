@@ -34,7 +34,7 @@ Authorization: Bearer <token>
 
 其中：
 
-- `/v1/videos/:task_id/content` 支持 `TokenOrUserAuth()`，即 **API Token** 或 **已登录用户会话**；
+- `/v1/videos/:task_id/content` 为公开读取接口，无需认证；
 - 其余视频提交/查询路由使用 API Token。
 
 ### 1.3 异步任务公共特征
@@ -420,10 +420,7 @@ curl -X GET http://localhost:3000/v1/videos/task_xxx \
 
 ### 认证
 
-支持以下任一方式：
-
-- `Authorization: Bearer <token>`
-- 已登录用户会话
+无需认证。持有公开任务 ID 即可读取已完成的视频内容。
 
 ### 路径参数
 
@@ -435,7 +432,6 @@ curl -X GET http://localhost:3000/v1/videos/task_xxx \
 
 ```bash
 curl -L http://localhost:3000/v1/videos/task_xxx/content \
-  -H "Authorization: Bearer sk-xxx" \
   -o output.mp4
 ```
 
@@ -455,6 +451,7 @@ curl -L http://localhost:3000/v1/videos/task_xxx/content \
 
 ### 说明
 
+- 该接口公开访问，请勿将任务 ID 视为访问凭证；
 - 若任务状态不是成功态，接口会拒绝返回视频内容；
 - 某些渠道返回真实 URL，服务会代理转发；
 - 某些渠道返回 data URL/base64 内容，服务会解码后直接输出视频流。

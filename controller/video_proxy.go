@@ -38,18 +38,7 @@ func VideoProxy(c *gin.Context) {
 		return
 	}
 
-	userID := c.GetInt("id")
-	var task *model.Task
-	var exists bool
-	var err error
-	if model.IsAdmin(userID) {
-		// Admin dashboard users may preview tasks created by other users. Querying
-		// globally first also avoids noisy gorm "record not found" logs when the
-		// task belongs to another user.
-		task, exists, err = model.GetByOnlyTaskId(taskID)
-	} else {
-		task, exists, err = model.GetByTaskId(userID, taskID)
-	}
+	task, exists, err := model.GetByOnlyTaskId(taskID)
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to query task %s: %s", taskID, err.Error()))
 		videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to query task")

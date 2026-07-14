@@ -210,11 +210,10 @@ curl http://154.40.44.244:3000/v1/videos/task_xxx \
 
 方式一：直接下载轮询结果里的 `video_url`。
 
-方式二：通过平台代理下载：
+方式二：通过平台代理下载（无需鉴权）：
 
 ```bash
 curl -L http://154.40.44.244:3000/v1/videos/task_xxx/content \
-  -H "Authorization: Bearer sk-xxxx" \
   -o result.mp4
 ```
 
