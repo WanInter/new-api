@@ -32,6 +32,7 @@ func TestChannelSupportsRequestConstraintsForYoboxReferenceImages(t *testing.T) 
 	testCases := []struct {
 		name          string
 		path          string
+		model         string
 		body          string
 		yoboxExpected bool
 	}{
@@ -48,9 +49,24 @@ func TestChannelSupportsRequestConstraintsForYoboxReferenceImages(t *testing.T) 
 			yoboxExpected: false,
 		},
 		{
-			name:          "nine images exclude yobox",
+			name:          "nine images exclude yobox for default models",
 			path:          "/v1/video/generations",
+			model:         "seedance-2.0",
 			body:          `{"images":["1","2","3","4","5","6","7","8","9"]}`,
+			yoboxExpected: false,
+		},
+		{
+			name:          "nine images remain eligible for happy horse 1.1",
+			path:          "/v1/videos",
+			model:         "happy-horse-1.1",
+			body:          `{"images":["1","2","3","4","5","6","7","8","9"]}`,
+			yoboxExpected: true,
+		},
+		{
+			name:          "ten images exclude yobox for happy horse 1.1",
+			path:          "/v1/videos",
+			model:         "happy-horse-1.1",
+			body:          `{"images":["1","2","3","4","5","6","7","8","9","10"]}`,
 			yoboxExpected: false,
 		},
 		{
@@ -77,12 +93,12 @@ func TestChannelSupportsRequestConstraintsForYoboxReferenceImages(t *testing.T) 
 		t.Run(testCase.name, func(t *testing.T) {
 			c := newChannelConstraintTestContext(t, testCase.path, testCase.body)
 
-			assert.Equal(t, testCase.yoboxExpected, ChannelSupportsRequestConstraints(c, yobox))
-			assert.True(t, ChannelSupportsRequestConstraints(c, aggc))
+			assert.Equal(t, testCase.yoboxExpected, ChannelSupportsRequestConstraints(c, yobox, testCase.model))
+			assert.True(t, ChannelSupportsRequestConstraints(c, aggc, testCase.model))
 			if testCase.yoboxExpected {
-				assert.NotContains(t, excludedChannelTypesForRequest(c), constant.ChannelTypeYobox)
+				assert.NotContains(t, excludedChannelTypesForRequest(c, testCase.model), constant.ChannelTypeYobox)
 			} else {
-				assert.Contains(t, excludedChannelTypesForRequest(c), constant.ChannelTypeYobox)
+				assert.Contains(t, excludedChannelTypesForRequest(c, testCase.model), constant.ChannelTypeYobox)
 			}
 		})
 	}

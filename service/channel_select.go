@@ -16,8 +16,16 @@ import (
 
 const (
 	ginKeyVideoReferenceImageCount = "video_reference_image_count"
-	yoboxMaxReferenceImages        = 4
+	yoboxDefaultMaxReferenceImages = 4
+	yoboxHappyHorseMaxReferences   = 9
 )
+
+func yoboxMaxReferenceImages(modelName string) int {
+	if strings.TrimSpace(modelName) == "happy-horse-1.1" {
+		return yoboxHappyHorseMaxReferences
+	}
+	return yoboxDefaultMaxReferenceImages
+}
 
 type RetryParam struct {
 	Ctx          *gin.Context
@@ -119,8 +127,8 @@ func videoReferenceImageCount(c *gin.Context) int {
 	return count
 }
 
-func excludedChannelTypesForRequest(c *gin.Context) []int {
-	if videoReferenceImageCount(c) > yoboxMaxReferenceImages {
+func excludedChannelTypesForRequest(c *gin.Context, modelName string) []int {
+	if videoReferenceImageCount(c) > yoboxMaxReferenceImages(modelName) {
 		return []int{constant.ChannelTypeYobox}
 	}
 	return nil
@@ -128,11 +136,11 @@ func excludedChannelTypesForRequest(c *gin.Context) []int {
 
 // ChannelSupportsRequestConstraints reports whether a selected or affinity
 // channel can handle request-specific limits that are not represented by model abilities.
-func ChannelSupportsRequestConstraints(c *gin.Context, channel *model.Channel) bool {
+func ChannelSupportsRequestConstraints(c *gin.Context, channel *model.Channel, modelName string) bool {
 	if channel == nil {
 		return false
 	}
-	if channel.Type == constant.ChannelTypeYobox && videoReferenceImageCount(c) > yoboxMaxReferenceImages {
+	if channel.Type == constant.ChannelTypeYobox && videoReferenceImageCount(c) > yoboxMaxReferenceImages(modelName) {
 		return false
 	}
 	return true
@@ -178,7 +186,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 	var err error
 	selectGroup := param.TokenGroup
 	userGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyUserGroup)
-	excludedChannelTypes := excludedChannelTypesForRequest(param.Ctx)
+	excludedChannelTypes := excludedChannelTypesForRequest(param.Ctx, param.ModelName)
 
 	if param.TokenGroup == "auto" {
 		if len(setting.GetAutoGroups()) == 0 {

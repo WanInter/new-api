@@ -1,6 +1,7 @@
 package yobox
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -105,6 +106,54 @@ func TestConvertToRequestPayloadDefaultsSeedance20Resolution(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "9:16", input["aspect_ratio"])
 	require.Equal(t, "720p", input["resolution"])
+}
+
+func TestConvertToRequestPayloadHappyHorseSupportsNineReferences(t *testing.T) {
+	images := make([]string, 9)
+	for i := range images {
+		images[i] = fmt.Sprintf("https://example.com/%d.png", i+1)
+	}
+
+	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Prompt:   "characters interact",
+		Duration: 15,
+		Images:   images,
+		Metadata: map[string]any{
+			"aspect_ratio":   "9:16",
+			"resolution":     "1080p",
+			"prompt_enhance": "AUTO",
+		},
+	}, &relaycommon.RelayInfo{OriginModelName: "happy-horse-1.1"})
+	require.NoError(t, err)
+
+	body, ok := payload.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "happy-horse-1.1", body["model"])
+	input, ok := body["input"].(map[string]any)
+	require.True(t, ok)
+	refs, ok := input["image_references"].([]map[string]any)
+	require.True(t, ok)
+	assert.Len(t, refs, 9)
+	assert.Equal(t, "1080p", input["resolution"])
+	assert.Equal(t, "AUTO", input["prompt_enhance"])
+}
+
+func TestConvertToRequestPayloadHappyHorseUsesOnlyFirstStartFrame(t *testing.T) {
+	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Prompt:   "character smiles",
+		Duration: 6,
+		Metadata: map[string]any{
+			"start_frames": []any{"https://example.com/start.png", "https://example.com/ignored.png"},
+		},
+	}, &relaycommon.RelayInfo{OriginModelName: "happy-horse-1.1"})
+	require.NoError(t, err)
+
+	body, ok := payload.(map[string]any)
+	require.True(t, ok)
+	input, ok := body["input"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, []string{"https://example.com/start.png"}, input["start_frames"])
+	assert.NotContains(t, input, "image_references")
 }
 
 func TestConvertToRequestPayloadUsesMappedUpstreamModel(t *testing.T) {
@@ -284,5 +333,5 @@ func TestMergeYoboxRequestMetadataExtractsContentImages(t *testing.T) {
 }
 
 func TestModelListIncludesSupportedModels(t *testing.T) {
-	require.Equal(t, []string{"seedance2", "seedance-2.0", "seedance-2.0-fast"}, (&TaskAdaptor{}).GetModelList())
+	require.Equal(t, []string{"seedance2", "seedance-2.0", "seedance-2.0-fast", "happy-horse-1.1"}, (&TaskAdaptor{}).GetModelList())
 }

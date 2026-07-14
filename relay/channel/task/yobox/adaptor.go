@@ -31,6 +31,7 @@ var modelList = []string{
 	"seedance2",
 	"seedance-2.0",
 	"seedance-2.0-fast",
+	"happy-horse-1.1",
 }
 
 type responseTask struct {
@@ -352,6 +353,16 @@ func convertSeedance20Payload(req *relaycommon.TaskSubmitReq, modelName string) 
 			input["n"] = n
 		}
 	}
+	if modelName == "happy-horse-1.1" {
+		if promptEnhance := stringValue(req.Metadata["prompt_enhance"]); promptEnhance != "" {
+			input["prompt_enhance"] = promptEnhance
+		}
+		if len(req.Images) == 0 {
+			if startFrames := stringValues(req.Metadata["start_frames"]); len(startFrames) > 0 {
+				input["start_frames"] = startFrames[:1]
+			}
+		}
+	}
 	return map[string]any{
 		"model": modelName,
 		"input": input,
@@ -461,13 +472,13 @@ func mergeYoboxRequestMetadata(c *gin.Context, req *relaycommon.TaskSubmitReq) {
 	if req.Metadata == nil {
 		req.Metadata = map[string]any{}
 	}
-	for _, key := range []string{"content", "ratio", "aspect_ratio", "resolution", "generate_audio", "audio", "n"} {
+	for _, key := range []string{"content", "ratio", "aspect_ratio", "resolution", "generate_audio", "audio", "n", "start_frames", "prompt_enhance"} {
 		if v, ok := raw[key]; ok {
 			req.Metadata[key] = v
 		}
 	}
 	if input, ok := raw["input"].(map[string]any); ok {
-		for _, key := range []string{"image_references", "start_frames", "end_frames", "audio", "n", "aspect_ratio", "resolution"} {
+		for _, key := range []string{"image_references", "start_frames", "end_frames", "audio", "n", "aspect_ratio", "resolution", "prompt_enhance"} {
 			if v, ok := input[key]; ok {
 				req.Metadata[key] = v
 			}
@@ -587,4 +598,22 @@ func stringValue(v any) string {
 	default:
 		return ""
 	}
+}
+
+func stringValues(v any) []string {
+	var values []string
+	switch items := v.(type) {
+	case []string:
+		values = items
+	case []any:
+		values = make([]string, 0, len(items))
+		for _, item := range items {
+			if value := stringValue(item); value != "" {
+				values = append(values, value)
+			}
+		}
+	case string:
+		values = []string{items}
+	}
+	return values
 }
