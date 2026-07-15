@@ -1,10 +1,14 @@
 package relay
 
 import (
+	"bytes"
 	"errors"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -13,6 +17,8 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -118,6 +124,113 @@ func TestBuildLocalImageRequestBodyFlattensOpenAIParameters(t *testing.T) {
 	assert.Equal(t, true, upstream["prompt_extend"])
 	assert.Equal(t, false, upstream["watermark"])
 	assert.NotContains(t, upstream, "parameters")
+}
+
+func TestBuildLocalImageRequestBodyConvertsJSONReferencesToMultipart(t *testing.T) {
+	referenceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("reference-" + r.URL.Path))
+	}))
+	defer referenceServer.Close()
+
+	fetchSetting := system_setting.GetFetchSetting()
+	originalFetchSetting := *fetchSetting
+	referenceURL, err := url.Parse(referenceServer.URL)
+	require.NoError(t, err)
+	fetchSetting.AllowPrivateIp = true
+	fetchSetting.AllowedPorts = append([]string(nil), originalFetchSetting.AllowedPorts...)
+	fetchSetting.AllowedPorts = append(fetchSetting.AllowedPorts, referenceURL.Port())
+	originalMaxFileDownloadMB := constant.MaxFileDownloadMB
+	constant.MaxFileDownloadMB = 10
+	t.Cleanup(func() {
+		*fetchSetting = originalFetchSetting
+		constant.MaxFileDownloadMB = originalMaxFileDownloadMB
+	})
+	service.InitHttpClient()
+
+	tests := []struct {
+		name       string
+		imagesJSON string
+		fieldName  string
+		wantImages []string
+	}{
+		{
+			name:       "single reference",
+			imagesJSON: `[{"image_url":"` + referenceServer.URL + `/one.png"}]`,
+			fieldName:  "image",
+			wantImages: []string{"reference-/one.png"},
+		},
+		{
+			name:       "multiple references",
+			imagesJSON: `[{"image_url":"` + referenceServer.URL + `/one.png"},{"image_url":"` + referenceServer.URL + `/two.png"}]`,
+			fieldName:  "image[]",
+			wantImages: []string{"reference-/one.png", "reference-/two.png"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var imageReq dto.ImageRequest
+			require.NoError(t, common.Unmarshal([]byte(`{
+				"model":"gpt-image-2",
+				"prompt":"combine references",
+				"images":`+test.imagesJSON+`,
+				"parameters":{
+					"size":"1024x1024",
+					"quality":"medium",
+					"background":"auto",
+					"output_format":"png",
+					"prompt_extend":true,
+					"watermark":false
+				}
+			}`), &imageReq))
+
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, localImageEditPath, nil)
+			c.Request.Header.Set("Content-Type", "application/json")
+			info := &relaycommon.RelayInfo{
+				RelayMode:   relayconstant.RelayModeImagesEdits,
+				RelayFormat: types.RelayFormatOpenAIImage,
+				ChannelMeta: &relaycommon.ChannelMeta{ApiType: constant.APITypeOpenAI},
+			}
+
+			body, err := buildLocalImageRequestBody(c, &openai.Adaptor{}, info, imageReq)
+			require.NoError(t, err)
+			bodyBytes, err := io.ReadAll(body)
+			require.NoError(t, err)
+			mediaType, params, err := mime.ParseMediaType(c.Request.Header.Get("Content-Type"))
+			require.NoError(t, err)
+			require.Equal(t, "multipart/form-data", mediaType)
+			reader := multipart.NewReader(bytes.NewReader(bodyBytes), params["boundary"])
+
+			fields := map[string]string{}
+			images := make([]string, 0, len(test.wantImages))
+			for {
+				part, err := reader.NextPart()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				require.NoError(t, err)
+				value, err := io.ReadAll(part)
+				require.NoError(t, err)
+				if part.FileName() != "" {
+					require.Equal(t, test.fieldName, part.FormName())
+					images = append(images, string(value))
+					continue
+				}
+				fields[part.FormName()] = string(value)
+			}
+
+			require.Equal(t, test.wantImages, images)
+			assert.Equal(t, "gpt-image-2", fields["model"])
+			assert.Equal(t, "combine references", fields["prompt"])
+			assert.Equal(t, "1024x1024", fields["size"])
+			assert.Equal(t, "medium", fields["quality"])
+			assert.Equal(t, "auto", fields["background"])
+			assert.Equal(t, "png", fields["output_format"])
+			assert.NotContains(t, fields, "prompt_extend")
+			assert.NotContains(t, fields, "watermark")
+		})
+	}
 }
 
 func TestNormalizeLocalImageRequestKeepsExplicitTopLevelValues(t *testing.T) {

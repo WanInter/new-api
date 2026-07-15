@@ -3,12 +3,16 @@ package relay
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +23,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -27,6 +32,7 @@ import (
 const (
 	localImageGenerationPath = "/v1/images/generations"
 	localImageEditPath       = "/v1/images/edits"
+	localImageMaxReferences  = 16
 )
 
 type localImagePollResponse struct {
@@ -210,6 +216,9 @@ func buildLocalImageRequestBody(c *gin.Context, adaptor channel.Adaptor, info *r
 	if err := normalizeLocalImageRequest(info.ApiType, &imageReq); err != nil {
 		return nil, err
 	}
+	if info.ApiType == constant.APITypeOpenAI && info.RelayMode == relayconstant.RelayModeImagesEdits && isLocalImageJSONRequest(c) {
+		return buildLocalOpenAIImageEditMultipart(c, imageReq)
+	}
 	convertedRequest, err := adaptor.ConvertImageRequest(c, info, imageReq)
 	if err != nil {
 		return nil, fmt.Errorf("convert local image request failed: %w", err)
@@ -229,6 +238,187 @@ func buildLocalImageRequestBody(c *gin.Context, adaptor channel.Adaptor, info *r
 		}
 	}
 	return bytes.NewReader(jsonData), nil
+}
+
+func isLocalImageJSONRequest(c *gin.Context) bool {
+	return c != nil && c.Request != nil && strings.HasPrefix(c.Request.Header.Get("Content-Type"), "application/json")
+}
+
+func buildLocalOpenAIImageEditMultipart(c *gin.Context, request dto.ImageRequest) (io.Reader, error) {
+	imageURLs, err := localImageReferenceURLs(request)
+	if err != nil {
+		return nil, err
+	}
+	if len(imageURLs) == 0 {
+		return nil, fmt.Errorf("OpenAI image edit requires at least one reference image")
+	}
+	if len(imageURLs) > localImageMaxReferences {
+		return nil, fmt.Errorf("OpenAI image edit supports at most %d reference images", localImageMaxReferences)
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	writeField := func(name string, value string) error {
+		if strings.TrimSpace(value) == "" {
+			return nil
+		}
+		return writer.WriteField(name, value)
+	}
+	if err := writeField("model", request.Model); err != nil {
+		return nil, err
+	}
+	if err := writeField("prompt", request.Prompt); err != nil {
+		return nil, err
+	}
+	if request.N != nil {
+		if err := writeField("n", strconv.FormatUint(uint64(*request.N), 10)); err != nil {
+			return nil, err
+		}
+	}
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "size", value: request.Size},
+		{name: "quality", value: request.Quality},
+		{name: "response_format", value: request.ResponseFormat},
+	} {
+		if err := writeField(field.name, field.value); err != nil {
+			return nil, err
+		}
+	}
+	for _, field := range []struct {
+		name string
+		raw  json.RawMessage
+	}{
+		{name: "background", raw: request.Background},
+		{name: "moderation", raw: request.Moderation},
+		{name: "output_format", raw: request.OutputFormat},
+		{name: "output_compression", raw: request.OutputCompression},
+		{name: "input_fidelity", raw: request.InputFidelity},
+		{name: "partial_images", raw: request.PartialImages},
+		{name: "user", raw: request.User},
+	} {
+		value, err := localImageRawFieldValue(field.raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid OpenAI image field %s: %w", field.name, err)
+		}
+		if err := writeField(field.name, value); err != nil {
+			return nil, err
+		}
+	}
+	if request.Stream != nil {
+		if err := writeField("stream", strconv.FormatBool(*request.Stream)); err != nil {
+			return nil, err
+		}
+	}
+
+	fieldName := "image"
+	if len(imageURLs) > 1 {
+		fieldName = "image[]"
+	}
+	for index, imageURL := range imageURLs {
+		mimeType, encoded, err := service.GetImageFromUrl(imageURL)
+		if err != nil {
+			return nil, fmt.Errorf("download OpenAI reference image %d failed: %w", index+1, err)
+		}
+		imageBytes, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return nil, fmt.Errorf("decode OpenAI reference image %d failed: %w", index+1, err)
+		}
+		header := make(textproto.MIMEHeader)
+		header.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="reference-%d.%s"`, fieldName, index+1, localImageExtension(mimeType)))
+		header.Set("Content-Type", strings.TrimSpace(strings.Split(mimeType, ";")[0]))
+		part, err := writer.CreatePart(header)
+		if err != nil {
+			return nil, fmt.Errorf("create OpenAI reference image %d part failed: %w", index+1, err)
+		}
+		if _, err := part.Write(imageBytes); err != nil {
+			return nil, fmt.Errorf("write OpenAI reference image %d failed: %w", index+1, err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	return &body, nil
+}
+
+func localImageReferenceURLs(request dto.ImageRequest) ([]string, error) {
+	values := make([]string, 0)
+	for _, raw := range []json.RawMessage{request.Images, request.Image} {
+		if !rawJSONHasValue(raw) {
+			continue
+		}
+		var value any
+		if err := common.Unmarshal(raw, &value); err != nil {
+			return nil, fmt.Errorf("invalid local image reference: %w", err)
+		}
+		appendLocalImageReferenceURLs(&values, value)
+	}
+	unique := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		unique = append(unique, trimmed)
+	}
+	return unique, nil
+}
+
+func appendLocalImageReferenceURLs(values *[]string, value any) {
+	switch typed := value.(type) {
+	case string:
+		*values = append(*values, typed)
+	case []any:
+		for _, item := range typed {
+			appendLocalImageReferenceURLs(values, item)
+		}
+	case map[string]any:
+		for _, key := range []string{"image_url", "url"} {
+			if item, ok := typed[key]; ok {
+				appendLocalImageReferenceURLs(values, item)
+				return
+			}
+		}
+	}
+}
+
+func localImageRawFieldValue(raw json.RawMessage) (string, error) {
+	if !rawJSONHasValue(raw) {
+		return "", nil
+	}
+	var value any
+	if err := common.Unmarshal(raw, &value); err != nil {
+		return "", err
+	}
+	if text, ok := value.(string); ok {
+		return text, nil
+	}
+	encoded, err := common.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
+}
+
+func localImageExtension(mimeType string) string {
+	switch strings.ToLower(strings.TrimSpace(strings.Split(mimeType, ";")[0])) {
+	case "image/jpeg":
+		return "jpg"
+	case "image/webp":
+		return "webp"
+	case "image/gif":
+		return "gif"
+	default:
+		return "png"
+	}
 }
 
 func normalizeLocalImageRequest(apiType int, request *dto.ImageRequest) error {
