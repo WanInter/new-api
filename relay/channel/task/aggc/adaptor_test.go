@@ -49,6 +49,18 @@ func TestParseTaskResultDoesNotUseSuccessMessageAsFailureReason(t *testing.T) {
 	assert.Equal(t, "100%", info.Progress)
 }
 
+func TestParseTaskResultExtractsNestedErrorMessage(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	body := []byte(`{"code":0,"data":{"error_message":"{\"error\":{\"code\":\"INTERNAL_SERVER_ERROR\",\"message\":\"系统内部错误，请稍后重试\"}}","job_id":"85cbab90-29c5-4fbe-b4e3-ae30aacf9a1e","status":"failed"},"message":"OK"}`)
+
+	info, err := adaptor.ParseTaskResult(body)
+
+	require.NoError(t, err)
+	assert.Equal(t, string(model.TaskStatusFailure), info.Status)
+	assert.Equal(t, "系统内部错误，请稍后重试", info.Reason)
+	assert.Equal(t, "100%", info.Progress)
+}
+
 func TestConvertToOpenAIVideoUsesSoraCompatibleResponseShape(t *testing.T) {
 	task := &model.Task{
 		TaskID:    "task_public",

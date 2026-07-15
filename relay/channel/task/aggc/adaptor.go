@@ -300,8 +300,10 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 }
 
 func aggcFailureReason(parsed queryResponse) string {
-	if reason := firstNonEmpty(parsed.Data.ErrorMessage, parsed.Data.FailReason, parsed.Data.Error, parsed.Data.Message); reason != "" {
-		return reason
+	for _, candidate := range []string{parsed.Data.ErrorMessage, parsed.Data.FailReason, parsed.Data.Error, parsed.Data.Message} {
+		if reason := normalizeAggcFailureReason(candidate); reason != "" {
+			return reason
+		}
 	}
 	message := strings.TrimSpace(parsed.Message)
 	switch strings.ToLower(message) {
@@ -310,6 +312,22 @@ func aggcFailureReason(parsed queryResponse) string {
 	default:
 		return message
 	}
+}
+
+func normalizeAggcFailureReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" || !strings.HasPrefix(reason, "{") {
+		return reason
+	}
+	var payload struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := common.UnmarshalJsonStr(reason, &payload); err == nil && strings.TrimSpace(payload.Error.Message) != "" {
+		return strings.TrimSpace(payload.Error.Message)
+	}
+	return reason
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
