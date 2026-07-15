@@ -281,7 +281,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	if parsed.Code != 0 {
 		info.Status = model.TaskStatusFailure
 		info.Progress = "100%"
-		info.Reason = firstNonEmpty(parsed.Data.ErrorMessage, parsed.Data.FailReason, parsed.Data.Error, parsed.Data.Message, parsed.Message, "AGGC task query failed")
+		info.Reason = aggcFailureReason(parsed)
 		return info, nil
 	}
 	info.TaskID = anyToString(parsed.Data.JobID)
@@ -294,9 +294,22 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 	if status == model.TaskStatusFailure {
 		info.Progress = "100%"
-		info.Reason = firstNonEmpty(parsed.Data.ErrorMessage, parsed.Data.FailReason, parsed.Data.Error, parsed.Data.Message, parsed.Message, "task failed")
+		info.Reason = aggcFailureReason(parsed)
 	}
 	return info, nil
+}
+
+func aggcFailureReason(parsed queryResponse) string {
+	if reason := firstNonEmpty(parsed.Data.ErrorMessage, parsed.Data.FailReason, parsed.Data.Error, parsed.Data.Message); reason != "" {
+		return reason
+	}
+	message := strings.TrimSpace(parsed.Message)
+	switch strings.ToLower(message) {
+	case "", "ok", "success", "succeeded":
+		return "AGGC upstream reported task failure without error details"
+	default:
+		return message
+	}
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {

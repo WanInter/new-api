@@ -37,6 +37,18 @@ func TestParseTaskResultUsesErrorMessageForFailure(t *testing.T) {
 	assert.Equal(t, "100%", info.Progress)
 }
 
+func TestParseTaskResultDoesNotUseSuccessMessageAsFailureReason(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	body := []byte(`{"code":0,"message":"OK","data":{"job_id":123,"status":"failed","video_url":"","video_cover_url":"","message":"","error":"","error_message":"","fail_reason":"","progress":null}}`)
+
+	info, err := adaptor.ParseTaskResult(body)
+
+	require.NoError(t, err)
+	assert.Equal(t, string(model.TaskStatusFailure), info.Status)
+	assert.Equal(t, "AGGC upstream reported task failure without error details", info.Reason)
+	assert.Equal(t, "100%", info.Progress)
+}
+
 func TestConvertToOpenAIVideoUsesSoraCompatibleResponseShape(t *testing.T) {
 	task := &model.Task{
 		TaskID:    "task_public",
