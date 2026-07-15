@@ -25,6 +25,18 @@ func TestParseTaskResultSuccess(t *testing.T) {
 	}
 }
 
+func TestParseTaskResultUsesErrorMessageForFailure(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	body := []byte(`{"code":0,"message":"OK","data":{"error_message":"素材或内容包含敏感信息，未通过内容安全审核。","job_id":"task_upstream","status":"failed"}}`)
+
+	info, err := adaptor.ParseTaskResult(body)
+
+	require.NoError(t, err)
+	assert.Equal(t, string(model.TaskStatusFailure), info.Status)
+	assert.Equal(t, "素材或内容包含敏感信息，未通过内容安全审核。", info.Reason)
+	assert.Equal(t, "100%", info.Progress)
+}
+
 func TestConvertToOpenAIVideoUsesSoraCompatibleResponseShape(t *testing.T) {
 	task := &model.Task{
 		TaskID:    "task_public",

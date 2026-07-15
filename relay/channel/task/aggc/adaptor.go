@@ -98,6 +98,7 @@ type queryResponseData struct {
 	VideoCoverURL string `json:"video_cover_url"`
 	Message       string `json:"message"`
 	Error         string `json:"error"`
+	ErrorMessage  string `json:"error_message"`
 	FailReason    string `json:"fail_reason"`
 	Progress      any    `json:"progress"`
 }
@@ -280,7 +281,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	if parsed.Code != 0 {
 		info.Status = model.TaskStatusFailure
 		info.Progress = "100%"
-		info.Reason = firstNonEmpty(parsed.Message, "AGGC task query failed")
+		info.Reason = firstNonEmpty(parsed.Data.ErrorMessage, parsed.Data.FailReason, parsed.Data.Error, parsed.Data.Message, parsed.Message, "AGGC task query failed")
 		return info, nil
 	}
 	info.TaskID = anyToString(parsed.Data.JobID)
@@ -293,7 +294,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 	if status == model.TaskStatusFailure {
 		info.Progress = "100%"
-		info.Reason = firstNonEmpty(parsed.Data.FailReason, parsed.Data.Error, parsed.Data.Message, parsed.Message, "task failed")
+		info.Reason = firstNonEmpty(parsed.Data.ErrorMessage, parsed.Data.FailReason, parsed.Data.Error, parsed.Data.Message, parsed.Message, "task failed")
 	}
 	return info, nil
 }
@@ -334,7 +335,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 		out["video_cover_url"] = parsed.Data.VideoCoverURL
 	}
 	if originTask.Status == model.TaskStatusFailure {
-		out["error"] = &dto.OpenAIVideoError{Message: firstNonEmpty(parsed.Data.FailReason, parsed.Data.Error, parsed.Data.Message, originTask.FailReason), Code: fmt.Sprintf("%d", parsed.Code)}
+		out["error"] = &dto.OpenAIVideoError{Message: firstNonEmpty(parsed.Data.ErrorMessage, parsed.Data.FailReason, parsed.Data.Error, parsed.Data.Message, originTask.FailReason), Code: fmt.Sprintf("%d", parsed.Code)}
 	}
 	return common.Marshal(out)
 }
