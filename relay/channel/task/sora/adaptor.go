@@ -45,6 +45,7 @@ type ImageURL struct {
 type responseTask struct {
 	ID                 string `json:"id"`
 	TaskID             string `json:"task_id,omitempty"` //兼容旧接口
+	CamelTaskID        string `json:"taskId,omitempty"`
 	Object             string `json:"object"`
 	Model              string `json:"model"`
 	Status             string `json:"status"`
@@ -57,44 +58,20 @@ type responseTask struct {
 	RemixedFromVideoID string `json:"remixed_from_video_id,omitempty"`
 	ResultURL          string `json:"result_url,omitempty"`
 	VideoURL           string `json:"video_url,omitempty"`
+	CamelVideoURL      string `json:"videoUrl,omitempty"`
+	OutputURL          string `json:"output_url,omitempty"`
 	URL                string `json:"url,omitempty"`
 	Output             any    `json:"output,omitempty"`
 	Video              *struct {
 		URL string `json:"url,omitempty"`
 	} `json:"video,omitempty"`
-	Error   *responseTaskError `json:"error,omitempty"`
-	Detail  any                `json:"detail,omitempty"`
-	Message string             `json:"message,omitempty"`
-}
-
-type responseTaskError struct {
-	Message string `json:"message"`
-	Code    string `json:"code"`
-}
-
-func (e *responseTaskError) UnmarshalJSON(data []byte) error {
-	if strings.TrimSpace(string(data)) == "null" {
-		return nil
-	}
-
-	var message string
-	if err := common.Unmarshal(data, &message); err == nil {
-		e.Message = message
-		return nil
-	}
-
-	type alias responseTaskError
-	var parsed alias
-	if err := common.Unmarshal(data, &parsed); err != nil {
-		return err
-	}
-	e.Message = parsed.Message
-	e.Code = parsed.Code
-	return nil
+	Error   any    `json:"error,omitempty"`
+	Detail  any    `json:"detail,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 func extractResponseTaskVideoURL(task responseTask) string {
-	for _, candidate := range []string{task.VideoURL, task.ResultURL, task.URL} {
+	for _, candidate := range []string{task.VideoURL, task.CamelVideoURL, task.ResultURL, task.OutputURL, task.URL} {
 		if strings.TrimSpace(candidate) != "" {
 			return strings.TrimSpace(candidate)
 		}
@@ -689,6 +666,9 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		upstreamID = dResp.TaskID
 	}
 	if upstreamID == "" {
+		upstreamID = dResp.CamelTaskID
+	}
+	if upstreamID == "" {
 		taskErr = service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
 		return
 	}
@@ -696,6 +676,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	// 使用公开 task_xxxx ID 返回给客户端
 	dResp.ID = info.PublicTaskID
 	dResp.TaskID = info.PublicTaskID
+	dResp.CamelTaskID = info.PublicTaskID
 	c.JSON(http.StatusOK, dResp)
 	return upstreamID, responseBody, nil
 }
@@ -732,14 +713,28 @@ func (a *TaskAdaptor) GetChannelName() string {
 }
 
 func responseTaskFailureReason(task responseTask) string {
-	if task.Error != nil && strings.TrimSpace(task.Error.Message) != "" {
-		return strings.TrimSpace(task.Error.Message)
+	if reason := responseTaskErrorMessage(task.Error); reason != "" {
+		return reason
 	}
 	if strings.TrimSpace(task.Message) != "" {
 		return strings.TrimSpace(task.Message)
 	}
 	if reason := detailFailureReason(task.Detail); reason != "" {
 		return reason
+	}
+	return ""
+}
+
+func responseTaskErrorMessage(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case map[string]any:
+		for _, key := range []string{"message", "error", "code"} {
+			if message, ok := typed[key].(string); ok && strings.TrimSpace(message) != "" {
+				return strings.TrimSpace(message)
+			}
+		}
 	}
 	return ""
 }

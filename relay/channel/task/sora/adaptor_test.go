@@ -337,6 +337,70 @@ func TestParseTaskResultAcceptsObjectError(t *testing.T) {
 	require.Equal(t, "生成失败", info.Reason)
 }
 
+func TestParseTaskResultAcceptsCamelCaseVideoURL(t *testing.T) {
+	body := []byte(`{
+		"taskId":"task_upstream",
+		"status":"completed",
+		"progress":100,
+		"videoUrl":"https://example.com/video.mp4",
+		"output_url":"https://example.com/output.mp4",
+		"error":""
+	}`)
+
+	info, err := (&TaskAdaptor{}).ParseTaskResult(body)
+	require.NoError(t, err)
+	require.NotNil(t, info)
+	require.Equal(t, string(model.TaskStatusSuccess), info.Status)
+	require.Equal(t, "https://example.com/video.mp4", info.Url)
+}
+
+func TestDoResponseAcceptsQueuedTaskWithEmptyStringError(t *testing.T) {
+	body := `{
+		"ok":true,
+		"task":{
+			"id":"cc363ea4-bd1c-4c93-9aaa-a66ce0ad6ebf",
+			"navosTaskId":"",
+			"status":"queued",
+			"progress":1,
+			"stage":"queued for submit",
+			"prompt":"test",
+			"createdAt":"2026-07-15T04:30:37.190Z"
+		},
+		"id":"cc363ea4-bd1c-4c93-9aaa-a66ce0ad6ebf",
+		"taskId":"cc363ea4-bd1c-4c93-9aaa-a66ce0ad6ebf",
+		"status":"queued",
+		"progress":1,
+		"videoUrl":"",
+		"output_url":"",
+		"error":"",
+		"task_id":"cc363ea4-bd1c-4c93-9aaa-a66ce0ad6ebf"
+	}`
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+
+	upstreamID, taskData, taskErr := (&TaskAdaptor{}).DoResponse(c, resp, &relaycommon.RelayInfo{
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
+	})
+
+	require.Nil(t, taskErr)
+	require.Equal(t, "cc363ea4-bd1c-4c93-9aaa-a66ce0ad6ebf", upstreamID)
+	require.JSONEq(t, body, string(taskData))
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var response map[string]any
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.Equal(t, "task_public", response["id"])
+	require.Equal(t, "task_public", response["task_id"])
+	require.Equal(t, "task_public", response["taskId"])
+	require.Equal(t, "queued", response["status"])
+	require.Equal(t, "", response["error"])
+}
+
 func TestApplyOtoySeedanceMiniReferenceRequest(t *testing.T) {
 	body := map[string]any{
 		"model":           "otoy-image-to-video-seedance-2-0-mini-reference-to-video",
