@@ -20,7 +20,14 @@ func ResolveIncomingBillingExprRequestInput(c *gin.Context, info *relaycommon.Re
 		input.Headers = merged
 		return input, nil
 	}
+	return BuildIncomingBillingExprRequestInput(c, info)
+}
 
+// BuildIncomingBillingExprRequestInput always reads the original incoming
+// request. Unlike ResolveIncomingBillingExprRequestInput, it does not reuse a
+// previously frozen billing input, so task retries can normalize it again for
+// the newly selected upstream profile.
+func BuildIncomingBillingExprRequestInput(c *gin.Context, info *relaycommon.RelayInfo) (billingexpr.RequestInput, error) {
 	input := billingexpr.RequestInput{}
 	if info != nil {
 		input.Headers = cloneStringMap(info.RequestHeaders)

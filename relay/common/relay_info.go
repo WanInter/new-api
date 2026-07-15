@@ -688,6 +688,9 @@ type TaskSubmitReq struct {
 	Mode           string                 `json:"mode,omitempty"`
 	Image          string                 `json:"image,omitempty"`
 	Images         []string               `json:"images,omitempty"`
+	Videos         []string               `json:"videos,omitempty"`
+	Audios         []string               `json:"audios,omitempty"`
+	Content        []TaskContentItem      `json:"content,omitempty"`
 	Size           string                 `json:"size,omitempty"`
 	Duration       int                    `json:"duration,omitempty"`
 	Seconds        string                 `json:"seconds,omitempty"`
@@ -695,12 +698,32 @@ type TaskSubmitReq struct {
 	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
+type TaskContentURL struct {
+	URL string `json:"url"`
+}
+
+type TaskContentItem struct {
+	Type     string          `json:"type"`
+	Text     string          `json:"text,omitempty"`
+	ImageURL *TaskContentURL `json:"image_url,omitempty"`
+	VideoURL *TaskContentURL `json:"video_url,omitempty"`
+	AudioURL *TaskContentURL `json:"audio_url,omitempty"`
+}
+
 func (t *TaskSubmitReq) GetPrompt() string {
 	return t.Prompt
 }
 
 func (t *TaskSubmitReq) HasImage() bool {
-	return len(t.Images) > 0
+	if len(t.Images) > 0 || strings.TrimSpace(t.Image) != "" || strings.TrimSpace(t.InputReference) != "" {
+		return true
+	}
+	for _, item := range t.Content {
+		if item.Type == "image_url" && item.ImageURL != nil && strings.TrimSpace(item.ImageURL.URL) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
@@ -708,6 +731,9 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	aux := &struct {
 		Metadata json.RawMessage `json:"metadata,omitempty"`
 		Duration json.RawMessage `json:"duration,omitempty"`
+		Images   json.RawMessage `json:"images,omitempty"`
+		Videos   json.RawMessage `json:"videos,omitempty"`
+		Audios   json.RawMessage `json:"audios,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(t),
@@ -721,6 +747,24 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 		if duration, ok := parseDurationSeconds(aux.Duration); ok {
 			t.Duration = duration
 		}
+	}
+	mediaFields := []struct {
+		raw    json.RawMessage
+		target *[]string
+	}{
+		{raw: aux.Images, target: &t.Images},
+		{raw: aux.Videos, target: &t.Videos},
+		{raw: aux.Audios, target: &t.Audios},
+	}
+	for _, field := range mediaFields {
+		if len(field.raw) == 0 {
+			continue
+		}
+		values, err := parseTaskStringSlice(field.raw)
+		if err != nil {
+			return err
+		}
+		*field.target = values
 	}
 
 	if len(aux.Metadata) > 0 {
@@ -740,6 +784,19 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	}
 
 	return nil
+}
+
+func parseTaskStringSlice(raw json.RawMessage) ([]string, error) {
+	var values []string
+	if err := common.Unmarshal(raw, &values); err == nil {
+		return values, nil
+	}
+
+	var value string
+	if err := common.Unmarshal(raw, &value); err == nil {
+		return []string{value}, nil
+	}
+	return nil, fmt.Errorf("task media field must be a string or an array of strings")
 }
 
 func parseDurationSeconds(raw json.RawMessage) (int, bool) {

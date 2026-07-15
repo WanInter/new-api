@@ -23,24 +23,9 @@ import (
 	"github.com/pkg/errors"
 )
 
-const (
-	canvasStandardSeedanceModel   = "navos-local-seedance-154-36-180-7"
-	canvasStandardMaxVideoSeconds = 14
-)
-
 // ============================
 // Request / Response structures
 // ============================
-
-type ContentItem struct {
-	Type     string    `json:"type"`                // "text" or "image_url"
-	Text     string    `json:"text,omitempty"`      // for text type
-	ImageURL *ImageURL `json:"image_url,omitempty"` // for image_url type
-}
-
-type ImageURL struct {
-	URL string `json:"url"`
-}
 
 type responseTask struct {
 	ID                 string `json:"id"`
@@ -116,7 +101,42 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if info.Action == constant.TaskActionRemix {
 		return validateRemixRequest(c)
 	}
+	if taskErr := a.ValidateMappedRequestBeforeDecode(c, info); taskErr != nil {
+		return taskErr
+	}
 	return relaycommon.ValidateMultipartDirect(c, info)
+}
+
+func (a *TaskAdaptor) ValidateMappedRequestBeforeDecode(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	profile, ok := soraModelProfileForInfo(info)
+	if !ok {
+		return nil
+	}
+	return validateSoraModelContentType(c, info.OriginModelName, profile)
+}
+
+func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	if info.Action == constant.TaskActionRemix {
+		return nil
+	}
+	return validateSoraModelRequest(c, info)
+}
+
+func (a *TaskAdaptor) NormalizeBillingRequestBody(info *relaycommon.RelayInfo, body []byte) ([]byte, error) {
+	fixedSeconds := fixedVideoSecondsForModel("", info)
+	if fixedSeconds <= 0 || len(body) == 0 {
+		return body, nil
+	}
+
+	var bodyMap map[string]interface{}
+	if err := common.Unmarshal(body, &bodyMap); err != nil {
+		return nil, err
+	}
+	bodyMap["duration"] = clampVideoSeconds(fixedSeconds, maxVideoSecondsForModel(info))
+	if profile, ok := soraModelProfileForInfo(info); ok && profile.DropSecondsField {
+		delete(bodyMap, "seconds")
+	}
+	return common.Marshal(bodyMap)
 }
 
 // EstimateBilling 根据用户请求的 seconds 和 size 计算 OtherRatios。
@@ -176,14 +196,16 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		var bodyMap map[string]interface{}
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
 			bodyMap["model"] = info.UpstreamModelName
-			if shouldUseOtoySeedanceMiniReference(info) {
-				applyOtoySeedanceMiniReferenceRequest(bodyMap)
-			} else {
-				if shouldUseVeoReferenceImages(info, bodyMap) {
-					applyVeoReferenceImages(bodyMap)
-				}
-				maxSeconds := maxVideoSecondsForModel(info)
-				clampJSONVideoDuration(bodyMap, maxSeconds)
+			profile, hasProfile := soraModelProfileForInfo(info)
+			if hasProfile {
+				applySoraModelJSONProfile(bodyMap, profile)
+			}
+			if fixedSeconds := fixedVideoSecondsForModel("", info); fixedSeconds > 0 {
+				bodyMap["duration"] = fixedSeconds
+			}
+			maxSeconds := maxVideoSecondsForModel(info)
+			clampJSONVideoDuration(bodyMap, maxSeconds)
+			if !hasProfile || !profile.SkipGenericDurationNormalization {
 				if seconds, ok := normalizeVideoSeconds(bodyMap["seconds"]); ok {
 					bodyMap["seconds"] = clampNormalizedVideoSeconds(seconds, maxSeconds)
 				} else if seconds, ok := normalizeVideoSeconds(bodyMap["duration"]); ok {
@@ -205,8 +227,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		var buf bytes.Buffer
 		writer := multipart.NewWriter(&buf)
 		writer.WriteField("model", info.UpstreamModelName)
-		if shouldUseOtoySeedanceMiniReference(info) {
-			writeOtoySeedanceMiniReferenceMultipartFields(writer, formData.Value)
+		profile, hasProfile := soraModelProfileForInfo(info)
+		if hasProfile && profile.MultipartTransform != requestTransformNone {
+			applySoraModelMultipartProfile(writer, formData.Value, profile)
 		} else {
 			maxSeconds := maxVideoSecondsForModel(info)
 			if seconds := normalizeVideoSecondsFromForm(formData.Value); seconds != "" {
@@ -262,251 +285,10 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	return common.ReaderOnly(storage), nil
 }
 
-func writeOtoySeedanceMiniReferenceMultipartFields(writer *multipart.Writer, values map[string][]string) {
-	writeValues := func(key string, vals []string) {
-		for _, v := range vals {
-			v = strings.TrimSpace(v)
-			if v != "" {
-				_ = writer.WriteField(key, v)
-			}
-		}
-	}
-
-	allowedPassthrough := map[string]bool{
-		"prompt":         true,
-		"type":           true,
-		"video_urls":     true,
-		"audio_urls":     true,
-		"resolution":     true,
-		"aspect_ratio":   true,
-		"generate_audio": true,
-		"end_user_id":    true,
-	}
-	for key, vals := range values {
-		if allowedPassthrough[key] {
-			writeValues(key, vals)
-		}
-	}
-
-	if len(values["aspect_ratio"]) == 0 {
-		writeValues("aspect_ratio", values["ratio"])
-	}
-	if duration, ok := normalizeVideoDurationString(firstFormValue(values, "duration")); ok {
-		_ = writer.WriteField("duration", duration)
-	} else if duration, ok := normalizeVideoDurationString(firstFormValue(values, "seconds")); ok {
-		_ = writer.WriteField("duration", duration)
-	}
-
-	imageValues := append([]string{}, values["image_urls"]...)
-	imageValues = append(imageValues, values["images"]...)
-	imageValues = append(imageValues, values["image"]...)
-	imageValues = append(imageValues, values["input_reference"]...)
-	imageValues = append(imageValues, values["file_paths"]...)
-	writeValues("image_urls", uniqueStrings(imageValues))
-
-	if len(values["type"]) == 0 {
-		_ = writer.WriteField("type", "image-to-video")
-	}
-	if len(values["generate_audio"]) == 0 {
-		_ = writer.WriteField("generate_audio", "true")
-	}
-}
-
-func firstFormValue(values map[string][]string, key string) string {
-	if len(values[key]) == 0 {
-		return ""
-	}
-	return values[key][0]
-}
-
-func uniqueStrings(values []string) []string {
-	seen := make(map[string]bool)
-	out := make([]string, 0, len(values))
-	for _, v := range values {
-		v = strings.TrimSpace(v)
-		if v == "" || seen[v] {
-			continue
-		}
-		seen[v] = true
-		out = append(out, v)
-	}
-	return out
-}
-
-func shouldUseOtoySeedanceMiniReference(info *relaycommon.RelayInfo) bool {
-	if info == nil {
-		return false
-	}
-	return isOtoySeedanceMiniReferenceModel(info.OriginModelName) || isOtoySeedanceMiniReferenceModel(info.UpstreamModelName)
-}
-
-func isOtoySeedanceMiniReferenceModel(modelName string) bool {
-	return strings.TrimSpace(modelName) == "otoy-image-to-video-seedance-2-0-mini-reference-to-video"
-}
-
-func applyOtoySeedanceMiniReferenceRequest(body map[string]interface{}) {
-	if body == nil {
-		return
-	}
-
-	if _, exists := body["aspect_ratio"]; !exists {
-		if ratio, ok := body["ratio"].(string); ok && strings.TrimSpace(ratio) != "" {
-			body["aspect_ratio"] = strings.TrimSpace(ratio)
-		}
-	}
-
-	delete(body, "seconds")
-	if duration, ok := normalizeVideoDurationString(body["duration"]); ok {
-		body["duration"] = duration
-	}
-
-	images := collectOtoySeedanceMiniReferenceImages(body)
-	if len(images) > 0 {
-		body["image_urls"] = images
-	}
-
-	if _, exists := body["type"]; !exists {
-		body["type"] = "image-to-video"
-	}
-	if _, exists := body["generate_audio"]; !exists {
-		body["generate_audio"] = true
-	}
-
-	keep := map[string]bool{
-		"model":          true,
-		"prompt":         true,
-		"type":           true,
-		"image_urls":     true,
-		"video_urls":     true,
-		"audio_urls":     true,
-		"resolution":     true,
-		"duration":       true,
-		"aspect_ratio":   true,
-		"generate_audio": true,
-		"end_user_id":    true,
-	}
-	for key := range body {
-		if !keep[key] {
-			delete(body, key)
-		}
-	}
-}
-
-func normalizeVideoDurationString(value any) (string, bool) {
-	if duration, ok := normalizeVideoSeconds(value); ok {
-		return duration, true
-	}
-	if s, ok := value.(string); ok {
-		s = strings.TrimSpace(s)
-		if strings.EqualFold(s, "auto") {
-			return "auto", true
-		}
-	}
-	return "", false
-}
-
-func collectOtoySeedanceMiniReferenceImages(body map[string]interface{}) []string {
-	if body == nil {
-		return nil
-	}
-	images := make([]string, 0)
-	seen := make(map[string]bool)
-	appendImage := func(image string) {
-		image = strings.TrimSpace(image)
-		if image == "" || seen[image] {
-			return
-		}
-		seen[image] = true
-		images = append(images, image)
-	}
-	appendImages := func(v any) {
-		switch typed := v.(type) {
-		case []string:
-			for _, image := range typed {
-				appendImage(image)
-			}
-		case []any:
-			for _, item := range typed {
-				if s, ok := item.(string); ok {
-					appendImage(s)
-				}
-			}
-		case string:
-			appendImage(typed)
-		}
-	}
-
-	appendImages(body["image_urls"])
-	appendImages(body["images"])
-	appendImages(body["image"])
-	appendImages(body["input_reference"])
-	appendImages(body["file_paths"])
-	return images
-}
-
-func shouldUseVeoReferenceImages(info *relaycommon.RelayInfo, body map[string]interface{}) bool {
-	if info == nil {
-		return false
-	}
-	if strings.TrimSpace(info.OriginModelName) != "veo-omni-flash" &&
-		strings.TrimSpace(info.UpstreamModelName) != "veo-omni-flash" {
-		return false
-	}
-	return len(collectVeoImages(body)) > 0
-}
-
-func applyVeoReferenceImages(body map[string]interface{}) {
-	images := collectVeoImages(body)
-	if len(images) > 2 {
-		body["Ingredients_images"] = images
-		delete(body, "images")
-	} else if len(images) > 0 {
-		body["images"] = images
-		delete(body, "Ingredients_images")
-	}
-	delete(body, "image")
-	delete(body, "input_reference")
-}
-
-func collectVeoImages(body map[string]interface{}) []string {
-	if body == nil {
-		return nil
-	}
-	images := make([]string, 0)
-	seen := make(map[string]bool)
-	appendImage := func(image string) {
-		image = strings.TrimSpace(image)
-		if image == "" || seen[image] {
-			return
-		}
-		seen[image] = true
-		images = append(images, image)
-	}
-	appendImages := func(v any) {
-		switch typed := v.(type) {
-		case []string:
-			for _, image := range typed {
-				appendImage(image)
-			}
-		case []any:
-			for _, item := range typed {
-				if s, ok := item.(string); ok {
-					appendImage(s)
-				}
-			}
-		case string:
-			appendImage(typed)
-		}
-	}
-
-	appendImages(body["Ingredients_images"])
-	appendImages(body["images"])
-	appendImages(body["image"])
-	appendImages(body["input_reference"])
-	return images
-}
-
 func estimateVideoSeconds(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) int {
+	if fixedSeconds := fixedVideoSecondsForModel(req.Model, info); fixedSeconds > 0 {
+		return clampVideoSeconds(fixedSeconds, maxVideoSecondsForModel(info))
+	}
 	seconds := 0
 	if normalized, ok := normalizeVideoSeconds(req.Seconds); ok {
 		seconds = mustParsePositiveInt(normalized)
@@ -514,23 +296,10 @@ func estimateVideoSeconds(req relaycommon.TaskSubmitReq, info *relaycommon.Relay
 		seconds = req.Duration
 	} else if normalized, ok := normalizeVideoSeconds(req.Metadata["duration"]); ok {
 		seconds = mustParsePositiveInt(normalized)
-	} else if isSeedanceGateway(info, req.Model) {
-		seconds = 15
 	} else {
-		seconds = 4
+		seconds = defaultVideoSecondsForModel(req.Model, info)
 	}
 	return clampVideoSeconds(seconds, maxVideoSecondsForModel(info))
-}
-
-func isSeedanceGateway(info *relaycommon.RelayInfo, modelName string) bool {
-	if strings.TrimSpace(modelName) == "seedance-gateway" {
-		return true
-	}
-	if info == nil {
-		return false
-	}
-	return strings.TrimSpace(info.OriginModelName) == "seedance-gateway" ||
-		strings.TrimSpace(info.UpstreamModelName) == "seedance-gateway"
 }
 
 func mustParsePositiveInt(value string) int {
@@ -539,16 +308,6 @@ func mustParsePositiveInt(value string) int {
 		return 0
 	}
 	return parsed
-}
-
-func maxVideoSecondsForModel(info *relaycommon.RelayInfo) int {
-	if info == nil || info.ChannelMeta == nil {
-		return 0
-	}
-	if strings.TrimSpace(info.UpstreamModelName) == canvasStandardSeedanceModel {
-		return canvasStandardMaxVideoSeconds
-	}
-	return 0
 }
 
 func clampVideoSeconds(seconds, maxSeconds int) int {
@@ -677,6 +436,9 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	dResp.ID = info.PublicTaskID
 	dResp.TaskID = info.PublicTaskID
 	dResp.CamelTaskID = info.PublicTaskID
+	if strings.TrimSpace(info.OriginModelName) != "" {
+		dResp.Model = info.OriginModelName
+	}
 	c.JSON(http.StatusOK, dResp)
 	return upstreamID, responseBody, nil
 }
@@ -805,7 +567,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	if upstreamTaskID := strings.TrimSpace(task.GetUpstreamTaskID()); upstreamTaskID != "" && upstreamTaskID != task.TaskID {
 		payload["task_id"] = upstreamTaskID
 	}
-	if strings.TrimSpace(stringValue(payload["model"])) == "" && task.Properties.OriginModelName != "" {
+	if task.Properties.OriginModelName != "" {
 		payload["model"] = task.Properties.OriginModelName
 	}
 	payload["status"] = toSoraCompatibleVideoStatus(task.Status, stringValue(payload["status"]))

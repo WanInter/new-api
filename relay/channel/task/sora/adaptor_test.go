@@ -77,12 +77,13 @@ func TestConvertToOpenAIVideoPromotesMetadataURLToSoraResponseShape(t *testing.T
 			UpstreamTaskID: "task_upstream",
 		},
 		Properties: model.Properties{
-			OriginModelName: "sd-bak-2",
+			OriginModelName:   "sd-bak-2",
+			UpstreamModelName: "internal-sdquan-model",
 		},
 		Data: []byte(`{
 			"id":"task_upstream",
 			"object":"video",
-			"model":"sd-bak-2",
+			"model":"internal-sdquan-model",
 			"status":"completed",
 			"progress":100,
 			"metadata":{
@@ -384,7 +385,8 @@ func TestDoResponseAcceptsQueuedTaskWithEmptyStringError(t *testing.T) {
 	}
 
 	upstreamID, taskData, taskErr := (&TaskAdaptor{}).DoResponse(c, resp, &relaycommon.RelayInfo{
-		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
+		OriginModelName: axMultimodalVideoModel,
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
 	})
 
 	require.Nil(t, taskErr)
@@ -397,8 +399,32 @@ func TestDoResponseAcceptsQueuedTaskWithEmptyStringError(t *testing.T) {
 	require.Equal(t, "task_public", response["id"])
 	require.Equal(t, "task_public", response["task_id"])
 	require.Equal(t, "task_public", response["taskId"])
+	require.Equal(t, axMultimodalVideoModel, response["model"])
 	require.Equal(t, "queued", response["status"])
 	require.Equal(t, "", response["error"])
+}
+
+func TestDoResponseHidesMappedUpstreamModel(t *testing.T) {
+	body := `{"id":"upstream_task","model":"sdquan-2","status":"queued"}`
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+
+	upstreamID, taskData, taskErr := (&TaskAdaptor{}).DoResponse(c, resp, &relaycommon.RelayInfo{
+		OriginModelName: "public-video-alias",
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: sdquanImageVideoModel},
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
+	})
+
+	require.Nil(t, taskErr)
+	require.Equal(t, "upstream_task", upstreamID)
+	require.JSONEq(t, body, string(taskData))
+	var response map[string]any
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.Equal(t, "public-video-alias", response["model"])
 }
 
 func TestApplyOtoySeedanceMiniReferenceRequest(t *testing.T) {

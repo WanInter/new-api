@@ -41,6 +41,28 @@ func TestResolveIncomingBillingExprRequestInput(t *testing.T) {
 	require.Equal(t, "application/json", input.Headers["Content-Type"])
 }
 
+func TestBuildIncomingBillingExprRequestInputIgnoresFrozenInput(t *testing.T) {
+	body := []byte(`{"duration":5}`)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(ctx) })
+	info := &relaycommon.RelayInfo{
+		RequestHeaders: map[string]string{"Content-Type": "application/json"},
+		BillingRequestInput: &billingexpr.RequestInput{
+			Body: []byte(`{"duration":15}`),
+		},
+	}
+
+	resolved, err := ResolveIncomingBillingExprRequestInput(ctx, info)
+	require.NoError(t, err)
+	assert.Equal(t, float64(15), gjson.GetBytes(resolved.Body, "duration").Float())
+
+	fresh, err := BuildIncomingBillingExprRequestInput(ctx, info)
+	require.NoError(t, err)
+	assert.Equal(t, float64(5), gjson.GetBytes(fresh.Body, "duration").Float())
+}
+
 func TestBuildBillingExprRequestInputFromRequest(t *testing.T) {
 	request := &dto.GeneralOpenAIRequest{
 		Model:  "gemini-3.1-pro-preview",

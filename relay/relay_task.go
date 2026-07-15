@@ -163,6 +163,20 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("invalid api platform: %s", platform), "invalid_api_platform", http.StatusBadRequest)
 	}
 	adaptor.Init(info)
+	if preValidator, ok := adaptor.(channel.TaskMappedRequestPreValidator); ok && strings.TrimSpace(info.OriginModelName) != "" {
+		probeInfo := *info
+		if info.ChannelMeta != nil {
+			channelMeta := *info.ChannelMeta
+			probeInfo.ChannelMeta = &channelMeta
+		}
+		probeInfo.UpstreamModelName = probeInfo.OriginModelName
+		if err := helper.ModelMappedHelper(c, &probeInfo, nil); err != nil {
+			return nil, service.TaskErrorWrapperLocal(err, "model_mapping_failed", http.StatusBadRequest)
+		}
+		if taskErr := preValidator.ValidateMappedRequestBeforeDecode(c, &probeInfo); taskErr != nil {
+			return nil, taskErr
+		}
+	}
 	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
 		return nil, taskErr
 	}
@@ -178,6 +192,26 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	info.UpstreamModelName = modelName
 	if err := helper.ModelMappedHelper(c, info, nil); err != nil {
 		return nil, service.TaskErrorWrapperLocal(err, "model_mapping_failed", http.StatusBadRequest)
+	}
+	if validator, ok := adaptor.(channel.TaskMappedRequestValidator); ok {
+		if taskErr := validator.ValidateMappedRequest(c, info); taskErr != nil {
+			return nil, taskErr
+		}
+	}
+	// BillingRequestInput is frozen by tiered pricing. Rebuild it on every task
+	// attempt so a retry on a different adaptor/profile cannot reuse stale input.
+	info.BillingRequestInput = nil
+	if normalizer, ok := adaptor.(channel.TaskBillingRequestBodyNormalizer); ok {
+		requestInput, err := helper.BuildIncomingBillingExprRequestInput(c, info)
+		if err != nil {
+			return nil, service.TaskErrorWrapperLocal(err, "billing_request_input_failed", http.StatusBadRequest)
+		}
+		normalizedBody, err := normalizer.NormalizeBillingRequestBody(info, requestInput.Body)
+		if err != nil {
+			return nil, service.TaskErrorWrapperLocal(err, "billing_request_normalization_failed", http.StatusBadRequest)
+		}
+		requestInput.Body = normalizedBody
+		info.BillingRequestInput = &requestInput
 	}
 
 	// 3. 预生成公开 task ID（仅首次）

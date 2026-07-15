@@ -78,6 +78,24 @@ type TaskAdaptor interface {
 	ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error)
 }
 
+// TaskMappedRequestValidator validates provider-specific request rules after
+// channel model mapping has resolved the final upstream model name.
+type TaskMappedRequestValidator interface {
+	ValidateMappedRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError
+}
+
+// TaskMappedRequestPreValidator validates rules that must run before the full
+// request DTO is decoded, using a copy of RelayInfo with model mapping applied.
+type TaskMappedRequestPreValidator interface {
+	ValidateMappedRequestBeforeDecode(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError
+}
+
+// TaskBillingRequestBodyNormalizer returns the effective request body that
+// request-aware billing expressions should evaluate.
+type TaskBillingRequestBodyNormalizer interface {
+	NormalizeBillingRequestBody(info *relaycommon.RelayInfo, body []byte) ([]byte, error)
+}
+
 type OpenAIVideoConverter interface {
 	ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error)
 }
