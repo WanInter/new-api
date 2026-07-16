@@ -51,6 +51,9 @@ type TaskDto struct {
 	Properties any             `json:"properties"`
 	Username   string          `json:"username,omitempty"`
 	Data       json.RawMessage `json:"data"`
+
+	// UpstreamModelName is populated only for administrator task-list responses.
+	UpstreamModelName string `json:"upstream_model_name,omitempty"`
 }
 
 type FetchReq struct {

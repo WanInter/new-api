@@ -652,9 +652,8 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 
 func taskDtoProperties(task *model.Task) any {
 	properties := task.Properties
-	// Model mapping names are internal routing/billing metadata and must not be
-	// exposed in task detail/list responses. Keep them in task.Properties for
-	// storage and billing, but strip them from the DTO copy returned to users/admin UI.
+	// Keep routing and billing metadata out of the generic properties object.
+	// Administrator task lists expose the upstream model through an explicit DTO field.
 	properties.UpstreamModelName = ""
 	properties.OriginModelName = ""
 	return properties
@@ -684,4 +683,12 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Username:   task.Username,
 		Data:       task.Data,
 	}
+}
+
+// TaskModel2AdminDto adds internal routing metadata intended only for
+// administrator task management views.
+func TaskModel2AdminDto(task *model.Task) *dto.TaskDto {
+	taskDto := TaskModel2Dto(task)
+	taskDto.UpstreamModelName = task.Properties.UpstreamModelName
+	return taskDto
 }

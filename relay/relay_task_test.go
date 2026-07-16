@@ -73,6 +73,28 @@ func TestTaskModel2DtoHidesInternalModelNamesForOtherChannels(t *testing.T) {
 	assert.Equal(t, "sora-origin", task.Properties.OriginModelName)
 }
 
+func TestTaskModel2AdminDtoExposesUpstreamModelAtTopLevel(t *testing.T) {
+	task := &model.Task{
+		Properties: model.Properties{
+			Input:             "prompt",
+			UpstreamModelName: "ax2.0-9tu",
+			OriginModelName:   "sd-bak-1",
+		},
+	}
+
+	taskDto := TaskModel2AdminDto(task)
+	properties, ok := taskDto.Properties.(model.Properties)
+	require.True(t, ok)
+	assert.Equal(t, "ax2.0-9tu", taskDto.UpstreamModelName)
+	assert.Empty(t, properties.UpstreamModelName)
+	assert.Empty(t, properties.OriginModelName)
+
+	encoded, err := common.Marshal(taskDto)
+	require.NoError(t, err)
+	assert.Contains(t, string(encoded), `"upstream_model_name":"ax2.0-9tu"`)
+	assert.NotContains(t, string(encoded), `"origin_model_name"`)
+}
+
 func TestShouldApplyTaskOtherRatiosSkipsFixedModelPrice(t *testing.T) {
 	info := &relaycommon.RelayInfo{
 		PriceData: types.PriceData{

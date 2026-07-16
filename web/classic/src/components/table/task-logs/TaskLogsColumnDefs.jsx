@@ -151,7 +151,6 @@ const renderType = (type, t) => {
   }
 };
 
-
 const getTaskModelName = (record) => record?.model_name || '';
 
 const renderPlatform = (platform, t) => {
@@ -414,6 +413,27 @@ export const getTaskLogsColumns = ({
         );
       },
     },
+    ...(isAdminUser
+      ? [
+          {
+            key: COLUMN_KEYS.UPSTREAM_MODEL,
+            title: t('上游模型'),
+            dataIndex: 'upstream_model_name',
+            render: (text) => {
+              if (!text) return t('无');
+              return (
+                <Typography.Text
+                  ellipsis={{ showTooltip: true }}
+                  style={{ maxWidth: 180 }}
+                  copyable={{ content: text }}
+                >
+                  {text}
+                </Typography.Text>
+              );
+            },
+          },
+        ]
+      : []),
     {
       key: COLUMN_KEYS.TYPE,
       title: t('类型'),

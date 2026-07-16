@@ -279,6 +279,7 @@ export interface TaskLog {
   progress?: string
   progress_message_en?: string
   model_name?: string
+  upstream_model_name?: string
   properties?: TaskLogProperties | string
   data?: string // JSON string
   fail_reason?: string
