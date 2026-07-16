@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import {
   Plus,
   MoreHorizontal,
@@ -29,6 +30,7 @@ import {
   SortAsc,
   RefreshCw,
   ArrowUpFromLine,
+  Route,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -105,6 +107,15 @@ export function ChannelsPrimaryButtons() {
         </div>
 
         {/* Create Channel */}
+        <Button
+          variant='outline'
+          size='sm'
+          render={<Link to='/channels/routing' />}
+        >
+          <Route className='h-4 w-4' />
+          <span className='max-sm:hidden'>{t('Routing Rules')}</span>
+        </Button>
+
         <Button
           onClick={() => {
             setCurrentRow(null)

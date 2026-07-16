@@ -281,6 +281,9 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     let matchingKey = Object.keys(routerMapState).find(
       (key) => routerMapState[key] === currentPath,
     );
+    if (currentPath === '/console/channel/routing') {
+      matchingKey = 'channel';
+    }
 
     // 处理聊天路由
     if (!matchingKey && currentPath.startsWith('/console/chat/')) {

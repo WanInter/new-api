@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGetRandomSatisfiedChannelExcludesChannelTypeWithMemoryCache(t *testing.T) {
+func TestGetRandomSatisfiedChannelFiltersIncompatibleChannelWithMemoryCache(t *testing.T) {
 	oldMemoryCacheEnabled := common.MemoryCacheEnabled
 	common.MemoryCacheEnabled = true
 	t.Cleanup(func() {
@@ -39,19 +39,19 @@ func TestGetRandomSatisfiedChannelExcludesChannelTypeWithMemoryCache(t *testing.
 		channelSyncLock.Unlock()
 	})
 
-	channel, err := GetRandomSatisfiedChannel(
+	channel, err := GetRandomSatisfiedChannelWithFilter(
 		"creative-video",
 		"sd-bak-1",
 		0,
 		"/v1/videos",
-		constant.ChannelTypeYobox,
+		func(channel *Channel) bool { return channel.Type != constant.ChannelTypeYobox },
 	)
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 57, channel.Id)
 }
 
-func TestGetRandomSatisfiedChannelExcludesChannelTypeWithoutMemoryCache(t *testing.T) {
+func TestGetRandomSatisfiedChannelFiltersIncompatibleChannelWithoutMemoryCache(t *testing.T) {
 	truncateTables(t)
 	oldMemoryCacheEnabled := common.MemoryCacheEnabled
 	common.MemoryCacheEnabled = false
@@ -74,12 +74,12 @@ func TestGetRandomSatisfiedChannelExcludesChannelTypeWithoutMemoryCache(t *testi
 	}
 	require.NoError(t, DB.Create(&abilities).Error)
 
-	channel, err := GetRandomSatisfiedChannel(
+	channel, err := GetRandomSatisfiedChannelWithFilter(
 		"creative-video",
 		"sd-bak-1",
 		0,
 		"/v1/videos",
-		constant.ChannelTypeYobox,
+		func(channel *Channel) bool { return channel.Type != constant.ChannelTypeYobox },
 	)
 	require.NoError(t, err)
 	require.NotNil(t, channel)

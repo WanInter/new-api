@@ -2,8 +2,6 @@ package service
 
 import (
 	"errors"
-	"net/http"
-	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -11,21 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
-	"github.com/tidwall/gjson"
 )
-
-const (
-	ginKeyVideoReferenceImageCount = "video_reference_image_count"
-	yoboxDefaultMaxReferenceImages = 4
-	yoboxHappyHorseMaxReferences   = 9
-)
-
-func yoboxMaxReferenceImages(modelName string) int {
-	if strings.TrimSpace(modelName) == "happy-horse-1.1" {
-		return yoboxHappyHorseMaxReferences
-	}
-	return yoboxDefaultMaxReferenceImages
-}
 
 type RetryParam struct {
 	Ctx          *gin.Context
@@ -62,88 +46,33 @@ func (p *RetryParam) ResetRetryNextTry() {
 	p.resetNextTry = true
 }
 
-func isVideoGenerationSubmit(c *gin.Context) bool {
-	if c == nil || c.Request == nil || c.Request.Method != http.MethodPost || c.Request.URL == nil {
-		return false
-	}
-	path := strings.TrimSuffix(c.Request.URL.Path, "/")
-	return path == "/v1/videos" || path == "/v1/video/generations"
-}
-
-func countReferenceImagesFromJSON(body []byte) int {
-	if !gjson.ValidBytes(body) {
-		return 0
-	}
-	images := gjson.GetBytes(body, "images")
-	count := 0
-	if images.IsArray() {
-		count = len(images.Array())
-	}
-	if count == 0 {
-		for _, path := range []string{"image", "input_reference"} {
-			if strings.TrimSpace(gjson.GetBytes(body, path).String()) != "" {
-				count = 1
-				break
-			}
-		}
-	}
-	for _, item := range gjson.GetBytes(body, "content").Array() {
-		if strings.TrimSpace(item.Get("image_url.url").String()) != "" ||
-			strings.TrimSpace(item.Get("image_url").String()) != "" {
-			count++
-		}
-	}
-	if refs := gjson.GetBytes(body, "input.image_references"); refs.IsArray() {
-		count += len(refs.Array())
-	}
-	return count
-}
-
-func videoReferenceImageCount(c *gin.Context) int {
-	if !isVideoGenerationSubmit(c) {
-		return 0
-	}
-	if cached, ok := c.Get(ginKeyVideoReferenceImageCount); ok {
-		if count, valid := cached.(int); valid {
-			return count
-		}
-	}
-
-	count := 0
-	if strings.HasPrefix(c.GetHeader("Content-Type"), "application/json") {
-		if storage, err := common.GetBodyStorage(c); err == nil {
-			if body, readErr := storage.Bytes(); readErr == nil {
-				count = countReferenceImagesFromJSON(body)
-			}
-		}
-	} else if c.Request != nil {
-		values := c.Request.PostForm
-		count = len(values["images"])
-		if count == 0 && (strings.TrimSpace(values.Get("image")) != "" || strings.TrimSpace(values.Get("input_reference")) != "") {
-			count = 1
-		}
-	}
-	c.Set(ginKeyVideoReferenceImageCount, count)
-	return count
-}
-
-func excludedChannelTypesForRequest(c *gin.Context, modelName string) []int {
-	if videoReferenceImageCount(c) > yoboxMaxReferenceImages(modelName) {
-		return []int{constant.ChannelTypeYobox}
-	}
-	return nil
-}
-
 // ChannelSupportsRequestConstraints reports whether a selected or affinity
 // channel can handle request-specific limits that are not represented by model abilities.
 func ChannelSupportsRequestConstraints(c *gin.Context, channel *model.Channel, modelName string) bool {
 	if channel == nil {
 		return false
 	}
-	if channel.Type == constant.ChannelTypeYobox && videoReferenceImageCount(c) > yoboxMaxReferenceImages(modelName) {
+	if !isVideoGenerationSubmit(c) {
+		return true
+	}
+	features, err := GetVideoRequestFeatures(c)
+	if err != nil {
 		return false
 	}
-	return true
+	return EvaluateChannelVideoRouting(channel, modelName, features).Eligible
+}
+
+func channelFilterForRequest(c *gin.Context, modelName string) (model.ChannelFilter, error) {
+	if !isVideoGenerationSubmit(c) {
+		return nil, nil
+	}
+	features, err := GetVideoRequestFeatures(c)
+	if err != nil {
+		return nil, err
+	}
+	return func(channel *model.Channel) bool {
+		return EvaluateChannelVideoRouting(channel, modelName, features).Eligible
+	}, nil
 }
 
 // CacheGetRandomSatisfiedChannel tries to get a random channel that satisfies the requirements.
@@ -186,7 +115,10 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 	var err error
 	selectGroup := param.TokenGroup
 	userGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyUserGroup)
-	excludedChannelTypes := excludedChannelTypesForRequest(param.Ctx, param.ModelName)
+	channelFilter, err := channelFilterForRequest(param.Ctx, param.ModelName)
+	if err != nil {
+		return nil, selectGroup, err
+	}
 
 	if param.TokenGroup == "auto" {
 		if len(setting.GetAutoGroups()) == 0 {
@@ -217,7 +149,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			}
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
-			channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry, param.RequestPath, excludedChannelTypes...)
+			channel, _ = model.GetRandomSatisfiedChannelWithFilter(autoGroup, param.ModelName, priorityRetry, param.RequestPath, channelFilter)
 			if channel == nil {
 				// Current group has no available channel for this model, try next group
 				// 当前分组没有该模型的可用渠道，尝试下一个分组
@@ -255,7 +187,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			break
 		}
 	} else {
-		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath, excludedChannelTypes...)
+		channel, err = model.GetRandomSatisfiedChannelWithFilter(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath, channelFilter)
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}

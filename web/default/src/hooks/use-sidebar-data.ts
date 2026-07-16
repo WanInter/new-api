@@ -119,6 +119,7 @@ export function useSidebarData(): SidebarData {
           {
             title: t('Channels'),
             url: '/channels',
+            activeUrls: ['/channels/routing'],
             icon: Radio,
           },
           {

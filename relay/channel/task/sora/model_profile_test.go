@@ -268,14 +268,40 @@ func TestValidateProfiledContentRequest(t *testing.T) {
 		wantMessage string
 	}{
 		{
-			name: "valid legacy ax request",
+			name: "valid image-only ax request",
 			req: relaycommon.TaskSubmitReq{
 				Model:  "ax2.0-9tu",
 				Prompt: "make a video",
 				Images: []string{"https://example.com/1.png"},
-				Videos: []string{"https://example.com/1.mp4"},
-				Audios: []string{"https://example.com/1.mp3"},
 			},
+		},
+		{
+			name: "ax rejects video references",
+			req: relaycommon.TaskSubmitReq{
+				Model:  "ax2.0-9tu",
+				Prompt: "make a video",
+				Videos: []string{"https://example.com/1.mp4"},
+			},
+			wantMessage: "at most 0 video references",
+		},
+		{
+			name: "sdquan rejects a fifth image",
+			req: relaycommon.TaskSubmitReq{
+				Model:  "sdquan-2",
+				Prompt: "make a video",
+				Images: []string{"1", "2", "3", "4", "5"},
+			},
+			wantMessage: "at most 4 image references",
+		},
+		{
+			name: "sdquan rejects a second audio reference",
+			req: relaycommon.TaskSubmitReq{
+				Model:  "sdquan-2",
+				Prompt: "make a video",
+				Images: []string{"1"},
+				Audios: []string{"1", "2"},
+			},
+			wantMessage: "at most 1 audio references",
 		},
 		{
 			name: "sdquan requires image",

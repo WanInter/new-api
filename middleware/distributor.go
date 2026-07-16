@@ -161,6 +161,10 @@ func Distribute() func(c *gin.Context) {
 				}
 			}
 		}
+		if ok && shouldSelectChannel && channel != nil && !service.ChannelSupportsRequestConstraints(c, channel, modelRequest.Model) {
+			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorChannelConstraintFailed))
+			return
+		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
 		c.Next()

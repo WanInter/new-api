@@ -27,6 +27,8 @@ import {
   Select,
 } from '@douyinfe/semi-ui';
 import CompactModeToggle from '../../common/ui/CompactModeToggle';
+import { useNavigate } from 'react-router-dom';
+import { Route } from 'lucide-react';
 
 const ChannelsActions = ({
   enableBatchDelete,
@@ -58,12 +60,21 @@ const ChannelsActions = ({
   setActivePage,
   t,
 }) => {
+  const navigate = useNavigate();
   return (
     <div className='flex flex-col gap-2'>
       {/* 第一行：批量操作按钮 + 设置开关 */}
       <div className='flex flex-col md:flex-row justify-between gap-2'>
         {/* 左侧：批量操作按钮 */}
         <div className='flex flex-wrap md:flex-nowrap items-center gap-2 w-full md:w-auto order-2 md:order-1'>
+          <Button
+            size='small'
+            type='tertiary'
+            icon={<Route size={15} />}
+            onClick={() => navigate('/console/channel/routing')}
+          >
+            {t('分流规则')}
+          </Button>
           <Button
             size='small'
             disabled={!enableBatchDelete}

@@ -38,9 +38,9 @@ const (
 type contentRequestRules struct {
 	RequireText        bool
 	RequireImage       bool
-	MaxImages          int
-	MaxVideos          int
-	MaxAudios          int
+	MaxImages          *int
+	MaxVideos          *int
+	MaxAudios          *int
 	ConvertLegacyMedia bool
 }
 
@@ -69,13 +69,7 @@ var soraModelProfiles = map[string]soraModelProfile{
 		InvalidSizeMessage: "sora-2 size is invalid",
 	},
 	axMultimodalVideoModel: {
-		ContentRules: &contentRequestRules{
-			RequireText:        true,
-			MaxImages:          9,
-			MaxVideos:          3,
-			MaxAudios:          3,
-			ConvertLegacyMedia: true,
-		},
+		ContentRules:                     contentRulesFromRoutingCapability(axMultimodalVideoModel, false),
 		JSONTransform:                    requestTransformOpenAIContent,
 		FixedSeconds:                     15,
 		DropSecondsField:                 true,
@@ -83,14 +77,7 @@ var soraModelProfiles = map[string]soraModelProfile{
 		RequireJSON:                      true,
 	},
 	sdquanImageVideoModel: {
-		ContentRules: &contentRequestRules{
-			RequireText:        true,
-			RequireImage:       true,
-			MaxImages:          9,
-			MaxVideos:          3,
-			MaxAudios:          3,
-			ConvertLegacyMedia: true,
-		},
+		ContentRules:                     contentRulesFromRoutingCapability(sdquanImageVideoModel, true),
 		JSONTransform:                    requestTransformOpenAIContent,
 		FixedSeconds:                     15,
 		DropSecondsField:                 true,
@@ -112,6 +99,28 @@ var soraModelProfiles = map[string]soraModelProfile{
 	canvasStandardSeedanceModel: {
 		MaxSeconds: canvasStandardMaxVideoSeconds,
 	},
+}
+
+func contentRulesFromRoutingCapability(modelName string, requireImage bool) *contentRequestRules {
+	rules := &contentRequestRules{
+		RequireText:        true,
+		RequireImage:       requireImage,
+		ConvertLegacyMedia: true,
+	}
+	capability, ok := service.GetBuiltInVideoModelCapability(modelName)
+	if !ok {
+		return rules
+	}
+	if capability.Images != nil && capability.Images.Max != nil {
+		rules.MaxImages = capability.Images.Max
+	}
+	if capability.Videos != nil && capability.Videos.Max != nil {
+		rules.MaxVideos = capability.Videos.Max
+	}
+	if capability.Audios != nil && capability.Audios.Max != nil {
+		rules.MaxAudios = capability.Audios.Max
+	}
+	return rules
 }
 
 func findSoraModelProfile(modelName string) (soraModelProfile, bool) {
@@ -228,14 +237,14 @@ func validateSoraModelRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.
 	if rules.RequireImage && counts.images == 0 {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("model %s requires at least one image reference", req.Model), "invalid_request", http.StatusBadRequest)
 	}
-	if rules.MaxImages > 0 && counts.images > rules.MaxImages {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("content supports at most %d image references", rules.MaxImages), "invalid_request", http.StatusBadRequest)
+	if rules.MaxImages != nil && counts.images > *rules.MaxImages {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("content supports at most %d image references", *rules.MaxImages), "invalid_request", http.StatusBadRequest)
 	}
-	if rules.MaxVideos > 0 && counts.videos > rules.MaxVideos {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("content supports at most %d video references", rules.MaxVideos), "invalid_request", http.StatusBadRequest)
+	if rules.MaxVideos != nil && counts.videos > *rules.MaxVideos {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("content supports at most %d video references", *rules.MaxVideos), "invalid_request", http.StatusBadRequest)
 	}
-	if rules.MaxAudios > 0 && counts.audios > rules.MaxAudios {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("content supports at most %d audio references", rules.MaxAudios), "invalid_request", http.StatusBadRequest)
+	if rules.MaxAudios != nil && counts.audios > *rules.MaxAudios {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("content supports at most %d audio references", *rules.MaxAudios), "invalid_request", http.StatusBadRequest)
 	}
 	return nil
 }

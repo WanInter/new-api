@@ -95,11 +95,6 @@ func TestChannelSupportsRequestConstraintsForYoboxReferenceImages(t *testing.T) 
 
 			assert.Equal(t, testCase.yoboxExpected, ChannelSupportsRequestConstraints(c, yobox, testCase.model))
 			assert.True(t, ChannelSupportsRequestConstraints(c, aggc, testCase.model))
-			if testCase.yoboxExpected {
-				assert.NotContains(t, excludedChannelTypesForRequest(c, testCase.model), constant.ChannelTypeYobox)
-			} else {
-				assert.Contains(t, excludedChannelTypesForRequest(c, testCase.model), constant.ChannelTypeYobox)
-			}
 		})
 	}
 }

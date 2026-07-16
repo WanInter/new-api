@@ -106,9 +106,13 @@ func SyncChannelCache(frequency int) {
 }
 
 func GetRandomSatisfiedChannel(group string, model string, retry int, requestPath string, excludedChannelTypes ...int) (*Channel, error) {
+	return GetRandomSatisfiedChannelWithFilter(group, model, retry, requestPath, nil, excludedChannelTypes...)
+}
+
+func GetRandomSatisfiedChannelWithFilter(group string, model string, retry int, requestPath string, filter ChannelFilter, excludedChannelTypes ...int) (*Channel, error) {
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
-		return GetChannel(group, model, retry, requestPath, excludedChannelTypes...)
+		return GetChannelWithFilter(group, model, retry, requestPath, filter, excludedChannelTypes...)
 	}
 
 	channelSyncLock.RLock()
@@ -117,12 +121,14 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	// First, try to find channels with the exact model name.
 	channels := filterChannelsByRequestPath(group2model2channels[group][model], requestPath)
 	channels = filterChannelsByExcludedTypes(channels, excludedChannelTypes)
+	channels = filterChannelsByEligibility(channels, filter)
 
 	// If no channels found, try to find channels with the normalized model name.
 	if len(channels) == 0 {
 		normalizedModel := ratio_setting.FormatMatchingModelName(model)
 		channels = filterChannelsByRequestPath(group2model2channels[group][normalizedModel], requestPath)
 		channels = filterChannelsByExcludedTypes(channels, excludedChannelTypes)
+		channels = filterChannelsByEligibility(channels, filter)
 	}
 
 	if len(channels) == 0 {
@@ -202,6 +208,22 @@ func GetRandomSatisfiedChannel(group string, model string, retry int, requestPat
 	}
 	// return null if no channel is not found
 	return nil, errors.New("channel not found")
+}
+
+// filterChannelsByEligibility removes channels rejected by a request-specific
+// predicate. Caller must hold channelSyncLock (read lock).
+func filterChannelsByEligibility(channels []int, filter ChannelFilter) []int {
+	if len(channels) == 0 || filter == nil {
+		return channels
+	}
+	filtered := make([]int, 0, len(channels))
+	for _, channelID := range channels {
+		channel, ok := channelsIDM[channelID]
+		if !ok || filter(channel) {
+			filtered = append(filtered, channelID)
+		}
+	}
+	return filtered
 }
 
 // filterChannelsByExcludedTypes removes request-incompatible channel types.
