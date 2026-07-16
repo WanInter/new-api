@@ -147,6 +147,92 @@ func taskModelName(task *model.Task) string {
 	return task.Properties.OriginModelName
 }
 
+func setTaskBillingIntent(task *model.Task, finalQuota int, reason string) {
+	if finalQuota < 0 {
+		finalQuota = 0
+	}
+	task.BillingStatus = model.TaskBillingStatusPending
+	task.BillingFinalQuota = finalQuota
+	task.BillingDelta = finalQuota - task.Quota
+	task.BillingReason = strings.TrimSpace(reason)
+}
+
+func prepareTaskBillingIntent(adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
+	finalQuota := task.Quota
+	reason := "任务完成，保持预扣额度"
+	if bc := task.PrivateData.BillingContext; bc != nil && bc.PerCallBilling {
+		setTaskBillingIntent(task, finalQuota, reason)
+		return
+	}
+	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {
+		setTaskBillingIntent(task, actualQuota, "adaptor计费调整")
+		return
+	}
+	if taskResult.TotalTokens > 0 {
+		if actualQuota, tokenReason, ok := calculateTaskQuotaByTokens(task, taskResult.TotalTokens); ok {
+			setTaskBillingIntent(task, actualQuota, tokenReason)
+			return
+		}
+	}
+	setTaskBillingIntent(task, finalQuota, reason)
+}
+
+func processPendingTaskBilling(ctx context.Context, taskID int64) error {
+	settlement, applied, err := model.ApplyPendingTaskBilling(taskID)
+	if err != nil || !applied {
+		return err
+	}
+	if settlement.Delta == 0 {
+		return nil
+	}
+
+	logType := model.LogTypeConsume
+	logQuota := settlement.Delta
+	if settlement.Delta < 0 {
+		logType = model.LogTypeRefund
+		logQuota = -settlement.Delta
+	} else {
+		model.UpdateUserUsedQuota(settlement.Task.UserId, settlement.Delta)
+		model.UpdateChannelUsedQuota(settlement.Task.ChannelId, settlement.Delta)
+	}
+	other := taskBillingOther(&settlement.Task)
+	other["task_id"] = settlement.Task.TaskID
+	other["pre_consumed_quota"] = settlement.PreConsumedQuota
+	other["actual_quota"] = settlement.FinalQuota
+	other["reason"] = settlement.Reason
+	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
+		UserId:    settlement.Task.UserId,
+		LogType:   logType,
+		Content:   settlement.Reason,
+		ChannelId: settlement.Task.ChannelId,
+		ModelName: taskModelName(&settlement.Task),
+		Quota:     logQuota,
+		TokenId:   settlement.Task.PrivateData.TokenId,
+		Group:     settlement.Task.Group,
+		Other:     other,
+	})
+	logger.LogInfo(ctx, fmt.Sprintf(
+		"任务 %s 账务结算完成：delta=%s，最终额度=%s",
+		settlement.Task.TaskID,
+		logger.LogQuota(settlement.Delta),
+		logger.LogQuota(settlement.FinalQuota),
+	))
+	return nil
+}
+
+func settlePendingTaskBillings(ctx context.Context, limit int) {
+	tasks, err := model.GetPendingTaskBillings(limit)
+	if err != nil {
+		logger.LogError(ctx, fmt.Sprintf("query pending task billings failed: %v", err))
+		return
+	}
+	for _, task := range tasks {
+		if err := processPendingTaskBilling(ctx, task.ID); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("settle pending billing for task %s failed: %v", task.TaskID, err))
+		}
+	}
+}
+
 // RefundTaskQuota 统一的任务失败退款逻辑。
 // 当异步任务失败时，将预扣的 quota 退还给用户（支持钱包和订阅），并退还令牌额度。
 func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
@@ -248,8 +334,16 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 // 当任务成功且返回了 totalTokens 时，根据模型倍率和分组倍率重新计算实际扣费额度，
 // 与预扣费的差额进行补扣或退还。支持钱包和订阅计费来源。
 func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTokens int) {
-	if totalTokens <= 0 {
+	actualQuota, reason, ok := calculateTaskQuotaByTokens(task, totalTokens)
+	if !ok {
 		return
+	}
+	RecalculateTaskQuota(ctx, task, actualQuota, reason)
+}
+
+func calculateTaskQuotaByTokens(task *model.Task, totalTokens int) (int, string, bool) {
+	if totalTokens <= 0 {
+		return 0, "", false
 	}
 
 	modelName := taskModelName(task)
@@ -258,7 +352,7 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 	modelRatio, hasRatioSetting, _ := ratio_setting.GetModelRatio(modelName)
 	// 只有配置了倍率(非固定价格)时才按 token 重新计费
 	if !hasRatioSetting || modelRatio <= 0 {
-		return
+		return 0, "", false
 	}
 
 	// 获取用户和组的倍率信息
@@ -270,7 +364,7 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 		}
 	}
 	if group == "" {
-		return
+		return 0, "", false
 	}
 
 	groupRatio := ratio_setting.GetGroupRatio(group)
@@ -297,5 +391,8 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 	actualQuota := int(float64(totalTokens) * modelRatio * finalGroupRatio * otherMultiplier)
 
 	reason := fmt.Sprintf("token重算：tokens=%d, modelRatio=%.2f, groupRatio=%.2f, otherMultiplier=%.4f", totalTokens, modelRatio, finalGroupRatio, otherMultiplier)
-	RecalculateTaskQuota(ctx, task, actualQuota, reason)
+	if actualQuota <= 0 {
+		return 0, "", false
+	}
+	return actualQuota, reason, true
 }

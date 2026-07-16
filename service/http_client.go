@@ -60,6 +60,9 @@ func InitHttpClient() {
 }
 
 func GetHttpClient() *http.Client {
+	if httpClient == nil {
+		return http.DefaultClient
+	}
 	return httpClient
 }
 

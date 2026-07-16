@@ -2,6 +2,7 @@ package image
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -244,13 +245,13 @@ func (a *TaskAdaptor) GetChannelName() string {
 	return "Async Image"
 }
 
-func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error) {
+func (a *TaskAdaptor) FetchTask(ctx context.Context, baseUrl, key string, body map[string]any, proxy string) (*http.Response, error) {
 	taskID, ok := body["task_id"].(string)
 	if !ok || strings.TrimSpace(taskID) == "" {
 		return nil, fmt.Errorf("invalid task_id")
 	}
 
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/api/v1/tasks/%s", baseUrl, taskID), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/api/v1/tasks/%s", baseUrl, taskID), nil)
 	if err != nil {
 		return nil, err
 	}

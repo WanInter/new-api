@@ -1,5 +1,12 @@
 package model
 
+import (
+	"errors"
+
+	"github.com/QuantumNous/new-api/common"
+	"gorm.io/gorm"
+)
+
 type Midjourney struct {
 	Id          int    `json:"id"`
 	Code        int    `json:"code"`
@@ -93,8 +100,7 @@ func GetAllTasks(startIdx int, num int, queryParams TaskQueryParams) []*Midjourn
 func GetAllUnFinishTasks() []*Midjourney {
 	var tasks []*Midjourney
 	var err error
-	// get all tasks progress is not 100%
-	err = DB.Where("progress != ?", "100%").Find(&tasks).Error
+	err = DB.Where("status != ?", "FAILURE").Where("status != ?", "SUCCESS").Find(&tasks).Error
 	if err != nil {
 		return nil
 	}
@@ -168,6 +174,47 @@ func (midjourney *Midjourney) UpdateWithStatus(fromStatus string) (bool, error) 
 		return false, result.Error
 	}
 	return result.RowsAffected > 0, nil
+}
+
+// UpdateFailureWithRefund atomically persists a terminal failure and refunds
+// the legacy Midjourney wallet quota. A lost CAS performs neither operation.
+func (midjourney *Midjourney) UpdateFailureWithRefund(fromStatus string) (bool, error) {
+	if midjourney == nil || midjourney.Id <= 0 || midjourney.Status != "FAILURE" {
+		return false, errors.New("invalid Midjourney failure update")
+	}
+	won := false
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(midjourney).
+			Where("status = ?", fromStatus).
+			Select("*").
+			Updates(midjourney)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		if midjourney.Quota != 0 {
+			result = tx.Model(&User{}).
+				Where("id = ?", midjourney.UserId).
+				UpdateColumn("quota", gorm.Expr("quota + ?", midjourney.Quota))
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				return gorm.ErrRecordNotFound
+			}
+		}
+		won = true
+		return nil
+	})
+	if err != nil || !won {
+		return won, err
+	}
+	if err := InvalidateUserCache(midjourney.UserId); err != nil {
+		common.SysLog("failed to invalidate Midjourney billing user cache: " + err.Error())
+	}
+	return true, nil
 }
 
 func MjBulkUpdate(mjIds []string, params map[string]any) error {

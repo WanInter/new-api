@@ -19,6 +19,7 @@ var ErrorLogEnabled bool
 var TaskQueryLimit int
 var TaskTimeoutMinutes int
 var TaskPollingIntervalSeconds int
+var TaskPollingRequestTimeoutSeconds int
 var TaskPollingConcurrency int
 var TaskPollingChannelIntervalMilliseconds int
 var TaskPollingNotFoundGraceSeconds int

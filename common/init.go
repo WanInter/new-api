@@ -158,11 +158,15 @@ func initConstantEnv() {
 	if constant.TaskPollingIntervalSeconds < 1 {
 		constant.TaskPollingIntervalSeconds = 1
 	}
+	constant.TaskPollingRequestTimeoutSeconds = GetEnvOrDefault("TASK_POLLING_REQUEST_TIMEOUT_SECONDS", 30)
+	if constant.TaskPollingRequestTimeoutSeconds < 1 {
+		constant.TaskPollingRequestTimeoutSeconds = 1
+	}
 	constant.TaskPollingConcurrency = GetEnvOrDefault("TASK_POLLING_CONCURRENCY", 8)
 	if constant.TaskPollingConcurrency < 1 {
 		constant.TaskPollingConcurrency = 1
 	}
-	constant.TaskPollingChannelIntervalMilliseconds = GetEnvOrDefault("TASK_POLLING_CHANNEL_INTERVAL_MILLISECONDS", 1000)
+	constant.TaskPollingChannelIntervalMilliseconds = GetEnvOrDefault("TASK_POLLING_CHANNEL_INTERVAL_MILLISECONDS", 0)
 	if constant.TaskPollingChannelIntervalMilliseconds < 0 {
 		constant.TaskPollingChannelIntervalMilliseconds = 0
 	}

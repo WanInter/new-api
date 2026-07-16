@@ -2,6 +2,7 @@ package tencentvod
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -338,7 +339,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	return parsed.Response.TaskID, body, nil
 }
 
-func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy string) (*http.Response, error) {
+func (a *TaskAdaptor) FetchTask(ctx context.Context, baseURL, key string, body map[string]any, proxy string) (*http.Response, error) {
 	taskID, _ := body["task_id"].(string)
 	if strings.TrimSpace(taskID) == "" {
 		return nil, errors.New("invalid task_id")
@@ -358,7 +359,7 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 	if endpoint == "" {
 		endpoint = DefaultBaseURL
 	}
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}

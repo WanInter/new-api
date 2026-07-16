@@ -25,7 +25,7 @@ type localImageExecutionGuardAdaptor struct {
 
 func (a *localImageExecutionGuardAdaptor) Init(_ *relaycommon.RelayInfo) {}
 
-func (a *localImageExecutionGuardAdaptor) FetchTask(string, string, map[string]any, string) (*http.Response, error) {
+func (a *localImageExecutionGuardAdaptor) FetchTask(context.Context, string, string, map[string]any, string) (*http.Response, error) {
 	return nil, errors.New("unexpected remote task fetch")
 }
 

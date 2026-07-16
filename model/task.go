@@ -75,6 +75,10 @@ type Task struct {
 	NextPollTime        int64  `json:"-" gorm:"index;default:0"`
 	PollErrorCount      int    `json:"-" gorm:"default:0"`
 	LastPollError       string `json:"-" gorm:"type:text"`
+	BillingStatus       string `json:"-" gorm:"type:varchar(20);index;default:''"`
+	BillingDelta        int    `json:"-" gorm:"default:0"`
+	BillingFinalQuota   int    `json:"-" gorm:"default:0"`
+	BillingReason       string `json:"-" gorm:"type:text"`
 }
 
 func (t *Task) SetData(data any) {
@@ -567,6 +571,19 @@ func RenewTaskExecutionLease(taskID int64, owner string, leaseUntil int64) (bool
 		return false, result.Error
 	}
 	return result.RowsAffected > 0, nil
+}
+
+func IsTaskExecutionLeaseOwner(taskID int64, owner string, status TaskStatus) (bool, error) {
+	if taskID <= 0 || owner == "" {
+		return false, errors.New("invalid task execution lease check")
+	}
+	var count int64
+	err := DB.Model(&Task{}).
+		Where("id = ?", taskID).
+		Where("status = ?", status).
+		Where("execution_lease_owner = ?", owner).
+		Count(&count).Error
+	return count > 0, err
 }
 
 func RetryTaskExecutionLease(taskID int64, owner string, retryAt int64) (bool, error) {

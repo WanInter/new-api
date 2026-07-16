@@ -25,7 +25,7 @@ type taskPollingTestAdaptor struct {
 
 func (a *taskPollingTestAdaptor) Init(*relaycommon.RelayInfo) {}
 
-func (a *taskPollingTestAdaptor) FetchTask(string, string, map[string]any, string) (*http.Response, error) {
+func (a *taskPollingTestAdaptor) FetchTask(context.Context, string, string, map[string]any, string) (*http.Response, error) {
 	return &http.Response{
 		StatusCode: a.statusCode,
 		Body:       io.NopCloser(strings.NewReader(a.body)),
@@ -223,4 +223,105 @@ func TestUpdateVideoTasksKeepsDuplicateUpstreamIDsScopedToChannel(t *testing.T) 
 	require.Len(t, reloaded, 2)
 	assert.EqualValues(t, model.TaskStatusSuccess, reloaded[0].Status)
 	assert.EqualValues(t, model.TaskStatusSuccess, reloaded[1].Status)
+}
+
+type blockingTaskPollingAdaptor struct {
+	entered chan<- struct{}
+	release <-chan struct{}
+	result  *relaycommon.TaskInfo
+}
+
+func (a *blockingTaskPollingAdaptor) Init(*relaycommon.RelayInfo) {}
+
+func (a *blockingTaskPollingAdaptor) FetchTask(ctx context.Context, _, _ string, _ map[string]any, _ string) (*http.Response, error) {
+	if a.entered != nil {
+		a.entered <- struct{}{}
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-a.release:
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{}`)), Header: make(http.Header)}, nil
+	}
+}
+
+func (a *blockingTaskPollingAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) {
+	return a.result, nil
+}
+
+func (a *blockingTaskPollingAdaptor) AdjustBillingOnComplete(*model.Task, *relaycommon.TaskInfo) int {
+	return 0
+}
+
+func TestUpdateTaskPropagatesCancelledRequestContext(t *testing.T) {
+	truncate(t)
+	task := &model.Task{TaskID: "task_cancelled_poll", Status: model.TaskStatusInProgress}
+	require.NoError(t, model.DB.Create(task).Error)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	adaptor := &blockingTaskPollingAdaptor{release: make(chan struct{})}
+
+	err := updateTask(ctx, adaptor, &model.Channel{}, task, "")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	assert.Equal(t, 1, reloaded.PollErrorCount)
+	assert.EqualValues(t, model.TaskStatusInProgress, reloaded.Status)
+}
+
+func TestRunTaskPollingCycleDispatchesPlatformsConcurrently(t *testing.T) {
+	truncate(t)
+	originalFactory := GetTaskAdaptorFunc
+	originalLimit := constant.TaskQueryLimit
+	originalConcurrency := constant.TaskPollingConcurrency
+	originalInterval := constant.TaskPollingChannelIntervalMilliseconds
+	constant.TaskQueryLimit = 100
+	constant.TaskPollingConcurrency = 1
+	constant.TaskPollingChannelIntervalMilliseconds = 0
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor {
+		return &blockingTaskPollingAdaptor{
+			entered: entered,
+			release: release,
+			result:  &relaycommon.TaskInfo{Status: string(model.TaskStatusSuccess)},
+		}
+	}
+	t.Cleanup(func() {
+		GetTaskAdaptorFunc = originalFactory
+		constant.TaskQueryLimit = originalLimit
+		constant.TaskPollingConcurrency = originalConcurrency
+		constant.TaskPollingChannelIntervalMilliseconds = originalInterval
+	})
+
+	seedChannel(t, 301)
+	seedChannel(t, 302)
+	tasks := []*model.Task{
+		{TaskID: "task_parallel_a", Platform: "parallel-a", ChannelId: 301, Status: model.TaskStatusInProgress},
+		{TaskID: "task_parallel_b", Platform: "parallel-b", ChannelId: 302, Status: model.TaskStatusInProgress},
+	}
+	require.NoError(t, model.DB.Create(&tasks).Error)
+	done := make(chan struct{})
+	go func() {
+		runTaskPollingCycle(context.Background(), nil)
+		close(done)
+	}()
+
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-entered:
+		case <-deadline.C:
+			t.Fatal("all platforms did not enter polling before either was released")
+		}
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("polling cycle did not finish")
+	}
 }
