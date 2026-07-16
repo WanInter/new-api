@@ -112,7 +112,7 @@ func TestEvaluateChannelVideoRoutingSeedanceSlowCapability(t *testing.T) {
 	}{
 		{
 			name:         "maximum media at minimum duration",
-			features:     VideoRequestFeatures{Images: 9, Videos: 3, Audios: 3, Duration: common.GetPointer(5)},
+			features:     VideoRequestFeatures{Images: 4, Videos: 3, Audios: 1, Duration: common.GetPointer(5)},
 			wantEligible: true,
 		},
 		{
@@ -137,7 +137,7 @@ func TestEvaluateChannelVideoRoutingSeedanceSlowCapability(t *testing.T) {
 		},
 		{
 			name:          "too many images",
-			features:      VideoRequestFeatures{Images: 10},
+			features:      VideoRequestFeatures{Images: 5},
 			wantViolation: "images_above_max",
 		},
 		{
@@ -147,7 +147,7 @@ func TestEvaluateChannelVideoRoutingSeedanceSlowCapability(t *testing.T) {
 		},
 		{
 			name:          "too many audios",
-			features:      VideoRequestFeatures{Audios: 4},
+			features:      VideoRequestFeatures{Audios: 2},
 			wantViolation: "audios_above_max",
 		},
 	}

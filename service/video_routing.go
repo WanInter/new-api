@@ -73,7 +73,7 @@ var defaultVideoCapabilitiesByChannelType = map[int]dto.VideoModelCapability{
 var videoCapabilitiesByModel = map[string]dto.VideoModelCapability{
 	"ax2.0-9tu":           withContentRequestSemantics(capabilityWithLimits(nil, common.GetPointer(9), common.GetPointer(0), common.GetPointer(0), common.GetPointer(15), common.GetPointer(true))),
 	"sdquan-2":            withContentRequestSemantics(capabilityWithLimits(common.GetPointer(1), common.GetPointer(4), common.GetPointer(3), common.GetPointer(1), common.GetPointer(15), common.GetPointer(true))),
-	seedance2Slow15sModel: withDurationRange(capabilityWithLimits(nil, common.GetPointer(9), common.GetPointer(3), common.GetPointer(3), nil, nil), 5, 15),
+	seedance2Slow15sModel: withDurationRange(capabilityWithLimits(nil, common.GetPointer(4), common.GetPointer(3), common.GetPointer(1), nil, nil), 5, 15),
 }
 
 var videoCapabilitiesByChannelModel = map[channelModelCapabilityKey]dto.VideoModelCapability{
