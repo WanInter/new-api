@@ -429,8 +429,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		info.Status = model.TaskStatusFailure
 		info.Progress = "100%"
 	default:
-		info.Status = model.TaskStatusInProgress
-		info.Progress = progressString(res.Progress, "30%")
+		return nil, fmt.Errorf("unknown Jimeng Dimensio task status %q", res.Status)
 	}
 	return &info, nil
 }
@@ -457,10 +456,8 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	if originTask.CreatedAt > 0 {
 		out["created_at"] = originTask.CreatedAt
 	}
-	if originTask.FinishTime > 0 {
-		out["completed_at"] = originTask.FinishTime
-	} else if originTask.UpdatedAt > 0 && originTask.Status == model.TaskStatusSuccess {
-		out["completed_at"] = originTask.UpdatedAt
+	if completedAt := originTask.CompletionTime(); completedAt > 0 {
+		out["completed_at"] = completedAt
 	}
 
 	if url := firstNonEmpty(res.Result.URL, originTask.GetResultURL()); url != "" {

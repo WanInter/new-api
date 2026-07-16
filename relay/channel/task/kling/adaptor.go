@@ -387,7 +387,9 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	openAIVideo.Status = originTask.Status.ToVideoStatus()
 	openAIVideo.SetProgressStr(originTask.Progress)
 	openAIVideo.CreatedAt = klingResp.Data.CreatedAt
-	openAIVideo.CompletedAt = klingResp.Data.UpdatedAt
+	if originTask.Status == model.TaskStatusSuccess || originTask.Status == model.TaskStatusFailure {
+		openAIVideo.CompletedAt = klingResp.Data.UpdatedAt
+	}
 
 	if len(klingResp.Data.TaskResult.Videos) > 0 {
 		video := klingResp.Data.TaskResult.Videos[0]

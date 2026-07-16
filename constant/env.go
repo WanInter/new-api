@@ -18,8 +18,15 @@ var GenerateDefaultToken bool
 var ErrorLogEnabled bool
 var TaskQueryLimit int
 var TaskTimeoutMinutes int
+var TaskPollingIntervalSeconds int
+var TaskPollingConcurrency int
+var TaskPollingChannelIntervalMilliseconds int
+var TaskPollingNotFoundGraceSeconds int
+var TaskPollingMaxErrors int
 var LocalImageTaskConcurrency int
 var LocalImageTaskLeaseSeconds int
+var LocalImageTaskAttemptTimeoutMinutes int
+var LocalImageTaskMaxAttempts int
 
 // temporary variable for sora patch, will be removed in future
 var TaskPricePatches []string

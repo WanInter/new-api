@@ -286,7 +286,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Status = string(model.TaskStatusFailure)
 		taskResult.Reason = firstNonEmpty(aliResp.Output.Message, aliResp.Message, "task failed")
 	default:
-		taskResult.Status = string(model.TaskStatusQueued)
+		return nil, fmt.Errorf("unknown Ali image task status %q", aliResp.Output.TaskStatus)
 	}
 	return &taskResult, nil
 }

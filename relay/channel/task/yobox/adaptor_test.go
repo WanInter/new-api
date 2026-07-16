@@ -238,6 +238,13 @@ func TestParseTaskResultExtractsNestedFailureReason(t *testing.T) {
 	require.Equal(t, "100%", info.Progress)
 }
 
+func TestParseTaskResultRejectsUnknownStatus(t *testing.T) {
+	info, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{"task_id":"task_unknown","status":"pausing"}`))
+
+	require.Error(t, err)
+	assert.Nil(t, info)
+}
+
 func TestDoResponseRedactsImageReferencesLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())

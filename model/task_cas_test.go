@@ -144,6 +144,18 @@ func TestSnapshot_Roundtrip(t *testing.T) {
 	assert.JSONEq(t, string(task.Data), string(snap.Data))
 }
 
+func TestTaskCompletionTimeOnlyReturnsTerminalTimestamp(t *testing.T) {
+	task := &Task{Status: TaskStatusInProgress, UpdatedAt: 100, FinishTime: 90}
+	assert.Zero(t, task.CompletionTime())
+
+	task.Status = TaskStatusSuccess
+	assert.EqualValues(t, 90, task.CompletionTime())
+
+	task.Status = TaskStatusFailure
+	task.FinishTime = 0
+	assert.EqualValues(t, 100, task.CompletionTime())
+}
+
 // ---------------------------------------------------------------------------
 // UpdateWithStatus CAS — DB integration tests
 // ---------------------------------------------------------------------------
@@ -250,7 +262,7 @@ func TestTaskExecutionLeaseLifecycle(t *testing.T) {
 	}
 	insertTask(t, task)
 
-	claimed, err := TryClaimTaskExecutionLease(task.ID, "worker-1", now, now+300)
+	claimed, err := TryClaimTaskExecutionLease(task.ID, "worker-1", now, now+300, 3)
 	require.NoError(t, err)
 	assert.True(t, claimed)
 
@@ -263,7 +275,7 @@ func TestTaskExecutionLeaseLifecycle(t *testing.T) {
 	assert.Equal(t, now, claimedTask.StartTime)
 	assert.Equal(t, 1, claimedTask.ExecutionAttempts)
 
-	claimed, err = TryClaimTaskExecutionLease(task.ID, "worker-2", now, now+300)
+	claimed, err = TryClaimTaskExecutionLease(task.ID, "worker-2", now, now+300, 3)
 	require.NoError(t, err)
 	assert.False(t, claimed)
 
@@ -291,12 +303,12 @@ func TestTaskExecutionLeaseExpiredClaimRejectsStaleOwner(t *testing.T) {
 	}
 	insertTask(t, task)
 
-	claimed, err := TryClaimTaskExecutionLease(task.ID, "worker-old", now, now+300)
+	claimed, err := TryClaimTaskExecutionLease(task.ID, "worker-old", now, now+300, 3)
 	require.NoError(t, err)
 	require.True(t, claimed)
 	require.NoError(t, DB.Model(&Task{}).Where("id = ?", task.ID).UpdateColumn("execution_lease_until", now-1).Error)
 
-	claimed, err = TryClaimTaskExecutionLease(task.ID, "worker-new", now, now+600)
+	claimed, err = TryClaimTaskExecutionLease(task.ID, "worker-new", now, now+600, 3)
 	require.NoError(t, err)
 	require.True(t, claimed)
 
@@ -364,7 +376,8 @@ func TestPollingQueriesIsolateLocalImageTasks(t *testing.T) {
 	insertTask(t, localImage)
 	insertTask(t, video)
 
-	pollingTasks := GetUnfinishedPollingTasks(1)
+	pollingTasks, err := GetUnfinishedPollingTasks(now, 1)
+	require.NoError(t, err)
 	require.Len(t, pollingTasks, 1)
 	assert.Equal(t, video.ID, pollingTasks[0].ID)
 
@@ -377,4 +390,42 @@ func TestPollingQueriesIsolateLocalImageTasks(t *testing.T) {
 	localTasks, err = GetPendingLocalImageTasks(now, 1)
 	require.NoError(t, err)
 	assert.Empty(t, localTasks)
+}
+
+func TestPollingQuerySkipsDeferredTaskWithoutStarvingReadyTasks(t *testing.T) {
+	truncateTables(t)
+	now := time.Now().Unix()
+	deferred := &Task{TaskID: "task_polling_deferred", Platform: constant.TaskPlatformSuno, Status: TaskStatusInProgress, NextPollTime: now + 300}
+	readyFirst := &Task{TaskID: "task_polling_ready_first", Platform: constant.TaskPlatformSuno, Status: TaskStatusInProgress}
+	readySecond := &Task{TaskID: "task_polling_ready_second", Platform: constant.TaskPlatformSuno, Status: TaskStatusInProgress}
+	insertTask(t, deferred)
+	insertTask(t, readyFirst)
+	insertTask(t, readySecond)
+
+	tasks, err := GetUnfinishedPollingTasks(now, 1)
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	assert.Equal(t, readyFirst.ID, tasks[0].ID)
+	require.NoError(t, DB.Model(readyFirst).UpdateColumn("next_poll_time", now+300).Error)
+
+	tasks, err = GetUnfinishedPollingTasks(now, 1)
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	assert.Equal(t, readySecond.ID, tasks[0].ID)
+}
+
+func TestTaskExecutionLeaseHonorsAttemptLimit(t *testing.T) {
+	truncateTables(t)
+	now := time.Now().Unix()
+	task := &Task{
+		TaskID:            "task_execution_attempt_limit",
+		Platform:          constant.TaskPlatformImage,
+		Status:            TaskStatusQueued,
+		ExecutionAttempts: 3,
+	}
+	insertTask(t, task)
+
+	claimed, err := TryClaimTaskExecutionLease(task.ID, "worker", now, now+300, 3)
+	require.NoError(t, err)
+	assert.False(t, claimed)
 }

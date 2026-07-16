@@ -125,6 +125,26 @@ func TestLocalImageTaskDispatcherRetriesAfterRunnerError(t *testing.T) {
 	assert.Equal(t, 1, reloaded.ExecutionAttempts)
 }
 
+func TestLocalImageTaskDispatcherFailsAtAttemptLimit(t *testing.T) {
+	truncate(t)
+	task := createLocalImageDispatcherTask(t, "attempt_limit")
+	dispatcher := newLocalImageTaskDispatcher(1, 30*time.Second, func(context.Context, *model.Task, string) error {
+		return errors.New("persistent upstream failure")
+	})
+	dispatcher.maxAttempts = 1
+
+	require.True(t, dispatcher.TryDispatch(task))
+	dispatcher.Wait()
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusFailure, reloaded.Status)
+	assert.Equal(t, "100%", reloaded.Progress)
+	assert.Equal(t, 1, reloaded.ExecutionAttempts)
+	assert.Empty(t, reloaded.ExecutionLeaseOwner)
+	assert.Zero(t, reloaded.ExecutionLeaseUntil)
+}
+
 func TestLocalImageTaskDispatcherBackoffDoesNotStarveLaterTask(t *testing.T) {
 	truncate(t)
 	first := createLocalImageDispatcherTask(t, "fairness_first")

@@ -28,12 +28,14 @@ const (
 type localImageTaskRunner func(ctx context.Context, task *model.Task, leaseOwner string) error
 
 type localImageTaskDispatcher struct {
-	slots         chan struct{}
-	leaseDuration time.Duration
-	ownerPrefix   string
-	run           localImageTaskRunner
-	wake          chan struct{}
-	wg            sync.WaitGroup
+	slots          chan struct{}
+	leaseDuration  time.Duration
+	attemptTimeout time.Duration
+	maxAttempts    int
+	ownerPrefix    string
+	run            localImageTaskRunner
+	wake           chan struct{}
+	wg             sync.WaitGroup
 }
 
 func newLocalImageTaskDispatcher(concurrency int, leaseDuration time.Duration, run localImageTaskRunner) *localImageTaskDispatcher {
@@ -43,12 +45,22 @@ func newLocalImageTaskDispatcher(concurrency int, leaseDuration time.Duration, r
 	if leaseDuration < 30*time.Second {
 		leaseDuration = 30 * time.Second
 	}
+	attemptTimeout := time.Duration(constant.LocalImageTaskAttemptTimeoutMinutes) * time.Minute
+	if attemptTimeout <= 0 {
+		attemptTimeout = 90 * time.Minute
+	}
+	maxAttempts := constant.LocalImageTaskMaxAttempts
+	if maxAttempts < 1 {
+		maxAttempts = 3
+	}
 	return &localImageTaskDispatcher{
-		slots:         make(chan struct{}, concurrency),
-		leaseDuration: leaseDuration,
-		ownerPrefix:   localImageLeaseOwnerPrefix(),
-		run:           run,
-		wake:          make(chan struct{}, 1),
+		slots:          make(chan struct{}, concurrency),
+		leaseDuration:  leaseDuration,
+		attemptTimeout: attemptTimeout,
+		maxAttempts:    maxAttempts,
+		ownerPrefix:    localImageLeaseOwnerPrefix(),
+		run:            run,
+		wake:           make(chan struct{}, 1),
 	}
 }
 
@@ -58,6 +70,14 @@ func (d *localImageTaskDispatcher) Concurrency() int {
 
 func (d *localImageTaskDispatcher) LeaseDuration() time.Duration {
 	return d.leaseDuration
+}
+
+func (d *localImageTaskDispatcher) AttemptTimeout() time.Duration {
+	return d.attemptTimeout
+}
+
+func (d *localImageTaskDispatcher) MaxAttempts() int {
+	return d.maxAttempts
 }
 
 func (d *localImageTaskDispatcher) Wait() {
@@ -143,6 +163,13 @@ func (d *localImageTaskDispatcher) TryDispatch(task *model.Task) bool {
 	if !isLocalImageExecutionTask(task) || d.run == nil {
 		return false
 	}
+	if task.ExecutionAttempts >= d.maxAttempts {
+		reason := fmt.Sprintf("图片生成任务执行失败，已达到最大尝试次数（%d 次）", d.maxAttempts)
+		if _, err := failTaskWithRefund(context.Background(), task, task.Status, "", reason); err != nil {
+			logger.LogError(context.Background(), fmt.Sprintf("fail exhausted local image task %s: %s", task.TaskID, err.Error()))
+		}
+		return false
+	}
 	select {
 	case d.slots <- struct{}{}:
 	default:
@@ -156,7 +183,7 @@ func (d *localImageTaskDispatcher) TryDispatch(task *model.Task) bool {
 		leaseOwner = leaseID
 	}
 	leaseUntil := now.Add(d.leaseDuration).Unix()
-	claimed, err := model.TryClaimTaskExecutionLease(task.ID, leaseOwner, now.Unix(), leaseUntil)
+	claimed, err := model.TryClaimTaskExecutionLease(task.ID, leaseOwner, now.Unix(), leaseUntil, d.maxAttempts)
 	if err != nil {
 		<-d.slots
 		logger.LogError(context.Background(), fmt.Sprintf("claim local image task %s failed: %s", task.TaskID, err.Error()))
@@ -179,7 +206,7 @@ func (d *localImageTaskDispatcher) TryDispatch(task *model.Task) bool {
 }
 
 func (d *localImageTaskDispatcher) execute(task *model.Task, leaseOwner string) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), d.attemptTimeout)
 	heartbeatDone := make(chan struct{})
 	go d.maintainLease(ctx, cancel, heartbeatDone, task, leaseOwner)
 
@@ -231,6 +258,19 @@ func (d *localImageTaskDispatcher) maintainLease(ctx context.Context, cancel con
 func (d *localImageTaskDispatcher) finish(task *model.Task, leaseOwner string, runErr error) {
 	ctx := context.Background()
 	if runErr != nil {
+		if task.ExecutionAttempts >= d.maxAttempts {
+			reason := fmt.Sprintf("图片生成任务执行失败，已达到最大尝试次数（%d 次）", d.maxAttempts)
+			if errors.Is(runErr, context.DeadlineExceeded) {
+				reason = fmt.Sprintf("图片生成任务单次执行超时，已达到最大尝试次数（%d 次）", d.maxAttempts)
+			}
+			won, err := failTaskWithRefund(ctx, task, model.TaskStatusInProgress, leaseOwner, reason)
+			if err != nil {
+				logger.LogError(ctx, fmt.Sprintf("fail exhausted local image task %s failed: %s", task.TaskID, err.Error()))
+			} else if won {
+				logger.LogWarn(ctx, fmt.Sprintf("local image task %s stopped after %d attempts", task.TaskID, task.ExecutionAttempts))
+			}
+			return
+		}
 		retryDelay := localImageRetryDelay(task.ExecutionAttempts)
 		retryAt := time.Now().Add(retryDelay).Unix()
 		retried, err := model.RetryTaskExecutionLease(task.ID, leaseOwner, retryAt)

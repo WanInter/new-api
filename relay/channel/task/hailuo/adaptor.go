@@ -196,6 +196,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Reason = resTask.BaseResp.StatusMsg
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = "100%"
+		return &taskResult, nil
 	}
 
 	switch resTask.Status {
@@ -216,8 +217,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			taskResult.Reason = "task failed"
 		}
 	default:
-		taskResult.Status = model.TaskStatusInProgress
-		taskResult.Progress = "30%"
+		return nil, fmt.Errorf("unknown Hailuo task status %q", resTask.Status)
 	}
 
 	return &taskResult, nil

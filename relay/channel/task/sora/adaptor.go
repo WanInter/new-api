@@ -543,6 +543,8 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		if reason := responseTaskFailureReason(resTask); reason != "" {
 			taskResult.Status = model.TaskStatusFailure
 			taskResult.Reason = reason
+		} else {
+			return nil, fmt.Errorf("unknown Sora task status %q", resTask.Status)
 		}
 	}
 	if resTask.Progress > 0 && resTask.Progress < 100 {

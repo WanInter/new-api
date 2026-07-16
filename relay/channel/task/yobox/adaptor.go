@@ -228,7 +228,11 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 	info := &relaycommon.TaskInfo{Code: 0}
 	info.TaskID = firstNonEmpty(parsed.Data.TaskID, parsed.TaskID, parsed.Data.Data.ID, parsed.Data.ID)
-	status := mapYoboxStatus(firstNonEmpty(parsed.Data.Status, parsed.Status, parsed.Data.Data.Status, parsed.Data.Data.Phase, parsed.Data.Phase))
+	rawStatus := firstNonEmpty(parsed.Data.Status, parsed.Status, parsed.Data.Data.Status, parsed.Data.Data.Phase, parsed.Data.Phase)
+	status := mapYoboxStatus(rawStatus)
+	if status == model.TaskStatusUnknown {
+		return nil, fmt.Errorf("unknown Yobox task status %q", rawStatus)
+	}
 	info.Status = string(status)
 	info.Progress = progressString(firstPositive(parsed.Data.Progress, parsed.Progress), status)
 	if status == model.TaskStatusSuccess {
@@ -265,7 +269,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	ov.Status = originTask.Status.ToVideoStatus()
 	ov.SetProgressStr(originTask.Progress)
 	ov.CreatedAt = originTask.CreatedAt
-	ov.CompletedAt = originTask.UpdatedAt
+	ov.CompletedAt = originTask.CompletionTime()
 	if url := firstNonEmpty(originTask.GetResultURL(), firstVideoURL(originTask)); url != "" {
 		ov.SetMetadata("url", url)
 		ov.SetMetadata("video_url", url)
@@ -407,7 +411,7 @@ func mapYoboxStatus(status string) model.TaskStatus {
 	case "failure", "failed", "error":
 		return model.TaskStatusFailure
 	default:
-		return model.TaskStatusInProgress
+		return model.TaskStatusUnknown
 	}
 }
 

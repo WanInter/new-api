@@ -61,6 +61,13 @@ func TestParseTaskResultExtractsNestedErrorMessage(t *testing.T) {
 	assert.Equal(t, "100%", info.Progress)
 }
 
+func TestParseTaskResultRejectsUnknownStatus(t *testing.T) {
+	info, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{"code":0,"data":{"job_id":"task_unknown","status":"pausing"}}`))
+
+	require.Error(t, err)
+	assert.Nil(t, info)
+}
+
 func TestConvertToOpenAIVideoUsesSoraCompatibleResponseShape(t *testing.T) {
 	task := &model.Task{
 		TaskID:    "task_public",

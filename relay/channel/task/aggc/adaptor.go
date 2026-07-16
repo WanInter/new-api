@@ -286,6 +286,9 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 	info.TaskID = anyToString(parsed.Data.JobID)
 	status := mapAggcStatus(parsed.Data.Status)
+	if status == model.TaskStatusUnknown {
+		return nil, fmt.Errorf("unknown AGGC task status %q", parsed.Data.Status)
+	}
 	info.Status = string(status)
 	info.Progress = progressString(parsed.Data.Progress, status)
 	if status == model.TaskStatusSuccess {
@@ -349,10 +352,8 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	if originTask.CreatedAt > 0 {
 		out["created_at"] = originTask.CreatedAt
 	}
-	if originTask.FinishTime > 0 {
-		out["completed_at"] = originTask.FinishTime
-	} else if originTask.UpdatedAt > 0 && originTask.Status == model.TaskStatusSuccess {
-		out["completed_at"] = originTask.UpdatedAt
+	if completedAt := originTask.CompletionTime(); completedAt > 0 {
+		out["completed_at"] = completedAt
 	}
 
 	if u := firstNonEmpty(parsed.Data.VideoURL, originTask.GetResultURL()); u != "" {
@@ -446,7 +447,7 @@ func mapAggcStatus(status string) model.TaskStatus {
 	case "running", "processing", "in_progress", "progress":
 		return model.TaskStatusInProgress
 	default:
-		return model.TaskStatusInProgress
+		return model.TaskStatusUnknown
 	}
 }
 

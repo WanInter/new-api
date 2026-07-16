@@ -318,7 +318,7 @@ func buildLocalOpenAIImageEditMultipart(c *gin.Context, request dto.ImageRequest
 		fieldName = "image[]"
 	}
 	for index, imageURL := range imageURLs {
-		mimeType, encoded, err := service.GetImageFromUrl(imageURL)
+		mimeType, encoded, err := service.GetImageFromUrlWithContext(c.Request.Context(), imageURL)
 		if err != nil {
 			return nil, fmt.Errorf("download OpenAI reference image %d failed: %w", index+1, err)
 		}

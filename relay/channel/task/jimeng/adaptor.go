@@ -463,7 +463,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	openAIVideo.SetProgressStr(originTask.Progress)
 	openAIVideo.SetMetadata("url", jimengResp.Data.VideoUrl)
 	openAIVideo.CreatedAt = originTask.CreatedAt
-	openAIVideo.CompletedAt = originTask.UpdatedAt
+	openAIVideo.CompletedAt = originTask.CompletionTime()
 
 	if jimengResp.Code != 10000 {
 		openAIVideo.Error = &dto.OpenAIVideoError{

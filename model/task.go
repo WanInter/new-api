@@ -71,6 +71,10 @@ type Task struct {
 	ExecutionLeaseOwner string `json:"-" gorm:"type:varchar(191)"`
 	ExecutionLeaseUntil int64  `json:"-" gorm:"index:idx_task_local_image_schedule,priority:2;default:0"`
 	ExecutionAttempts   int    `json:"-" gorm:"default:0"`
+	LastPollTime        int64  `json:"-" gorm:"index;default:0"`
+	NextPollTime        int64  `json:"-" gorm:"index;default:0"`
+	PollErrorCount      int    `json:"-" gorm:"default:0"`
+	LastPollError       string `json:"-" gorm:"type:text"`
 }
 
 func (t *Task) SetData(data any) {
@@ -150,6 +154,16 @@ func (t *Task) GetResultURL() string {
 		return t.PrivateData.ResultURL
 	}
 	return t.FailReason
+}
+
+func (t *Task) CompletionTime() int64 {
+	if t.Status != TaskStatusSuccess && t.Status != TaskStatusFailure {
+		return 0
+	}
+	if t.FinishTime > 0 {
+		return t.FinishTime
+	}
+	return t.UpdatedAt
 }
 
 // GenerateTaskID 生成对外暴露的 task_xxxx 格式 ID
@@ -332,18 +346,20 @@ func GetAllUnFinishSyncTasks(limit int) []*Task {
 	return tasks
 }
 
-func GetUnfinishedPollingTasks(limit int) []*Task {
+func GetUnfinishedPollingTasks(now int64, limit int) ([]*Task, error) {
+	if limit < 1 {
+		return nil, nil
+	}
 	var tasks []*Task
 	err := DB.Where("status != ?", TaskStatusFailure).
 		Where("status != ?", TaskStatusSuccess).
 		Where("is_local_image_task = ?", false).
+		Where("next_poll_time IS NULL OR next_poll_time = 0 OR next_poll_time <= ?", now).
 		Limit(limit).
+		Order("next_poll_time").
 		Order("id").
 		Find(&tasks).Error
-	if err != nil {
-		return nil
-	}
-	return tasks
+	return tasks, err
 }
 
 func GetPendingLocalImageTasks(now int64, limit int) ([]*Task, error) {
@@ -435,13 +451,17 @@ func (Task *Task) Insert() error {
 }
 
 type taskSnapshot struct {
-	Status     TaskStatus
-	Progress   string
-	StartTime  int64
-	FinishTime int64
-	FailReason string
-	ResultURL  string
-	Data       json.RawMessage
+	Status         TaskStatus
+	Progress       string
+	StartTime      int64
+	FinishTime     int64
+	FailReason     string
+	ResultURL      string
+	Data           json.RawMessage
+	LastPollTime   int64
+	NextPollTime   int64
+	PollErrorCount int
+	LastPollError  string
 }
 
 func (s taskSnapshot) Equal(other taskSnapshot) bool {
@@ -451,18 +471,26 @@ func (s taskSnapshot) Equal(other taskSnapshot) bool {
 		s.FinishTime == other.FinishTime &&
 		s.FailReason == other.FailReason &&
 		s.ResultURL == other.ResultURL &&
+		s.LastPollTime == other.LastPollTime &&
+		s.NextPollTime == other.NextPollTime &&
+		s.PollErrorCount == other.PollErrorCount &&
+		s.LastPollError == other.LastPollError &&
 		bytes.Equal(s.Data, other.Data)
 }
 
 func (t *Task) Snapshot() taskSnapshot {
 	return taskSnapshot{
-		Status:     t.Status,
-		Progress:   t.Progress,
-		StartTime:  t.StartTime,
-		FinishTime: t.FinishTime,
-		FailReason: t.FailReason,
-		ResultURL:  t.PrivateData.ResultURL,
-		Data:       t.Data,
+		Status:         t.Status,
+		Progress:       t.Progress,
+		StartTime:      t.StartTime,
+		FinishTime:     t.FinishTime,
+		FailReason:     t.FailReason,
+		ResultURL:      t.PrivateData.ResultURL,
+		Data:           t.Data,
+		LastPollTime:   t.LastPollTime,
+		NextPollTime:   t.NextPollTime,
+		PollErrorCount: t.PollErrorCount,
+		LastPollError:  t.LastPollError,
 	}
 }
 
@@ -502,14 +530,15 @@ func (t *Task) UpdateWithStatusAndLease(fromStatus TaskStatus, leaseOwner string
 	return result.RowsAffected > 0, nil
 }
 
-func TryClaimTaskExecutionLease(taskID int64, owner string, now, leaseUntil int64) (bool, error) {
-	if taskID <= 0 || owner == "" || leaseUntil <= now {
+func TryClaimTaskExecutionLease(taskID int64, owner string, now, leaseUntil int64, maxAttempts int) (bool, error) {
+	if taskID <= 0 || owner == "" || leaseUntil <= now || maxAttempts < 1 {
 		return false, errors.New("invalid task execution lease claim")
 	}
 	result := DB.Model(&Task{}).
 		Where("id = ?", taskID).
 		Where("platform = ?", constant.TaskPlatformImage).
 		Where("status != ? AND status != ?", TaskStatusFailure, TaskStatusSuccess).
+		Where("execution_attempts < ?", maxAttempts).
 		Where("execution_lease_until IS NULL OR execution_lease_until <= ?", now).
 		UpdateColumns(map[string]any{
 			"execution_lease_owner": owner,
@@ -674,7 +703,7 @@ func (t *Task) ToOpenAIVideo() *dto.OpenAIVideo {
 	openAIVideo.Model = t.Properties.OriginModelName
 	openAIVideo.SetProgressStr(t.Progress)
 	openAIVideo.CreatedAt = t.CreatedAt
-	openAIVideo.CompletedAt = t.UpdatedAt
+	openAIVideo.CompletedAt = t.CompletionTime()
 	openAIVideo.SetMetadata("url", t.GetResultURL())
 	return openAIVideo
 }

@@ -289,9 +289,11 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		info.Status = model.TaskStatusFailure
 		info.Progress = "100%"
 		info.Reason = errorMessage(parsed)
-	default:
+	case "submitted", "queued", "pending", "running", "processing", "in_progress":
 		info.Status = model.TaskStatusInProgress
 		info.Progress = progressString(parsed.Progress, "30%")
+	default:
+		return nil, fmt.Errorf("unknown Xinghe task status %q", status)
 	}
 	return info, nil
 }

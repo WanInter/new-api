@@ -333,9 +333,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Progress = "100%"
 		taskResult.Reason = resTask.Error.Message
 	default:
-		// Unknown status, treat as processing
-		taskResult.Status = model.TaskStatusInProgress
-		taskResult.Progress = "30%"
+		return nil, fmt.Errorf("unknown Doubao task status %q", resTask.Status)
 	}
 
 	return &taskResult, nil
@@ -354,7 +352,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	openAIVideo.SetProgressStr(originTask.Progress)
 	openAIVideo.SetMetadata("url", dResp.Content.VideoURL)
 	openAIVideo.CreatedAt = originTask.CreatedAt
-	openAIVideo.CompletedAt = originTask.UpdatedAt
+	openAIVideo.CompletedAt = originTask.CompletionTime()
 	openAIVideo.Model = originTask.Properties.OriginModelName
 
 	if dResp.Status == "failed" {

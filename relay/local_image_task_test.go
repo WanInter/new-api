@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"mime"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -230,6 +232,63 @@ func TestBuildLocalImageRequestBodyConvertsJSONReferencesToMultipart(t *testing.
 			assert.NotContains(t, fields, "prompt_extend")
 			assert.NotContains(t, fields, "watermark")
 		})
+	}
+}
+
+func TestBuildLocalImageRequestBodyCancelsReferenceDownload(t *testing.T) {
+	requestStarted := make(chan struct{})
+	referenceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestStarted)
+		<-r.Context().Done()
+	}))
+	defer referenceServer.Close()
+
+	fetchSetting := system_setting.GetFetchSetting()
+	originalFetchSetting := *fetchSetting
+	referenceURL, err := url.Parse(referenceServer.URL)
+	require.NoError(t, err)
+	fetchSetting.AllowPrivateIp = true
+	fetchSetting.AllowedPorts = append([]string(nil), originalFetchSetting.AllowedPorts...)
+	fetchSetting.AllowedPorts = append(fetchSetting.AllowedPorts, referenceURL.Port())
+	t.Cleanup(func() { *fetchSetting = originalFetchSetting })
+	service.InitHttpClient()
+
+	var imageReq dto.ImageRequest
+	require.NoError(t, common.Unmarshal([]byte(`{
+		"model":"gpt-image-2",
+		"prompt":"edit reference",
+		"images":[{"image_url":"`+referenceServer.URL+`/blocked.png"}]
+	}`), &imageReq))
+
+	requestContext, cancel := context.WithCancel(context.Background())
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequestWithContext(requestContext, http.MethodPost, localImageEditPath, nil)
+	c.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{
+		RelayMode:   relayconstant.RelayModeImagesEdits,
+		RelayFormat: types.RelayFormatOpenAIImage,
+		ChannelMeta: &relaycommon.ChannelMeta{ApiType: constant.APITypeOpenAI},
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, err := buildLocalImageRequestBody(c, &openai.Adaptor{}, info, imageReq)
+		result <- err
+	}()
+
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		t.Fatal("reference download did not start")
+	}
+	cancel()
+
+	select {
+	case err := <-result:
+		require.Error(t, err)
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("reference download did not stop after request cancellation")
 	}
 }
 

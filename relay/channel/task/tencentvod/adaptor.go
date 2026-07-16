@@ -421,7 +421,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		info.Progress = taskcommon.ProgressComplete
 		info.Reason = firstNonEmpty(task.Message, "Tencent VOD AIGC task was aborted")
 	default:
-		info.Status = model.TaskStatusInProgress
+		return nil, fmt.Errorf("unknown Tencent VOD task status %q", status)
 	}
 	return info, nil
 }

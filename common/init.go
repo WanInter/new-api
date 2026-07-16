@@ -154,6 +154,26 @@ func initConstantEnv() {
 	constant.TaskQueryLimit = GetEnvOrDefault("TASK_QUERY_LIMIT", 1000)
 	// 异步任务超时时间（分钟），超过此时间未完成的任务将被标记为失败并退款。0 表示禁用。
 	constant.TaskTimeoutMinutes = GetEnvOrDefault("TASK_TIMEOUT_MINUTES", 1440)
+	constant.TaskPollingIntervalSeconds = GetEnvOrDefault("TASK_POLLING_INTERVAL_SECONDS", 15)
+	if constant.TaskPollingIntervalSeconds < 1 {
+		constant.TaskPollingIntervalSeconds = 1
+	}
+	constant.TaskPollingConcurrency = GetEnvOrDefault("TASK_POLLING_CONCURRENCY", 8)
+	if constant.TaskPollingConcurrency < 1 {
+		constant.TaskPollingConcurrency = 1
+	}
+	constant.TaskPollingChannelIntervalMilliseconds = GetEnvOrDefault("TASK_POLLING_CHANNEL_INTERVAL_MILLISECONDS", 1000)
+	if constant.TaskPollingChannelIntervalMilliseconds < 0 {
+		constant.TaskPollingChannelIntervalMilliseconds = 0
+	}
+	constant.TaskPollingNotFoundGraceSeconds = GetEnvOrDefault("TASK_POLLING_NOT_FOUND_GRACE_SECONDS", 120)
+	if constant.TaskPollingNotFoundGraceSeconds < 0 {
+		constant.TaskPollingNotFoundGraceSeconds = 0
+	}
+	constant.TaskPollingMaxErrors = GetEnvOrDefault("TASK_POLLING_MAX_ERRORS", 20)
+	if constant.TaskPollingMaxErrors < 1 {
+		constant.TaskPollingMaxErrors = 1
+	}
 	// 本地异步图片使用独立的有界执行器，避免阻塞视频任务状态轮询。
 	constant.LocalImageTaskConcurrency = GetEnvOrDefault("LOCAL_IMAGE_TASK_CONCURRENCY", 4)
 	if constant.LocalImageTaskConcurrency < 1 {
@@ -162,6 +182,14 @@ func initConstantEnv() {
 	constant.LocalImageTaskLeaseSeconds = GetEnvOrDefault("LOCAL_IMAGE_TASK_LEASE_SECONDS", 300)
 	if constant.LocalImageTaskLeaseSeconds < 30 {
 		constant.LocalImageTaskLeaseSeconds = 30
+	}
+	constant.LocalImageTaskAttemptTimeoutMinutes = GetEnvOrDefault("LOCAL_IMAGE_TASK_ATTEMPT_TIMEOUT_MINUTES", 90)
+	if constant.LocalImageTaskAttemptTimeoutMinutes < 1 {
+		constant.LocalImageTaskAttemptTimeoutMinutes = 1
+	}
+	constant.LocalImageTaskMaxAttempts = GetEnvOrDefault("LOCAL_IMAGE_TASK_MAX_ATTEMPTS", 3)
+	if constant.LocalImageTaskMaxAttempts < 1 {
+		constant.LocalImageTaskMaxAttempts = 1
 	}
 
 	soraPatchStr := GetEnvOrDefaultString("TASK_PRICE_PATCH", "")
