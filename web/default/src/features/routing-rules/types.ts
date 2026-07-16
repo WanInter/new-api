@@ -27,6 +27,8 @@ export type VideoModelCapability = {
   audios?: VideoMediaRange
   fixed_duration?: number
   require_json?: boolean
+  require_text?: boolean
+  content_precedence?: boolean
 }
 
 export type ModelMappingResolution = {
@@ -76,6 +78,7 @@ export type VideoRoutingSimulationRequest = {
   duration?: number
   content_type: string
   retry: number
+  request_path?: string
 }
 
 export type VideoRoutingSimulationResult = VideoRoutingRuleSet & {

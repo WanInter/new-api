@@ -145,6 +145,11 @@ func executeLocalImageTask(ctx context.Context, task *model.Task, ch *model.Chan
 	info.Request = &imageReq
 	info.UpstreamModelName = imageReq.Model
 	adaptor.Init(info)
+	defer func() {
+		if upstreamModel := strings.TrimSpace(info.UpstreamModelName); upstreamModel != "" {
+			task.Properties.UpstreamModelName = upstreamModel
+		}
+	}()
 
 	requestBody, err := buildLocalImageRequestBody(c, adaptor, info, imageReq)
 	if err != nil {
@@ -237,7 +242,23 @@ func buildLocalImageRequestBody(c *gin.Context, adaptor channel.Adaptor, info *r
 			return nil, err
 		}
 	}
+	syncUpstreamModelFromJSONBody(info, jsonData)
 	return bytes.NewReader(jsonData), nil
+}
+
+func syncUpstreamModelFromJSONBody(info *relaycommon.RelayInfo, body []byte) {
+	if info == nil || len(body) == 0 {
+		return
+	}
+	var request struct {
+		Model string `json:"model"`
+	}
+	if err := common.Unmarshal(body, &request); err != nil {
+		return
+	}
+	if modelName := strings.TrimSpace(request.Model); modelName != "" {
+		info.UpstreamModelName = modelName
+	}
 }
 
 func isLocalImageJSONRequest(c *gin.Context) bool {

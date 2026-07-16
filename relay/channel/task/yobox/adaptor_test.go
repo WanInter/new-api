@@ -156,6 +156,67 @@ func TestConvertToRequestPayloadHappyHorseUsesOnlyFirstStartFrame(t *testing.T) 
 	assert.NotContains(t, input, "image_references")
 }
 
+func TestValidateHappyHorseMetadataStartFramesPreservesDedicatedPayload(t *testing.T) {
+	bodyJSON := `{
+		"model":"happy-horse-1.1",
+		"prompt":"character smiles",
+		"metadata":{"start_frames":["https://example.com/start.png","https://example.com/ignored.png"]}
+	}`
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(bodyJSON))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "happy-horse-1.1",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+
+	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
+	req, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Empty(t, req.Images)
+	assert.Equal(t, []string{"https://example.com/start.png", "https://example.com/ignored.png"}, req.MetadataStartFrames)
+
+	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&req, info)
+	require.NoError(t, err)
+	body, ok := payload.(map[string]any)
+	require.True(t, ok)
+	input, ok := body["input"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, []string{"https://example.com/start.png"}, input["start_frames"])
+	assert.NotContains(t, input, "image_references")
+}
+
+func TestValidateSeedance20PreservesBooleanAudioSwitch(t *testing.T) {
+	for _, audio := range []bool{true, false} {
+		t.Run(fmt.Sprintf("audio_%t", audio), func(t *testing.T) {
+			bodyJSON := fmt.Sprintf(`{"model":"seedance-2.0","prompt":"dance","audio":%t}`, audio)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(bodyJSON))
+			c.Request.Header.Set("Content-Type", "application/json")
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "seedance-2.0",
+				TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+			}
+
+			require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
+			req, err := relaycommon.GetTaskRequest(c)
+			require.NoError(t, err)
+			assert.Empty(t, req.Audios)
+			assert.Empty(t, req.AudioURLs)
+
+			payload, err := (&TaskAdaptor{}).convertToRequestPayload(&req, info)
+			require.NoError(t, err)
+			body, ok := payload.(map[string]any)
+			require.True(t, ok)
+			input, ok := body["input"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, audio, input["audio"])
+		})
+	}
+}
+
 func TestConvertToRequestPayloadUsesMappedUpstreamModel(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	payload, err := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{

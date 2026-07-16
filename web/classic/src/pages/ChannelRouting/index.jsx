@@ -77,8 +77,17 @@ const violationText = (violation, t) => {
     duration_mismatch: t('仅支持 {{expected}} 秒时长', options),
     content_type_mismatch: t('仅支持 application/json 请求'),
     missing_capability: t('未配置能力档案'),
+    invalid_content: t('显式 content 包含无效内容项'),
+    text_below_min: t('显式 content 必须包含非空文本项'),
   };
   return messages[violation.code] || violation.code;
+};
+
+const configurationErrorText = (error, t) => {
+  if (error === 'request_path_not_supported') {
+    return t('渠道不支持视频请求路径');
+  }
+  return error;
 };
 
 const CandidateStatus = ({ candidate, t }) => {
@@ -189,7 +198,9 @@ const CandidateDetails = ({ candidate, onClose, t }) => (
             <Title heading={6}>{t('排除原因')}</Title>
             <div className='mt-3 space-y-2'>
               {candidate.configuration_error && (
-                <Text type='danger'>{candidate.configuration_error}</Text>
+                <Text type='danger'>
+                  {configurationErrorText(candidate.configuration_error, t)}
+                </Text>
               )}
               {(candidate.violations || []).map((violation, index) => (
                 <div key={`${violation.code}-${index}`}>
@@ -253,6 +264,8 @@ const ChannelRouting = () => {
   }, [loadGroups]);
 
   useEffect(() => {
+    setSimulationResult(null);
+    setSelectedCandidate(null);
     const timer = window.setTimeout(loadRules, 250);
     return () => window.clearTimeout(timer);
   }, [loadRules]);

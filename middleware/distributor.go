@@ -141,6 +141,15 @@ func Distribute() func(c *gin.Context) {
 						Retry:       common.GetPointer(0),
 					})
 					if err != nil {
+						var featuresErr *service.VideoRequestFeaturesError
+						if errors.As(err, &featuresErr) {
+							statusCode := http.StatusBadRequest
+							if common.IsRequestBodyTooLargeError(featuresErr) {
+								statusCode = http.StatusRequestEntityTooLarge
+							}
+							abortWithOpenAiMessage(c, statusCode, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": featuresErr.Error()}))
+							return
+						}
 						showGroup := usingGroup
 						if usingGroup == "auto" {
 							showGroup = fmt.Sprintf("auto(%s)", selectGroup)

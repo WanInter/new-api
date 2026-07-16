@@ -91,8 +91,17 @@ function violationText(
     duration_mismatch: t('Requires a duration of {{expected}} seconds', values),
     content_type_mismatch: t('Requires an application/json request'),
     missing_capability: t('No capability profile is configured'),
+    invalid_content: t('Explicit content contains an invalid item'),
+    text_below_min: t('Explicit content must include a non-empty text item'),
   }
   return messages[violation.code] || violation.code
+}
+
+function configurationErrorText(error: string, t: (key: string) => string) {
+  if (error === 'request_path_not_supported') {
+    return t('Channel does not support the video request path')
+  }
+  return error
 }
 
 function CandidateStatus({ candidate }: { candidate: VideoRoutingCandidate }) {
@@ -314,7 +323,7 @@ function CandidateDetails({
                 <ul className='space-y-2 text-sm'>
                   {candidate.configuration_error && (
                     <li className='text-destructive'>
-                      {candidate.configuration_error}
+                      {configurationErrorText(candidate.configuration_error, t)}
                     </li>
                   )}
                   {(candidate.violations || []).map((violation, index) => (
@@ -384,7 +393,11 @@ export function RoutingRules() {
               <Input
                 id='routing-model'
                 value={model}
-                onChange={(event) => setModel(event.target.value)}
+                onChange={(event) => {
+                  setModel(event.target.value)
+                  simulationMutation.reset()
+                  setSelectedCandidate(null)
+                }}
               />
             </div>
             <div className='min-w-48 flex-1 space-y-1.5'>
@@ -393,7 +406,11 @@ export function RoutingRules() {
                 id='routing-group'
                 className='w-full'
                 value={group}
-                onChange={(event) => setGroup(event.target.value)}
+                onChange={(event) => {
+                  setGroup(event.target.value)
+                  simulationMutation.reset()
+                  setSelectedCandidate(null)
+                }}
               >
                 {!groups.includes(group) && (
                   <NativeSelectOption value={group}>{group}</NativeSelectOption>

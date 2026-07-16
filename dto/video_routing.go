@@ -13,6 +13,10 @@ type VideoModelCapability struct {
 	Audios        *VideoMediaRange `json:"audios,omitempty"`
 	FixedDuration *int             `json:"fixed_duration,omitempty"`
 	RequireJSON   *bool            `json:"require_json,omitempty"`
+	RequireText   *bool            `json:"require_text,omitempty"`
+	// ContentPrecedence means explicit content items replace legacy media fields
+	// when request references are counted for this upstream model.
+	ContentPrecedence *bool `json:"content_precedence,omitempty"`
 }
 
 // VideoRoutingConfig contains per-channel overrides keyed by upstream model.

@@ -3,6 +3,7 @@ package common
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -79,11 +80,13 @@ func validatePrompt(prompt string) *dto.TaskError {
 
 func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string) (TaskSubmitReq, error) {
 	var req TaskSubmitReq
-	if _, err := c.MultipartForm(); err != nil {
+	form, err := common.ParseMultipartFormReusable(c)
+	if err != nil {
 		return req, err
 	}
+	defer form.RemoveAll()
 
-	formData := c.Request.PostForm
+	formData := url.Values(form.Value)
 	req = TaskSubmitReq{
 		Prompt:   formData.Get("prompt"),
 		Model:    formData.Get("model"),

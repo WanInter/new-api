@@ -79,6 +79,39 @@ func TestBuildRequestBodyConvertsLegacyMediaForProfiledContentModel(t *testing.T
 	}, content[4])
 }
 
+func TestBuildRequestBodyConvertsMediaAliasesForProfiledContentModel(t *testing.T) {
+	bodyJSON := `{
+		"model":"sdquan-2",
+		"prompt":"use every reference",
+		"image_urls":["image.png"],
+		"input":{"image_references":[{"url":"reference.png"}]},
+		"video_url":"video.mp4",
+		"audio_url":"audio.mp3"
+	}`
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(bodyJSON))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	body, err := (&TaskAdaptor{}).BuildRequestBody(c, &relaycommon.RelayInfo{
+		OriginModelName: "sdquan-2",
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "sdquan-2"},
+	})
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	var got map[string]any
+	require.NoError(t, common.Unmarshal(data, &got))
+	assert.NotContains(t, got, "image_urls")
+	assert.NotContains(t, got, "input")
+	assert.NotContains(t, got, "video_url")
+	assert.NotContains(t, got, "audio_url")
+	content, ok := got["content"].([]any)
+	require.True(t, ok)
+	require.Len(t, content, 5)
+}
+
 func TestBuildRequestBodyPreservesExplicitProfiledContent(t *testing.T) {
 	bodyJSON := `{
 		"model":"sdquan-2",
@@ -514,8 +547,11 @@ func TestValidateMappedRequestCountsAllLegacyImageFields(t *testing.T) {
 	bodyJSON := `{
 		"model":"ax2.0-9tu",
 		"prompt":"animate",
-		"images":["1","2","3","4","5","6","7","8","9"],
-		"input_reference":"10"
+		"images":["1","2","3","4","5"],
+		"image_urls":["6"],
+		"input_reference":"7",
+		"input":{"start_frames":["8"],"image_references":[{"url":"9"}]},
+		"metadata":{"start_frames":["10"]}
 	}`
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(bodyJSON))

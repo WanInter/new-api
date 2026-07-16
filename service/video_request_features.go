@@ -40,8 +40,23 @@ func GetVideoRequestFeatures(c *gin.Context) (VideoRequestFeatures, error) {
 	}
 
 	features, err := extractVideoRequestFeatures(c)
+	if err != nil {
+		err = &VideoRequestFeaturesError{Err: err}
+	}
 	c.Set(ginKeyVideoRequestFeatures, videoRequestFeaturesResult{Features: features, Err: err})
 	return features, err
+}
+
+type VideoRequestFeaturesError struct {
+	Err error
+}
+
+func (e *VideoRequestFeaturesError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *VideoRequestFeaturesError) Unwrap() error {
+	return e.Err
 }
 
 func extractVideoRequestFeatures(c *gin.Context) (VideoRequestFeatures, error) {
@@ -88,73 +103,68 @@ func extractJSONVideoRequestFeatures(body []byte, features VideoRequestFeatures)
 		return features, err
 	}
 
-	images := make(map[string]struct{})
-	videos := make(map[string]struct{})
-	audios := make(map[string]struct{})
-	addStrings(images, request.Images...)
-	addStrings(images, request.Image, request.InputReference)
-	addStrings(videos, request.Videos...)
-	addStrings(audios, request.Audios...)
-
-	for _, item := range request.Content {
-		if item.ImageURL != nil {
-			addStrings(images, item.ImageURL.URL)
-		}
-		if item.VideoURL != nil {
-			addStrings(videos, item.VideoURL.URL)
-		}
-		if item.AudioURL != nil {
-			addStrings(audios, item.AudioURL.URL)
-		}
+	features.Images = countNonEmptyFeatureStrings(request.Images) +
+		countNonEmptyFeatureStrings(request.ImageURLs) +
+		countNonEmptyFeatureStrings(request.InputStartFrames) +
+		countNonEmptyFeatureStrings(request.InputImageReferences) +
+		countNonEmptyFeatureStrings(request.MetadataStartFrames) +
+		countNonEmptyFeatureStrings([]string{request.Image, request.InputReference})
+	features.Videos = countNonEmptyFeatureStrings(request.Videos) + countNonEmptyFeatureStrings(request.VideoURLs)
+	features.Audios = countNonEmptyFeatureStrings(request.Audios) + countNonEmptyFeatureStrings(request.AudioURLs)
+	if len(request.Content) > 0 {
+		genericContent, profiledContent := countTaskContentMedia(request.Content)
+		features.Images += genericContent.Images
+		features.Videos += genericContent.Videos
+		features.Audios += genericContent.Audios
+		features.profiledContent = &profiledContent
 	}
-
-	collectJSONMediaStrings(body, images, "image", "images", "image_urls", "input_reference", "input.start_frames", "metadata.start_frames")
-	collectJSONMediaStrings(body, videos, "video", "videos", "video_url", "video_urls")
-	collectJSONMediaStrings(body, audios, "audio", "audios", "audio_url", "audio_urls")
-	collectJSONReferenceObjects(body, images, "input.image_references")
-	collectJSONContent(body, images, videos, audios)
-
-	features.Images = len(images)
-	features.Videos = len(videos)
-	features.Audios = len(audios)
 	features.Duration = parseJSONDuration(body)
 	return features, nil
 }
 
-func collectJSONMediaStrings(body []byte, target map[string]struct{}, paths ...string) {
-	for _, path := range paths {
-		result := gjson.GetBytes(body, path)
-		if result.IsArray() {
-			for _, item := range result.Array() {
-				addStrings(target, item.String())
-			}
-			continue
+func countTaskContentMedia(content []relaycommon.TaskContentItem) (videoMediaCounts, videoMediaCounts) {
+	generic := videoMediaCounts{}
+	profiled := videoMediaCounts{}
+	for _, item := range content {
+		if item.ImageURL != nil && strings.TrimSpace(item.ImageURL.URL) != "" {
+			generic.Images++
 		}
-		addStrings(target, result.String())
-	}
-}
-
-func collectJSONReferenceObjects(body []byte, target map[string]struct{}, path string) {
-	for _, item := range gjson.GetBytes(body, path).Array() {
-		value := item.String()
-		if item.IsObject() {
-			value = item.Get("url").String()
+		if item.VideoURL != nil && strings.TrimSpace(item.VideoURL.URL) != "" {
+			generic.Videos++
 		}
-		addStrings(target, value)
-	}
-}
-
-func collectJSONContent(body []byte, images, videos, audios map[string]struct{}) {
-	for _, item := range gjson.GetBytes(body, "content").Array() {
-		switch item.Get("type").String() {
+		if item.AudioURL != nil && strings.TrimSpace(item.AudioURL.URL) != "" {
+			generic.Audios++
+		}
+		switch item.Type {
 		case "image_url":
-			addStrings(images, firstNonEmptyFeatureString(item.Get("image_url.url").String(), item.Get("image_url").String()))
+			if item.ImageURL != nil && strings.TrimSpace(item.ImageURL.URL) != "" {
+				profiled.Images++
+			} else {
+				profiled.Invalid = true
+			}
 		case "video_url":
-			addStrings(videos, firstNonEmptyFeatureString(item.Get("video_url.url").String(), item.Get("video_url").String()))
+			if item.VideoURL != nil && strings.TrimSpace(item.VideoURL.URL) != "" {
+				profiled.Videos++
+			} else {
+				profiled.Invalid = true
+			}
 		case "audio_url":
-			addStrings(audios, firstNonEmptyFeatureString(item.Get("audio_url.url").String(), item.Get("audio_url").String()))
+			if item.AudioURL != nil && strings.TrimSpace(item.AudioURL.URL) != "" {
+				profiled.Audios++
+			} else {
+				profiled.Invalid = true
+			}
+		case "text":
+			if strings.TrimSpace(item.Text) != "" {
+				profiled.Text++
+			} else {
+				profiled.Invalid = true
+			}
+		default:
+			profiled.Invalid = true
 		}
 	}
+	return generic, profiled
 }
 
 func extractMultipartVideoRequestFeatures(c *gin.Context, features VideoRequestFeatures) (VideoRequestFeatures, error) {
@@ -192,22 +202,14 @@ func countFormMedia(values url.Values, files map[string][]*multipart.FileHeader,
 	return count
 }
 
-func addStrings(target map[string]struct{}, values ...string) {
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			target[value] = struct{}{}
-		}
-	}
-}
-
-func firstNonEmptyFeatureString(values ...string) string {
+func countNonEmptyFeatureStrings(values []string) int {
+	count := 0
 	for _, value := range values {
 		if strings.TrimSpace(value) != "" {
-			return value
+			count++
 		}
 	}
-	return ""
+	return count
 }
 
 func parseJSONDuration(body []byte) *int {

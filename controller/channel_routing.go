@@ -16,7 +16,7 @@ func GetChannelRoutingRules(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "model is required"})
 		return
 	}
-	rules, err := service.GetVideoRoutingRuleSet(modelName, c.Query("group"))
+	rules, err := service.GetVideoRoutingRuleSetForPath(modelName, c.Query("group"), c.Query("request_path"))
 	if err != nil {
 		common.ApiError(c, err)
 		return

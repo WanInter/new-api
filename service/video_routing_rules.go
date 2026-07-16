@@ -5,9 +5,17 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 )
+
+const DefaultVideoRoutingRequestPath = "/v1/videos"
+
+var supportedVideoRoutingRequestPaths = []string{
+	DefaultVideoRoutingRequestPath,
+	"/v1/video/generations",
+}
 
 type VideoRoutingRuleCandidate struct {
 	Group              string                        `json:"group"`
@@ -42,6 +50,7 @@ type VideoRoutingSimulationRequest struct {
 	Duration    *int   `json:"duration,omitempty"`
 	ContentType string `json:"content_type,omitempty"`
 	Retry       int    `json:"retry,omitempty"`
+	RequestPath string `json:"request_path,omitempty"`
 }
 
 type VideoRoutingSimulationResult struct {
@@ -52,6 +61,14 @@ type VideoRoutingSimulationResult struct {
 }
 
 func GetVideoRoutingRuleSet(publicModel, group string) (VideoRoutingRuleSet, error) {
+	return getVideoRoutingRuleSetForPath(publicModel, group, "")
+}
+
+func GetVideoRoutingRuleSetForPath(publicModel, group, requestPath string) (VideoRoutingRuleSet, error) {
+	return getVideoRoutingRuleSetForPath(publicModel, group, strings.TrimSpace(requestPath))
+}
+
+func getVideoRoutingRuleSetForPath(publicModel, group, requestPath string) (VideoRoutingRuleSet, error) {
 	publicModel = strings.TrimSpace(publicModel)
 	group = strings.TrimSpace(group)
 	result := VideoRoutingRuleSet{
@@ -65,7 +82,7 @@ func GetVideoRoutingRuleSet(publicModel, group string) (VideoRoutingRuleSet, err
 		return result, err
 	}
 	for _, candidate := range candidates {
-		result.Candidates = append(result.Candidates, describeVideoRoutingCandidate(candidate, publicModel))
+		result.Candidates = append(result.Candidates, describeVideoRoutingCandidate(candidate, publicModel, requestPath))
 	}
 	sort.SliceStable(result.Candidates, func(i, j int) bool {
 		if result.Candidates[i].Priority == result.Candidates[j].Priority {
@@ -76,7 +93,7 @@ func GetVideoRoutingRuleSet(publicModel, group string) (VideoRoutingRuleSet, err
 	return result, nil
 }
 
-func describeVideoRoutingCandidate(candidate model.ChannelAbilityCandidate, publicModel string) VideoRoutingRuleCandidate {
+func describeVideoRoutingCandidate(candidate model.ChannelAbilityCandidate, publicModel, requestPath string) VideoRoutingRuleCandidate {
 	result := VideoRoutingRuleCandidate{
 		Group:     candidate.Ability.Group,
 		ChannelID: candidate.Ability.ChannelId,
@@ -107,11 +124,38 @@ func describeVideoRoutingCandidate(candidate model.ChannelAbilityCandidate, publ
 	} else if IsStrictVideoRoutingModel(publicModel) {
 		result.Violations = []VideoConstraintViolation{{Code: "missing_capability"}}
 	}
+	if !channelSupportsVideoRoutingRequestPath(candidate.Channel, requestPath) {
+		result.ConfigurationError = "request_path_not_supported"
+	}
 	return result
 }
 
+func channelSupportsVideoRoutingRequestPath(channel *model.Channel, requestPath string) bool {
+	if channel == nil || channel.Type != constant.ChannelTypeAdvancedCustom {
+		return true
+	}
+	config := channel.GetOtherSettings().AdvancedCustom
+	if config == nil {
+		return false
+	}
+	requestPath = strings.TrimSpace(requestPath)
+	if requestPath != "" {
+		return config.SupportsPath(requestPath)
+	}
+	for _, supportedPath := range supportedVideoRoutingRequestPaths {
+		if config.SupportsPath(supportedPath) {
+			return true
+		}
+	}
+	return false
+}
+
 func SimulateVideoRouting(request VideoRoutingSimulationRequest) (VideoRoutingSimulationResult, error) {
-	rules, err := GetVideoRoutingRuleSet(request.Model, request.Group)
+	requestPath := strings.TrimSpace(request.RequestPath)
+	if requestPath == "" {
+		requestPath = DefaultVideoRoutingRequestPath
+	}
+	rules, err := getVideoRoutingRuleSetForPath(request.Model, request.Group, requestPath)
 	result := VideoRoutingSimulationResult{
 		VideoRoutingRuleSet: rules,
 		Features: VideoRequestFeatures{
@@ -132,7 +176,8 @@ func SimulateVideoRouting(request VideoRoutingSimulationRequest) (VideoRoutingSi
 		candidate := &result.Candidates[i]
 		eligible := candidate.ConfigurationError == "" && candidate.Capability != nil
 		if candidate.Capability != nil {
-			candidate.Violations = MatchVideoCapability(result.Features, *candidate.Capability)
+			features := videoFeaturesForCapability(result.Features, *candidate.Capability)
+			candidate.Violations = MatchVideoCapability(features, *candidate.Capability)
 			eligible = eligible && len(candidate.Violations) == 0
 		} else if !result.Strict && candidate.ConfigurationError == "" {
 			eligible = true

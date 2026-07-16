@@ -3,6 +3,8 @@ package sora
 import (
 	"mime/multipart"
 	"strings"
+
+	"github.com/QuantumNous/new-api/common"
 )
 
 func applySoraModelJSONProfile(body map[string]interface{}, profile soraModelProfile) {
@@ -34,9 +36,19 @@ func applyContentRequestRules(body map[string]interface{}, rules *contentRequest
 		content := make([]interface{}, 0)
 		content = appendLegacyURLContent(content, "image_url", body["images"])
 		content = appendLegacyURLContent(content, "image_url", body["image"])
+		content = appendLegacyURLContent(content, "image_url", body["image_urls"])
 		content = appendLegacyURLContent(content, "image_url", body["input_reference"])
+		content = appendLegacyURLContent(content, "image_url", nestedRequestValue(body, "input", "start_frames"))
+		content = appendLegacyURLContent(content, "image_url", nestedRequestValue(body, "input", "image_references"))
+		content = appendLegacyURLContent(content, "image_url", nestedRequestValue(body, "metadata", "start_frames"))
+		content = appendLegacyURLContent(content, "video_url", body["video"])
 		content = appendLegacyURLContent(content, "video_url", body["videos"])
+		content = appendLegacyURLContent(content, "video_url", body["video_url"])
+		content = appendLegacyURLContent(content, "video_url", body["video_urls"])
+		content = appendLegacyURLContent(content, "audio_url", body["audio"])
 		content = appendLegacyURLContent(content, "audio_url", body["audios"])
+		content = appendLegacyURLContent(content, "audio_url", body["audio_url"])
+		content = appendLegacyURLContent(content, "audio_url", body["audio_urls"])
 		if prompt, ok := body["prompt"].(string); ok && strings.TrimSpace(prompt) != "" {
 			content = append(content, map[string]interface{}{
 				"type": "text",
@@ -46,8 +58,51 @@ func applyContentRequestRules(body map[string]interface{}, rules *contentRequest
 		body["content"] = content
 	}
 
-	for _, field := range []string{"images", "image", "input_reference", "videos", "audios"} {
+	for _, field := range []string{
+		"images", "image", "image_urls", "input_reference",
+		"video", "videos", "video_url", "video_urls",
+		"audio", "audios", "audio_url", "audio_urls",
+	} {
 		delete(body, field)
+	}
+	deleteNestedRequestFields(body, "input", "start_frames", "image_references")
+	deleteNestedRequestFields(body, "metadata", "start_frames")
+}
+
+func nestedRequestValue(body map[string]interface{}, parent, field string) interface{} {
+	value, ok := nestedRequestMap(body, parent)
+	if !ok {
+		return nil
+	}
+	return value[field]
+}
+
+func deleteNestedRequestFields(body map[string]interface{}, parent string, fields ...string) {
+	value, ok := nestedRequestMap(body, parent)
+	if !ok {
+		return
+	}
+	for _, field := range fields {
+		delete(value, field)
+	}
+	if len(value) == 0 {
+		delete(body, parent)
+	}
+}
+
+func nestedRequestMap(body map[string]interface{}, parent string) (map[string]interface{}, bool) {
+	switch value := body[parent].(type) {
+	case map[string]interface{}:
+		return value, true
+	case string:
+		parsed := make(map[string]interface{})
+		if err := common.UnmarshalJsonStr(value, &parsed); err != nil {
+			return nil, false
+		}
+		body[parent] = parsed
+		return parsed, true
+	default:
+		return nil, false
 	}
 }
 
@@ -73,13 +128,21 @@ func appendLegacyURLContent(content []interface{}, contentType string, value int
 	switch values := value.(type) {
 	case string:
 		appendURL(values)
+	case map[string]interface{}:
+		if rawURL, ok := values["url"].(string); ok {
+			appendURL(rawURL)
+		}
 	case []string:
 		for _, rawURL := range values {
 			appendURL(rawURL)
 		}
 	case []interface{}:
 		for _, item := range values {
-			if rawURL, ok := item.(string); ok {
+			switch item := item.(type) {
+			case string:
+				appendURL(item)
+			case map[string]interface{}:
+				rawURL, _ := item["url"].(string)
 				appendURL(rawURL)
 			}
 		}

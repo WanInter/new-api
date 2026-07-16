@@ -290,15 +290,19 @@ func countProfiledContent(req relaycommon.TaskSubmitReq) (contentItemCounts, err
 		if strings.TrimSpace(req.Prompt) != "" {
 			counts.text = 1
 		}
-		counts.images = countNonEmptyStrings(req.Images)
+		counts.images = countNonEmptyStrings(req.Images) +
+			countNonEmptyStrings(req.ImageURLs) +
+			countNonEmptyStrings(req.InputStartFrames) +
+			countNonEmptyStrings(req.InputImageReferences) +
+			countNonEmptyStrings(req.MetadataStartFrames)
 		if strings.TrimSpace(req.Image) != "" {
 			counts.images++
 		}
 		if strings.TrimSpace(req.InputReference) != "" {
 			counts.images++
 		}
-		counts.videos = countNonEmptyStrings(req.Videos)
-		counts.audios = countNonEmptyStrings(req.Audios)
+		counts.videos = countNonEmptyStrings(req.Videos) + countNonEmptyStrings(req.VideoURLs)
+		counts.audios = countNonEmptyStrings(req.Audios) + countNonEmptyStrings(req.AudioURLs)
 		return counts, nil
 	}
 

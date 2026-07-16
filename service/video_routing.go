@@ -18,6 +18,16 @@ type VideoRequestFeatures struct {
 	Audios      int    `json:"audios"`
 	Duration    *int   `json:"duration,omitempty"`
 	ContentType string `json:"content_type,omitempty"`
+
+	profiledContent *videoMediaCounts
+}
+
+type videoMediaCounts struct {
+	Images  int
+	Videos  int
+	Audios  int
+	Text    int
+	Invalid bool
 }
 
 type VideoConstraintViolation struct {
@@ -59,8 +69,8 @@ var defaultVideoCapabilitiesByChannelType = map[int]dto.VideoModelCapability{
 }
 
 var videoCapabilitiesByModel = map[string]dto.VideoModelCapability{
-	"ax2.0-9tu": capabilityWithLimits(nil, common.GetPointer(9), common.GetPointer(0), common.GetPointer(0), common.GetPointer(15), common.GetPointer(true)),
-	"sdquan-2":  capabilityWithLimits(common.GetPointer(1), common.GetPointer(4), common.GetPointer(3), common.GetPointer(1), common.GetPointer(15), common.GetPointer(true)),
+	"ax2.0-9tu": withContentRequestSemantics(capabilityWithLimits(nil, common.GetPointer(9), common.GetPointer(0), common.GetPointer(0), common.GetPointer(15), common.GetPointer(true))),
+	"sdquan-2":  withContentRequestSemantics(capabilityWithLimits(common.GetPointer(1), common.GetPointer(4), common.GetPointer(3), common.GetPointer(1), common.GetPointer(15), common.GetPointer(true))),
 }
 
 var videoCapabilitiesByChannelModel = map[channelModelCapabilityKey]dto.VideoModelCapability{
@@ -75,6 +85,12 @@ func capabilityWithLimits(minImages, maxImages, maxVideos, maxAudios, fixedDurat
 		FixedDuration: fixedDuration,
 		RequireJSON:   requireJSON,
 	}
+}
+
+func withContentRequestSemantics(capability dto.VideoModelCapability) dto.VideoModelCapability {
+	capability.ContentPrecedence = common.GetPointer(true)
+	capability.RequireText = common.GetPointer(true)
+	return capability
 }
 
 func IsStrictVideoRoutingModel(modelName string) bool {
@@ -145,6 +161,12 @@ func mergeVideoCapability(base, override dto.VideoModelCapability) dto.VideoMode
 	if override.RequireJSON != nil {
 		base.RequireJSON = common.GetPointer(*override.RequireJSON)
 	}
+	if override.RequireText != nil {
+		base.RequireText = common.GetPointer(*override.RequireText)
+	}
+	if override.ContentPrecedence != nil {
+		base.ContentPrecedence = common.GetPointer(*override.ContentPrecedence)
+	}
 	return base
 }
 
@@ -188,7 +210,31 @@ func MatchVideoCapability(features VideoRequestFeatures, capability dto.VideoMod
 	if capability.RequireJSON != nil && *capability.RequireJSON && !isJSONMediaType(features.ContentType) {
 		violations = append(violations, VideoConstraintViolation{Code: "content_type_mismatch", Field: "content_type"})
 	}
+	if capability.ContentPrecedence != nil && *capability.ContentPrecedence && features.profiledContent != nil {
+		if features.profiledContent.Invalid {
+			violations = append(violations, VideoConstraintViolation{Code: "invalid_content", Field: "content"})
+		}
+		if capability.RequireText != nil && *capability.RequireText && features.profiledContent.Text == 0 {
+			violations = append(violations, VideoConstraintViolation{
+				Code: "text_below_min", Field: "text",
+				Actual: common.GetPointer(0), Expected: common.GetPointer(1),
+			})
+		}
+	}
 	return violations
+}
+
+func videoFeaturesForCapability(features VideoRequestFeatures, capability dto.VideoModelCapability) VideoRequestFeatures {
+	if features.profiledContent == nil {
+		return features
+	}
+	if capability.ContentPrecedence == nil || !*capability.ContentPrecedence {
+		return features
+	}
+	features.Images = features.profiledContent.Images
+	features.Videos = features.profiledContent.Videos
+	features.Audios = features.profiledContent.Audios
+	return features
 }
 
 func matchVideoMediaRange(field string, actual int, mediaRange *dto.VideoMediaRange) []VideoConstraintViolation {
@@ -246,7 +292,7 @@ func EvaluateChannelVideoRouting(channel *model.Channel, publicModel string, fea
 
 	result.Capability = &effective.Capability
 	result.Sources = effective.Sources
-	result.Violations = MatchVideoCapability(features, effective.Capability)
+	result.Violations = MatchVideoCapability(videoFeaturesForCapability(features, effective.Capability), effective.Capability)
 	result.Eligible = len(result.Violations) == 0
 	return result
 }

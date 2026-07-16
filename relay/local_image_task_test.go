@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -126,6 +127,72 @@ func TestBuildLocalImageRequestBodyFlattensOpenAIParameters(t *testing.T) {
 	assert.Equal(t, true, upstream["prompt_extend"])
 	assert.Equal(t, false, upstream["watermark"])
 	assert.NotContains(t, upstream, "parameters")
+}
+
+func TestBuildLocalImageRequestBodyTracksParamOverrideModel(t *testing.T) {
+	imageReq := dto.ImageRequest{Model: "mapped-model", Prompt: "cat"}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, localImageGenerationPath, nil)
+	c.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{
+		RelayMode:   relayconstant.RelayModeImagesGenerations,
+		RelayFormat: types.RelayFormatOpenAIImage,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ApiType:       constant.APITypeOpenAI,
+			ParamOverride: map[string]interface{}{"model": "wire-model"},
+		},
+	}
+
+	body, err := buildLocalImageRequestBody(c, &openai.Adaptor{}, info, imageReq)
+	require.NoError(t, err)
+	bodyBytes, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	var upstream map[string]any
+	require.NoError(t, common.Unmarshal(bodyBytes, &upstream))
+	assert.Equal(t, "wire-model", upstream["model"])
+	assert.Equal(t, "wire-model", info.UpstreamModelName)
+}
+
+func TestExecuteLocalImageTaskStoresWireModel(t *testing.T) {
+	var receivedModel string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Model string `json:"model"`
+		}
+		require.NoError(t, common.DecodeJson(r.Body, &request))
+		receivedModel = request.Model
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1,"data":[{"url":"https://example.com/result.png"}]}`))
+	}))
+	defer server.Close()
+
+	request, err := common.Marshal(dto.ImageRequest{Model: "mapped-model", Prompt: "cat"})
+	require.NoError(t, err)
+	paramOverride := `{"model":"wire-model"}`
+	baseURL := server.URL
+	task := &model.Task{
+		ChannelId: 1,
+		Properties: model.Properties{
+			OriginModelName:   "public-model",
+			UpstreamModelName: "mapped-model",
+		},
+		PrivateData: model.TaskPrivateData{LocalImageTask: &model.LocalImageTaskPrivateData{
+			Request: request, ChannelType: constant.ChannelTypeOpenAI,
+			APIType: constant.APITypeOpenAI, BaseURL: server.URL,
+		}},
+	}
+	channel := &model.Channel{
+		Id: 1, Type: constant.ChannelTypeOpenAI, Key: "test-key",
+		BaseURL: &baseURL, ParamOverride: &paramOverride,
+	}
+
+	result, err := executeLocalImageTask(context.Background(), task, channel, channel.Key, "")
+
+	require.NoError(t, err)
+	assert.Equal(t, string(model.TaskStatusSuccess), result.Status)
+	assert.Equal(t, "wire-model", receivedModel)
+	assert.Equal(t, "wire-model", task.Properties.UpstreamModelName)
 }
 
 func TestBuildLocalImageRequestBodyConvertsJSONReferencesToMultipart(t *testing.T) {
