@@ -4756,6 +4756,8 @@
     "Supports at most {{expected}} videos": "Supports at most {{expected}} videos",
     "Supports at most {{expected}} audios": "Supports at most {{expected}} audios",
     "Requires a duration of {{expected}} seconds": "Requires a duration of {{expected}} seconds",
+    "Requires a duration of at least {{expected}} seconds": "Requires a duration of at least {{expected}} seconds",
+    "Supports a duration of at most {{expected}} seconds": "Supports a duration of at most {{expected}} seconds",
     "Requires an application/json request": "Requires an application/json request",
     "Channel does not support the video request path": "Channel does not support the video request path",
     "Explicit content contains an invalid item": "Explicit content contains an invalid item",

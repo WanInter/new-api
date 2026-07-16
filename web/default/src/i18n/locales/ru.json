@@ -4756,6 +4756,8 @@
     "Supports at most {{expected}} videos": "Поддерживается не более {{expected}} видео",
     "Supports at most {{expected}} audios": "Поддерживается не более {{expected}} аудиофайлов",
     "Requires a duration of {{expected}} seconds": "Требуется длительность {{expected}} секунд",
+    "Requires a duration of at least {{expected}} seconds": "Требуется длительность не менее {{expected}} секунд",
+    "Supports a duration of at most {{expected}} seconds": "Поддерживается длительность не более {{expected}} секунд",
     "Requires an application/json request": "Требуется запрос application/json",
     "Channel does not support the video request path": "Канал не поддерживает путь видеозапроса",
     "Explicit content contains an invalid item": "Явное поле content содержит недопустимый элемент",

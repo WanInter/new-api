@@ -67,6 +67,14 @@ const formatRange = (range) => {
   return `≤ ${range.max}`;
 };
 
+const formatDurationCapability = (capability) => {
+  if (capability?.fixed_duration !== undefined) {
+    return `${capability.fixed_duration}s`;
+  }
+  const range = formatRange(capability?.duration);
+  return range === '—' ? range : `${range}s`;
+};
+
 const violationText = (violation, t) => {
   const options = { actual: violation.actual, expected: violation.expected };
   const messages = {
@@ -75,6 +83,8 @@ const violationText = (violation, t) => {
     videos_above_max: t('最多支持 {{expected}} 个视频', options),
     audios_above_max: t('最多支持 {{expected}} 个音频', options),
     duration_mismatch: t('仅支持 {{expected}} 秒时长', options),
+    duration_below_min: t('时长至少为 {{expected}} 秒', options),
+    duration_above_max: t('时长最多为 {{expected}} 秒', options),
     content_type_mismatch: t('仅支持 application/json 请求'),
     missing_capability: t('未配置能力档案'),
     invalid_content: t('显式 content 包含无效内容项'),
@@ -168,9 +178,7 @@ const CandidateDetails = ({ candidate, onClose, t }) => (
               },
               {
                 key: t('时长'),
-                value: candidate.capability?.fixed_duration
-                  ? `${candidate.capability.fixed_duration}s`
-                  : '—',
+                value: formatDurationCapability(candidate.capability),
               },
               {
                 key: 'Content-Type',
@@ -327,10 +335,7 @@ const ChannelRouting = () => {
       },
       {
         title: t('时长'),
-        render: (_, record) =>
-          record.capability?.fixed_duration
-            ? `${record.capability.fixed_duration}s`
-            : '—',
+        render: (_, record) => formatDurationCapability(record.capability),
       },
       { title: t('优先级'), dataIndex: 'priority' },
       { title: t('权重'), dataIndex: 'weight' },

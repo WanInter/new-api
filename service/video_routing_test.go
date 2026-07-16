@@ -101,6 +101,77 @@ func TestEvaluateChannelVideoRoutingStrictModelRejectsUnknownCapability(t *testi
 	assert.Equal(t, "missing_capability", result.Violations[0].Code)
 }
 
+func TestEvaluateChannelVideoRoutingSeedanceSlowCapability(t *testing.T) {
+	channel := channelWithVideoModelMapping(t, constant.ChannelTypeSora, seedance2Slow15sModel)
+
+	testCases := []struct {
+		name          string
+		features      VideoRequestFeatures
+		wantEligible  bool
+		wantViolation string
+	}{
+		{
+			name:         "maximum media at minimum duration",
+			features:     VideoRequestFeatures{Images: 9, Videos: 3, Audios: 3, Duration: common.GetPointer(5)},
+			wantEligible: true,
+		},
+		{
+			name:         "maximum duration",
+			features:     VideoRequestFeatures{Duration: common.GetPointer(15)},
+			wantEligible: true,
+		},
+		{
+			name:         "duration omitted",
+			features:     VideoRequestFeatures{},
+			wantEligible: true,
+		},
+		{
+			name:          "duration below minimum",
+			features:      VideoRequestFeatures{Duration: common.GetPointer(4)},
+			wantViolation: "duration_below_min",
+		},
+		{
+			name:          "duration above maximum",
+			features:      VideoRequestFeatures{Duration: common.GetPointer(16)},
+			wantViolation: "duration_above_max",
+		},
+		{
+			name:          "too many images",
+			features:      VideoRequestFeatures{Images: 10},
+			wantViolation: "images_above_max",
+		},
+		{
+			name:          "too many videos",
+			features:      VideoRequestFeatures{Videos: 4},
+			wantViolation: "videos_above_max",
+		},
+		{
+			name:          "too many audios",
+			features:      VideoRequestFeatures{Audios: 4},
+			wantViolation: "audios_above_max",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			result := EvaluateChannelVideoRouting(channel, StrictVideoRoutingModelSDBak1, testCase.features)
+
+			assert.Equal(t, testCase.wantEligible, result.Eligible)
+			assert.Equal(t, seedance2Slow15sModel, result.Mapping.Model)
+			require.NotNil(t, result.Capability)
+			require.NotNil(t, result.Capability.Duration)
+			assert.Equal(t, common.GetPointer(5), result.Capability.Duration.Min)
+			assert.Equal(t, common.GetPointer(15), result.Capability.Duration.Max)
+			if testCase.wantViolation == "" {
+				assert.Empty(t, result.Violations)
+				return
+			}
+			require.Len(t, result.Violations, 1)
+			assert.Equal(t, testCase.wantViolation, result.Violations[0].Code)
+		})
+	}
+}
+
 func TestGetVideoRequestFeaturesCountsEveryReferenceEntry(t *testing.T) {
 	body := `{
 		"model":"sd-bak-1",

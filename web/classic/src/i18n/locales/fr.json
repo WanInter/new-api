@@ -3695,6 +3695,8 @@
     "最多支持 {{expected}} 个视频": "Prend en charge au maximum {{expected}} vidéos",
     "最多支持 {{expected}} 个音频": "Prend en charge au maximum {{expected}} fichiers audio",
     "仅支持 {{expected}} 秒时长": "Nécessite une durée de {{expected}} secondes",
+    "时长至少为 {{expected}} 秒": "Nécessite une durée d'au moins {{expected}} secondes",
+    "时长最多为 {{expected}} 秒": "Prend en charge une durée maximale de {{expected}} secondes",
     "仅支持 application/json 请求": "Nécessite une requête application/json",
     "渠道不支持视频请求路径": "Le canal ne prend pas en charge le chemin de requête vidéo",
     "显式 content 包含无效内容项": "Le contenu explicite contient un élément invalide",

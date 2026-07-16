@@ -12,6 +12,8 @@ import (
 
 const StrictVideoRoutingModelSDBak1 = "sd-bak-1"
 
+const seedance2Slow15sModel = "seedance-2-0-15s-slow"
+
 type VideoRequestFeatures struct {
 	Images      int    `json:"images"`
 	Videos      int    `json:"videos"`
@@ -69,8 +71,9 @@ var defaultVideoCapabilitiesByChannelType = map[int]dto.VideoModelCapability{
 }
 
 var videoCapabilitiesByModel = map[string]dto.VideoModelCapability{
-	"ax2.0-9tu": withContentRequestSemantics(capabilityWithLimits(nil, common.GetPointer(9), common.GetPointer(0), common.GetPointer(0), common.GetPointer(15), common.GetPointer(true))),
-	"sdquan-2":  withContentRequestSemantics(capabilityWithLimits(common.GetPointer(1), common.GetPointer(4), common.GetPointer(3), common.GetPointer(1), common.GetPointer(15), common.GetPointer(true))),
+	"ax2.0-9tu":           withContentRequestSemantics(capabilityWithLimits(nil, common.GetPointer(9), common.GetPointer(0), common.GetPointer(0), common.GetPointer(15), common.GetPointer(true))),
+	"sdquan-2":            withContentRequestSemantics(capabilityWithLimits(common.GetPointer(1), common.GetPointer(4), common.GetPointer(3), common.GetPointer(1), common.GetPointer(15), common.GetPointer(true))),
+	seedance2Slow15sModel: withDurationRange(capabilityWithLimits(nil, common.GetPointer(9), common.GetPointer(3), common.GetPointer(3), nil, nil), 5, 15),
 }
 
 var videoCapabilitiesByChannelModel = map[channelModelCapabilityKey]dto.VideoModelCapability{
@@ -90,6 +93,14 @@ func capabilityWithLimits(minImages, maxImages, maxVideos, maxAudios, fixedDurat
 func withContentRequestSemantics(capability dto.VideoModelCapability) dto.VideoModelCapability {
 	capability.ContentPrecedence = common.GetPointer(true)
 	capability.RequireText = common.GetPointer(true)
+	return capability
+}
+
+func withDurationRange(capability dto.VideoModelCapability, minDuration, maxDuration int) dto.VideoModelCapability {
+	capability.Duration = &dto.VideoMediaRange{
+		Min: common.GetPointer(minDuration),
+		Max: common.GetPointer(maxDuration),
+	}
 	return capability
 }
 
@@ -155,8 +166,13 @@ func mergeVideoCapability(base, override dto.VideoModelCapability) dto.VideoMode
 	base.Images = mergeVideoMediaRange(base.Images, override.Images)
 	base.Videos = mergeVideoMediaRange(base.Videos, override.Videos)
 	base.Audios = mergeVideoMediaRange(base.Audios, override.Audios)
+	if override.Duration != nil {
+		base.Duration = mergeVideoMediaRange(nil, override.Duration)
+		base.FixedDuration = nil
+	}
 	if override.FixedDuration != nil {
 		base.FixedDuration = common.GetPointer(*override.FixedDuration)
+		base.Duration = nil
 	}
 	if override.RequireJSON != nil {
 		base.RequireJSON = common.GetPointer(*override.RequireJSON)
@@ -199,13 +215,17 @@ func MatchVideoCapability(features VideoRequestFeatures, capability dto.VideoMod
 	violations = append(violations, matchVideoMediaRange("images", features.Images, capability.Images)...)
 	violations = append(violations, matchVideoMediaRange("videos", features.Videos, capability.Videos)...)
 	violations = append(violations, matchVideoMediaRange("audios", features.Audios, capability.Audios)...)
-	if capability.FixedDuration != nil && features.Duration != nil && *features.Duration != *capability.FixedDuration {
-		violations = append(violations, VideoConstraintViolation{
-			Code:     "duration_mismatch",
-			Field:    "duration",
-			Actual:   common.GetPointer(*features.Duration),
-			Expected: common.GetPointer(*capability.FixedDuration),
-		})
+	if features.Duration != nil {
+		if capability.FixedDuration != nil && *features.Duration != *capability.FixedDuration {
+			violations = append(violations, VideoConstraintViolation{
+				Code:     "duration_mismatch",
+				Field:    "duration",
+				Actual:   common.GetPointer(*features.Duration),
+				Expected: common.GetPointer(*capability.FixedDuration),
+			})
+		} else if capability.Duration != nil {
+			violations = append(violations, matchVideoMediaRange("duration", *features.Duration, capability.Duration)...)
+		}
 	}
 	if capability.RequireJSON != nil && *capability.RequireJSON && !isJSONMediaType(features.ContentType) {
 		violations = append(violations, VideoConstraintViolation{Code: "content_type_mismatch", Field: "content_type"})

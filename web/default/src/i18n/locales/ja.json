@@ -4756,6 +4756,8 @@
     "Supports at most {{expected}} videos": "動画は最大 {{expected}} 件まで対応します",
     "Supports at most {{expected}} audios": "音声は最大 {{expected}} 件まで対応します",
     "Requires a duration of {{expected}} seconds": "{{expected}} 秒の長さが必要です",
+    "Requires a duration of at least {{expected}} seconds": "少なくとも {{expected}} 秒の長さが必要です",
+    "Supports a duration of at most {{expected}} seconds": "最大 {{expected}} 秒の長さに対応します",
     "Requires an application/json request": "application/json リクエストが必要です",
     "Channel does not support the video request path": "チャネルは動画リクエストパスをサポートしていません",
     "Explicit content contains an invalid item": "明示的な content に無効な項目が含まれています",

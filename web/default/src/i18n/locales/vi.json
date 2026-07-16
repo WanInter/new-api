@@ -4756,6 +4756,8 @@
     "Supports at most {{expected}} videos": "Hỗ trợ tối đa {{expected}} video",
     "Supports at most {{expected}} audios": "Hỗ trợ tối đa {{expected}} tệp âm thanh",
     "Requires a duration of {{expected}} seconds": "Yêu cầu thời lượng {{expected}} giây",
+    "Requires a duration of at least {{expected}} seconds": "Yêu cầu thời lượng ít nhất {{expected}} giây",
+    "Supports a duration of at most {{expected}} seconds": "Hỗ trợ thời lượng tối đa {{expected}} giây",
     "Requires an application/json request": "Yêu cầu request application/json",
     "Channel does not support the video request path": "Kênh không hỗ trợ đường dẫn request video",
     "Explicit content contains an invalid item": "Trường content tường minh chứa một mục không hợp lệ",

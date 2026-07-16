@@ -4228,6 +4228,8 @@
     "最多支持 {{expected}} 个视频": "Hỗ trợ tối đa {{expected}} video",
     "最多支持 {{expected}} 个音频": "Hỗ trợ tối đa {{expected}} tệp âm thanh",
     "仅支持 {{expected}} 秒时长": "Yêu cầu thời lượng {{expected}} giây",
+    "时长至少为 {{expected}} 秒": "Yêu cầu thời lượng ít nhất {{expected}} giây",
+    "时长最多为 {{expected}} 秒": "Hỗ trợ thời lượng tối đa {{expected}} giây",
     "仅支持 application/json 请求": "Yêu cầu request application/json",
     "渠道不支持视频请求路径": "Kênh không hỗ trợ đường dẫn request video",
     "显式 content 包含无效内容项": "Trường content tường minh chứa một mục không hợp lệ",

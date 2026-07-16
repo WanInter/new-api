@@ -78,6 +78,16 @@ function formatRange(range?: VideoMediaRange) {
   return `≤ ${range.max}`
 }
 
+function formatDurationCapability(
+  capability?: VideoRoutingCandidate['capability']
+) {
+  if (capability?.fixed_duration !== undefined) {
+    return `${capability.fixed_duration}s`
+  }
+  const range = formatRange(capability?.duration)
+  return range === '—' ? range : `${range}s`
+}
+
 function violationText(
   violation: NonNullable<VideoRoutingCandidate['violations']>[number],
   t: (key: string, options?: Record<string, unknown>) => string
@@ -89,6 +99,14 @@ function violationText(
     videos_above_max: t('Supports at most {{expected}} videos', values),
     audios_above_max: t('Supports at most {{expected}} audios', values),
     duration_mismatch: t('Requires a duration of {{expected}} seconds', values),
+    duration_below_min: t(
+      'Requires a duration of at least {{expected}} seconds',
+      values
+    ),
+    duration_above_max: t(
+      'Supports a duration of at most {{expected}} seconds',
+      values
+    ),
     content_type_mismatch: t('Requires an application/json request'),
     missing_capability: t('No capability profile is configured'),
     invalid_content: t('Explicit content contains an invalid item'),
@@ -205,9 +223,7 @@ function CandidateTable({
                   {formatRange(candidate.capability?.audios)}
                 </TableCell>
                 <TableCell>
-                  {candidate.capability?.fixed_duration
-                    ? `${candidate.capability.fixed_duration}s`
-                    : '—'}
+                  {formatDurationCapability(candidate.capability)}
                 </TableCell>
                 <TableCell>{candidate.priority}</TableCell>
                 <TableCell>{candidate.weight}</TableCell>
@@ -286,11 +302,7 @@ function CandidateDetails({
                 <dt className='text-muted-foreground'>{t('Audios')}</dt>
                 <dd>{formatRange(candidate.capability?.audios)}</dd>
                 <dt className='text-muted-foreground'>{t('Duration')}</dt>
-                <dd>
-                  {candidate.capability?.fixed_duration
-                    ? `${candidate.capability.fixed_duration}s`
-                    : '—'}
-                </dd>
+                <dd>{formatDurationCapability(candidate.capability)}</dd>
                 <dt className='text-muted-foreground'>{t('Content Type')}</dt>
                 <dd>
                   {candidate.capability?.require_json

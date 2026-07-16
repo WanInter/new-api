@@ -25,6 +25,7 @@ export type VideoModelCapability = {
   images?: VideoMediaRange
   videos?: VideoMediaRange
   audios?: VideoMediaRange
+  duration?: VideoMediaRange
   fixed_duration?: number
   require_json?: boolean
   require_text?: boolean

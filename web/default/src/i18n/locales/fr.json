@@ -4756,6 +4756,8 @@
     "Supports at most {{expected}} videos": "Prend en charge au maximum {{expected}} vidéos",
     "Supports at most {{expected}} audios": "Prend en charge au maximum {{expected}} fichiers audio",
     "Requires a duration of {{expected}} seconds": "Nécessite une durée de {{expected}} secondes",
+    "Requires a duration of at least {{expected}} seconds": "Nécessite une durée d'au moins {{expected}} secondes",
+    "Supports a duration of at most {{expected}} seconds": "Prend en charge une durée maximale de {{expected}} secondes",
     "Requires an application/json request": "Nécessite une requête application/json",
     "Channel does not support the video request path": "Le canal ne prend pas en charge le chemin de requête vidéo",
     "Explicit content contains an invalid item": "Le contenu explicite contient un élément invalide",

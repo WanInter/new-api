@@ -11,6 +11,7 @@ type VideoModelCapability struct {
 	Images        *VideoMediaRange `json:"images,omitempty"`
 	Videos        *VideoMediaRange `json:"videos,omitempty"`
 	Audios        *VideoMediaRange `json:"audios,omitempty"`
+	Duration      *VideoMediaRange `json:"duration,omitempty"`
 	FixedDuration *int             `json:"fixed_duration,omitempty"`
 	RequireJSON   *bool            `json:"require_json,omitempty"`
 	RequireText   *bool            `json:"require_text,omitempty"`
@@ -65,6 +66,20 @@ func (c VideoModelCapability) Validate() error {
 	}
 	if c.FixedDuration != nil && *c.FixedDuration <= 0 {
 		return fmt.Errorf("fixed_duration must be positive")
+	}
+	if c.Duration != nil {
+		if c.FixedDuration != nil {
+			return fmt.Errorf("duration and fixed_duration must not both be set")
+		}
+		if c.Duration.Min != nil && *c.Duration.Min <= 0 {
+			return fmt.Errorf("duration.min must be positive")
+		}
+		if c.Duration.Max != nil && *c.Duration.Max <= 0 {
+			return fmt.Errorf("duration.max must be positive")
+		}
+		if c.Duration.Min != nil && c.Duration.Max != nil && *c.Duration.Min > *c.Duration.Max {
+			return fmt.Errorf("duration.min must not exceed duration.max")
+		}
 	}
 	return nil
 }
