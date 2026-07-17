@@ -31,28 +31,60 @@ const (
 
 var ModelList = []string{"seedance-2.0"}
 
+type scalarOrStringList []string
+
+func (values *scalarOrStringList) UnmarshalJSON(data []byte) error {
+	var list []string
+	if err := common.Unmarshal(data, &list); err == nil {
+		*values = list
+		return nil
+	}
+	var scalar string
+	if err := common.Unmarshal(data, &scalar); err != nil {
+		return err
+	}
+	*values = []string{scalar}
+	return nil
+}
+
+type lenientScalarOrStringList scalarOrStringList
+
+func (values *lenientScalarOrStringList) UnmarshalJSON(data []byte) error {
+	var parsed scalarOrStringList
+	if err := parsed.UnmarshalJSON(data); err != nil {
+		*values = nil
+		return nil
+	}
+	*values = lenientScalarOrStringList(parsed)
+	return nil
+}
+
 type jsonRequest struct {
-	Prompt           string         `json:"prompt"`
-	Model            string         `json:"model,omitempty"`
-	ModelID          string         `json:"model_id,omitempty"`
-	Type             string         `json:"type,omitempty"`
-	Image            string         `json:"image,omitempty"`
-	Images           []string       `json:"images,omitempty"`
-	ImageURLs        []string       `json:"image_urls,omitempty"`
-	VideoURL         string         `json:"video_url,omitempty"`
-	VideoURLs        []string       `json:"video_urls,omitempty"`
-	AudioURL         string         `json:"audio_url,omitempty"`
-	AudioURLs        []string       `json:"audio_urls,omitempty"`
-	Duration         int            `json:"duration,omitempty"`
-	Seconds          string         `json:"seconds,omitempty"`
-	Size             string         `json:"size,omitempty"`
-	Orientation      string         `json:"orientation,omitempty"`
-	Watermark        *bool          `json:"watermark,omitempty"`
-	AspectRatio      string         `json:"aspect_ratio,omitempty"`
-	AspectRatioCamel string         `json:"aspectRatio,omitempty"`
-	Ratio            string         `json:"ratio,omitempty"`
-	Params           map[string]any `json:"params,omitempty"`
-	Metadata         map[string]any `json:"metadata,omitempty"`
+	Prompt           string                    `json:"prompt"`
+	Model            string                    `json:"model,omitempty"`
+	ModelID          string                    `json:"model_id,omitempty"`
+	Type             string                    `json:"type,omitempty"`
+	Image            string                    `json:"image,omitempty"`
+	Images           []string                  `json:"images,omitempty"`
+	ImageURLs        []string                  `json:"image_urls,omitempty"`
+	Video            scalarOrStringList        `json:"video,omitempty"`
+	Videos           scalarOrStringList        `json:"videos,omitempty"`
+	VideoURL         scalarOrStringList        `json:"video_url,omitempty"`
+	VideoURLs        scalarOrStringList        `json:"video_urls,omitempty"`
+	Audio            lenientScalarOrStringList `json:"audio,omitempty"`
+	Audios           scalarOrStringList        `json:"audios,omitempty"`
+	AudioURL         scalarOrStringList        `json:"audio_url,omitempty"`
+	AudioURLs        scalarOrStringList        `json:"audio_urls,omitempty"`
+	Duration         int                       `json:"duration,omitempty"`
+	Seconds          string                    `json:"seconds,omitempty"`
+	Size             string                    `json:"size,omitempty"`
+	Orientation      string                    `json:"orientation,omitempty"`
+	Watermark        *bool                     `json:"watermark,omitempty"`
+	AspectRatio      string                    `json:"aspect_ratio,omitempty"`
+	AspectRatioCamel string                    `json:"aspectRatio,omitempty"`
+	Ratio            string                    `json:"ratio,omitempty"`
+	Params           map[string]any            `json:"params,omitempty"`
+	Metadata         map[string]any            `json:"metadata,omitempty"`
 }
 
 type requestPayload struct {
@@ -176,15 +208,13 @@ func copyAggcRawMetadata(raw jsonRequest, metadata map[string]any) {
 			metadata[k] = v
 		}
 	}
-	if strings.TrimSpace(raw.VideoURL) != "" {
-		metadata["video_urls"] = mergeStrings(stringList(metadata["video_urls"]), []string{raw.VideoURL}, raw.VideoURLs)
-	} else if len(raw.VideoURLs) > 0 {
-		metadata["video_urls"] = mergeStrings(stringList(metadata["video_urls"]), raw.VideoURLs)
+	topLevelVideoURLs := mergeStrings([]string(raw.Video), []string(raw.Videos), []string(raw.VideoURL), []string(raw.VideoURLs))
+	if len(topLevelVideoURLs) > 0 {
+		metadata["video_urls"] = mergeStrings(stringList(metadata["video_urls"]), topLevelVideoURLs)
 	}
-	if strings.TrimSpace(raw.AudioURL) != "" {
-		metadata["audio_urls"] = mergeStrings(stringList(metadata["audio_urls"]), []string{raw.AudioURL}, raw.AudioURLs)
-	} else if len(raw.AudioURLs) > 0 {
-		metadata["audio_urls"] = mergeStrings(stringList(metadata["audio_urls"]), raw.AudioURLs)
+	topLevelAudioURLs := mergeStrings([]string(raw.Audio), []string(raw.Audios), []string(raw.AudioURL), []string(raw.AudioURLs))
+	if len(topLevelAudioURLs) > 0 {
+		metadata["audio_urls"] = mergeStrings(stringList(metadata["audio_urls"]), topLevelAudioURLs)
 	}
 }
 

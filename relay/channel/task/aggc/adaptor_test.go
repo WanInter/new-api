@@ -1,11 +1,16 @@
 package aggc
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -125,6 +130,94 @@ func TestDoResponseExtractsTaskID(t *testing.T) {
 		t.Fatalf("unexpected job id: %s", anyToString(resp.Data.JobID))
 	}
 	_ = adaptor
+}
+
+func TestBuildRequestBodyPreservesMediaAliases(t *testing.T) {
+	testCases := []struct {
+		name       string
+		mediaJSON  string
+		wantVideos []string
+		wantAudios []string
+	}{
+		{
+			name:       "canonical arrays",
+			mediaJSON:  `"videos":["video-1.mp4"],"audios":["audio-1.mp3"]`,
+			wantVideos: []string{"video-1.mp4"},
+			wantAudios: []string{"audio-1.mp3"},
+		},
+		{
+			name:       "canonical scalars",
+			mediaJSON:  `"videos":"video-1.mp4","audios":"audio-1.mp3"`,
+			wantVideos: []string{"video-1.mp4"},
+			wantAudios: []string{"audio-1.mp3"},
+		},
+		{
+			name:       "singular aliases",
+			mediaJSON:  `"video":"video-1.mp4","audio":"audio-1.mp3"`,
+			wantVideos: []string{"video-1.mp4"},
+			wantAudios: []string{"audio-1.mp3"},
+		},
+		{
+			name:       "URL aliases",
+			mediaJSON:  `"video_url":"video-1.mp4","video_urls":"video-2.mp4","audio_url":"audio-1.mp3","audio_urls":"audio-2.mp3"`,
+			wantVideos: []string{"video-1.mp4", "video-2.mp4"},
+			wantAudios: []string{"audio-1.mp3", "audio-2.mp3"},
+		},
+		{
+			name:      "boolean audio switch",
+			mediaJSON: `"audio":true`,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload := buildAggcRequestPayload(t, `{
+				"model":"sd-bak-1",
+				"prompt":"animate the references",
+				`+testCase.mediaJSON+`
+			}`)
+			assert.Equal(t, testCase.wantVideos, payload.Params.VideoURLs)
+			assert.Equal(t, testCase.wantAudios, payload.Params.AudioURLs)
+		})
+	}
+}
+
+func TestBuildRequestBodyPreservesMetadataOnlyMediaEntries(t *testing.T) {
+	payload := buildAggcRequestPayload(t, `{
+		"model":"sd-bak-1",
+		"prompt":"animate the references",
+		"metadata":{
+			"video_urls":["same.mp4","same.mp4"],
+			"audio_urls":["same.mp3","same.mp3"]
+		}
+	}`)
+
+	assert.Equal(t, []string{"same.mp4", "same.mp4"}, payload.Params.VideoURLs)
+	assert.Equal(t, []string{"same.mp3", "same.mp3"}, payload.Params.AudioURLs)
+}
+
+func buildAggcRequestPayload(t *testing.T, body string) requestPayload {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	adaptor := &TaskAdaptor{}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "sd-bak-1",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+
+	bodyReader, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	requestBody, err := io.ReadAll(bodyReader)
+	require.NoError(t, err)
+
+	var payload requestPayload
+	require.NoError(t, common.Unmarshal(requestBody, &payload))
+	return payload
 }
 
 func TestConvertToRequestPayloadConvertsTopLevelSize(t *testing.T) {
