@@ -40,6 +40,12 @@ export const STATIC_I18N_KEYS = [
   'Integrations',
   'Models',
   'Maintenance',
+  'Task Result Storage',
+  'Database',
+  'Environment variables',
+  'Defaults',
+  'Configured',
+  'Not configured',
 
   // Pricing constants
   'Name',

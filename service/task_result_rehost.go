@@ -51,6 +51,7 @@ type taskResultRehostConfig struct {
 	Proxy           string
 	MaxBytes        int64
 	Timeout         time.Duration
+	LoadError       error
 }
 
 func TaskResultRehostEnabledForURL(rawURL string) bool {
@@ -143,15 +144,9 @@ func loadTaskResultRehostConfig() taskResultRehostConfig {
 	bucket := strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_BUCKET", ""))
 	region := strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_REGION", ""))
 	endpoint := strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_ENDPOINT", ""))
-	if endpoint == "" && backend == taskResultRehostBackendTencentCOS && region != "" {
-		endpoint = tencentCOSServiceEndpoint(region)
-	}
 	uploadEndpoint := strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_UPLOAD_ENDPOINT", endpoint))
 	publicBaseURL := strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_PUBLIC_BASE_URL", ""))
-	if publicBaseURL == "" && backend == taskResultRehostBackendTencentCOS && bucket != "" && region != "" {
-		publicBaseURL = tencentCOSBucketURL(bucket, region)
-	}
-	return taskResultRehostConfig{
+	cfg := taskResultRehostConfig{
 		Enabled:         common.GetEnvOrDefaultBool("TASK_RESULT_REHOST_ENABLED", false),
 		Domains:         parseRehostDomains(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_DOMAINS", "")),
 		Backend:         backend,
@@ -167,6 +162,7 @@ func loadTaskResultRehostConfig() taskResultRehostConfig {
 		MaxBytes:        int64(maxMB) * 1024 * 1024,
 		Timeout:         time.Duration(timeoutSeconds) * time.Second,
 	}
+	return applyStoredTaskResultRehostConfig(cfg)
 }
 
 func tencentCOSServiceEndpoint(region string) string {
@@ -223,6 +219,9 @@ func (c taskResultRehostConfig) withDataURLPrefix(task *model.Task) taskResultRe
 }
 
 func (c taskResultRehostConfig) validate() error {
+	if c.LoadError != nil {
+		return c.LoadError
+	}
 	switch c.Backend {
 	case taskResultRehostBackendAliyunOSS, taskResultRehostBackendS3, taskResultRehostBackendTencentCOS:
 	default:
@@ -383,6 +382,14 @@ func (c taskResultRehostConfig) upload(ctx context.Context, objectKey string, bo
 		Key:         ptr.String(objectKey),
 		Body:        body,
 		ContentType: ptr.String(contentType),
+	})
+	return err
+}
+
+func (c taskResultRehostConfig) deleteObject(ctx context.Context, objectKey string) error {
+	_, err := c.newObjectStorageClient(nil).DeleteObject(ctx, &s3.DeleteObjectInput{
+		Bucket: ptr.String(c.Bucket),
+		Key:    ptr.String(objectKey),
 	})
 	return err
 }

@@ -498,7 +498,13 @@ cd web/default && bun run build
 
 ## 14. Grok 视频结果自动转存配置
 
-`grok-image-video` / `grok-video-1.5` 上游可能返回 `https://vidgen.x.ai/...mp4`，部分用户或服务器无法直接访问。NewAPI 支持通过环境变量把命中的远程结果 URL 自动下载并转存到腾讯 COS。
+`grok-image-video` / `grok-video-1.5` 上游可能返回 `https://vidgen.x.ai/...mp4`，部分用户或服务器无法直接访问。NewAPI 支持把命中的远程结果 URL 自动下载并转存到腾讯 COS。
+
+生产环境应在管理后台的 `系统设置 -> 运维 -> 任务结果存储` 中维护配置。后台保存后，非敏感配置和 AES-GCM 加密后的凭证写入 `options` 表；运行时数据库配置优先于环境变量。SecretId、SecretKey 和下载代理均为只写字段，管理接口不会返回明文或密文。
+
+首次从后台保存时会读取当前环境变量中的凭证并加密迁移到数据库。迁移依赖稳定的 `CRYPTO_SECRET` 或 `SESSION_SECRET`，不得在已有密文的情况下修改该密钥，否则数据库凭证将无法解密。保存启用状态前会执行临时对象上传、匿名读取和删除；关闭转存不依赖 COS 当前可用性。
+
+以下环境变量仅作为尚未保存数据库配置时的兼容回退：
 
 关键配置：
 
@@ -509,8 +515,8 @@ TASK_RESULT_REHOST_BACKEND=tencent_cos
 TASK_RESULT_REHOST_BUCKET=your-bucket-APPID
 TASK_RESULT_REHOST_REGION=ap-guangzhou
 # 以下三个地址项均可省略。上传端点和默认公网地址会由桶名、地域自动生成；使用 CDN/自定义域名时只覆盖 PUBLIC_BASE_URL。
-TASK_RESULT_REHOST_ENDPOINT=https://cos.ap-guangzhou.myqcloud.com
-TASK_RESULT_REHOST_UPLOAD_ENDPOINT=https://cos.ap-guangzhou.myqcloud.com
+TASK_RESULT_REHOST_ENDPOINT=https://cos-internal.ap-guangzhou.myqcloud.com
+TASK_RESULT_REHOST_UPLOAD_ENDPOINT=https://cos-internal.ap-guangzhou.myqcloud.com
 TASK_RESULT_REHOST_PUBLIC_BASE_URL=https://your-bucket-APPID.cos.ap-guangzhou.myqcloud.com
 TASK_RESULT_REHOST_PREFIX=generated/newapi/videos
 TASK_RESULT_REHOST_ACCESS_KEY_ID=腾讯云SecretId
@@ -526,6 +532,7 @@ TASK_RESULT_REHOST_PROXY=http://host:port
 
 - 自动转存只在任务轮询到成功时触发。已经完成的历史任务不会自动补转存。
 - COS 桶名必须包含腾讯云 APPID 后缀，例如 `media-1250000000`。用于读取结果的桶或自定义域名必须允许客户端访问对象。
+- NewAPI 与 COS 位于同一腾讯云地域时，上传端点使用 `https://cos-internal.<region>.myqcloud.com`；返回给客户端的 `PUBLIC_BASE_URL` 仍使用公网桶域名或 CDN 域名。
 - 如果服务器无法访问 `vidgen.x.ai`，必须配置 `TASK_RESULT_REHOST_PROXY` 或渠道 proxy。
 - 成功后会替换任务 `PrivateData.ResultURL`，并把任务 Data 中相同的源 URL 一并替换为 COS URL，因此 `/v1/videos/{task_id}` 返回应不再出现 `vidgen.x.ai`。
 

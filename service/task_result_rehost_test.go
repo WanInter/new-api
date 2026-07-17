@@ -3,11 +3,13 @@ package service
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -103,6 +105,156 @@ func TestTaskResultRehostConfigRejectsUnsupportedBackend(t *testing.T) {
 	cfg := taskResultRehostConfig{Backend: "unknown"}
 	err := cfg.validate()
 	require.EqualError(t, err, "unsupported task result rehost backend: unknown")
+}
+
+func TestTaskResultRehostSettingsDatabaseOverridesEnvironment(t *testing.T) {
+	setupTaskResultRehostSettingsTest(t)
+	t.Setenv("TASK_RESULT_REHOST_BACKEND", "aliyun_oss")
+	t.Setenv("TASK_RESULT_REHOST_BUCKET", "environment-bucket")
+	t.Setenv("TASK_RESULT_REHOST_ACCESS_KEY_ID", "environment-id")
+	t.Setenv("TASK_RESULT_REHOST_ACCESS_KEY_SECRET", "environment-secret")
+
+	encryptedID, err := common.EncryptSecret("database-id", taskResultRehostAccessIDPurpose)
+	require.NoError(t, err)
+	encryptedSecret, err := common.EncryptSecret("database-secret", taskResultRehostAccessKeyPurpose)
+	require.NoError(t, err)
+	require.NoError(t, model.UpdateOptionsBulk(map[string]string{
+		taskResultRehostOptionConfigured:      "true",
+		taskResultRehostOptionEnabled:         "true",
+		taskResultRehostOptionDomains:         "vidgen.x.ai",
+		taskResultRehostOptionBackend:         "tencent_cos",
+		taskResultRehostOptionUploadEndpoint:  "https://cos-internal.ap-guangzhou.myqcloud.com",
+		taskResultRehostOptionBucket:          "database-bucket-1250000000",
+		taskResultRehostOptionRegion:          "ap-guangzhou",
+		taskResultRehostOptionPublicBaseURL:   "https://database-bucket-1250000000.cos.ap-guangzhou.myqcloud.com",
+		taskResultRehostOptionPrefixPath:      "generated/results",
+		taskResultRehostOptionMaxMB:           "256",
+		taskResultRehostOptionTimeoutSeconds:  "90",
+		taskResultRehostOptionAccessIDSecret:  encryptedID,
+		taskResultRehostOptionAccessKeySecret: encryptedSecret,
+		taskResultRehostOptionProxySecret:     "",
+	}))
+
+	cfg := loadTaskResultRehostConfig()
+	require.NoError(t, cfg.validate())
+	require.Equal(t, "database-bucket-1250000000", cfg.Bucket)
+	require.Equal(t, "database-id", cfg.AccessKeyID)
+	require.Equal(t, "database-secret", cfg.AccessKeySecret)
+
+	settings, err := GetTaskResultRehostSettings()
+	require.NoError(t, err)
+	require.Equal(t, "database", settings.ConfigSource)
+	require.Equal(t, "database", settings.CredentialSource)
+}
+
+func TestSaveTaskResultRehostSettingsMigratesEnvironmentCredentialsEncrypted(t *testing.T) {
+	setupTaskResultRehostSettingsTest(t)
+	t.Setenv("TASK_RESULT_REHOST_ACCESS_KEY_ID", "environment-id")
+	t.Setenv("TASK_RESULT_REHOST_ACCESS_KEY_SECRET", "environment-secret")
+
+	settings, err := saveTaskResultRehostSettings(context.Background(), validTaskResultRehostSettingsUpdate(), func(_ context.Context, cfg taskResultRehostConfig) (TaskResultRehostConnectionResult, error) {
+		require.Equal(t, "environment-id", cfg.AccessKeyID)
+		require.Equal(t, "environment-secret", cfg.AccessKeySecret)
+		return TaskResultRehostConnectionResult{Uploaded: true, Readable: true, CleanedUp: true}, nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, "database", settings.ConfigSource)
+	require.Equal(t, "database", settings.CredentialSource)
+
+	var storedID model.Option
+	require.NoError(t, model.DB.First(&storedID, "key = ?", taskResultRehostOptionAccessIDSecret).Error)
+	require.True(t, common.IsEncryptedSecret(storedID.Value))
+	require.NotContains(t, storedID.Value, "environment-id")
+
+	var storedSecret model.Option
+	require.NoError(t, model.DB.First(&storedSecret, "key = ?", taskResultRehostOptionAccessKeySecret).Error)
+	require.True(t, common.IsEncryptedSecret(storedSecret.Value))
+	require.NotContains(t, storedSecret.Value, "environment-secret")
+}
+
+func TestSaveTaskResultRehostSettingsDoesNotPersistFailedConnection(t *testing.T) {
+	setupTaskResultRehostSettingsTest(t)
+	t.Setenv("TASK_RESULT_REHOST_ACCESS_KEY_ID", "environment-id")
+	t.Setenv("TASK_RESULT_REHOST_ACCESS_KEY_SECRET", "environment-secret")
+
+	_, err := saveTaskResultRehostSettings(context.Background(), validTaskResultRehostSettingsUpdate(), func(_ context.Context, _ taskResultRehostConfig) (TaskResultRehostConnectionResult, error) {
+		return TaskResultRehostConnectionResult{}, fmt.Errorf("storage unavailable")
+	})
+	require.ErrorContains(t, err, "storage unavailable")
+
+	var count int64
+	require.NoError(t, model.DB.Model(&model.Option{}).Where("key LIKE ?", taskResultRehostOptionPrefix+"%").Count(&count).Error)
+	require.Zero(t, count)
+}
+
+func TestSaveTaskResultRehostSettingsCanDisableWithoutStorageConnection(t *testing.T) {
+	setupTaskResultRehostSettingsTest(t)
+	t.Setenv("TASK_RESULT_REHOST_ACCESS_KEY_ID", "environment-id")
+	t.Setenv("TASK_RESULT_REHOST_ACCESS_KEY_SECRET", "environment-secret")
+
+	update := validTaskResultRehostSettingsUpdate()
+	update.Enabled = false
+	settings, err := saveTaskResultRehostSettings(context.Background(), update, func(_ context.Context, _ taskResultRehostConfig) (TaskResultRehostConnectionResult, error) {
+		require.FailNow(t, "disabled settings must not require a storage connection")
+		return TaskResultRehostConnectionResult{}, nil
+	})
+
+	require.NoError(t, err)
+	require.False(t, settings.Enabled)
+	require.Equal(t, "database", settings.ConfigSource)
+}
+
+func setupTaskResultRehostSettingsTest(t *testing.T) {
+	t.Helper()
+	require.NoError(t, model.DB.AutoMigrate(&model.Option{}))
+	require.NoError(t, model.DB.Where("key LIKE ?", taskResultRehostOptionPrefix+"%").Delete(&model.Option{}).Error)
+
+	common.OptionMapRWMutex.Lock()
+	originalOptions := common.OptionMap
+	common.OptionMap = make(map[string]string)
+	common.OptionMapRWMutex.Unlock()
+	originalCryptoSecret := common.CryptoSecret
+	common.CryptoSecret = "task-result-rehost-test-secret"
+	t.Setenv("CRYPTO_SECRET", "task-result-rehost-test-secret")
+
+	for _, key := range []string{
+		"TASK_RESULT_REHOST_ENABLED",
+		"TASK_RESULT_REHOST_DOMAINS",
+		"TASK_RESULT_REHOST_BACKEND",
+		"TASK_RESULT_REHOST_ENDPOINT",
+		"TASK_RESULT_REHOST_UPLOAD_ENDPOINT",
+		"TASK_RESULT_REHOST_BUCKET",
+		"TASK_RESULT_REHOST_REGION",
+		"TASK_RESULT_REHOST_PUBLIC_BASE_URL",
+		"TASK_RESULT_REHOST_PREFIX",
+		"TASK_RESULT_REHOST_ACCESS_KEY_ID",
+		"TASK_RESULT_REHOST_ACCESS_KEY_SECRET",
+		"TASK_RESULT_REHOST_PROXY",
+	} {
+		t.Setenv(key, "")
+	}
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = originalOptions
+		common.OptionMapRWMutex.Unlock()
+		common.CryptoSecret = originalCryptoSecret
+		_ = model.DB.Where("key LIKE ?", taskResultRehostOptionPrefix+"%").Delete(&model.Option{}).Error
+	})
+}
+
+func validTaskResultRehostSettingsUpdate() TaskResultRehostSettingsUpdate {
+	return TaskResultRehostSettingsUpdate{
+		Enabled:        true,
+		Domains:        "vidgen.x.ai,example.com",
+		Backend:        taskResultRehostBackendTencentCOS,
+		UploadEndpoint: "https://cos-internal.ap-guangzhou.myqcloud.com",
+		Bucket:         "media-1250000000",
+		Region:         "ap-guangzhou",
+		PublicBaseURL:  "https://media-1250000000.cos.ap-guangzhou.myqcloud.com",
+		Prefix:         "generated/newapi/videos",
+		MaxMB:          512,
+		TimeoutSeconds: 180,
+	}
 }
 
 func TestDecodeRehostDataURL(t *testing.T) {

@@ -43,6 +43,7 @@ import {
 import axios from 'axios';
 import { useTranslation } from 'react-i18next';
 import CustomOAuthSetting from './CustomOAuthSetting';
+import TaskResultStorageSetting from './TaskResultStorageSetting';
 
 const SystemSetting = () => {
   const { t } = useTranslation();
@@ -783,6 +784,8 @@ const SystemSetting = () => {
                   <Button onClick={submitWorker}>{t('更新Worker设置')}</Button>
                 </Form.Section>
               </Card>
+
+              <TaskResultStorageSetting />
 
               <Card>
                 <Form.Section text={t('SSRF防护设置')}>
