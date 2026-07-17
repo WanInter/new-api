@@ -30,6 +30,10 @@ import (
 const (
 	defaultTaskResultRehostPrefix = "generated/newapi/videos"
 	imageTaskResultRehostPrefix   = "generated/newapi/images"
+
+	taskResultRehostBackendAliyunOSS  = "aliyun_oss"
+	taskResultRehostBackendS3         = "s3"
+	taskResultRehostBackendTencentCOS = "tencent_cos"
 )
 
 type taskResultRehostConfig struct {
@@ -67,9 +71,6 @@ func RehostTaskResultURL(ctx context.Context, task *model.Task, rawURL string, p
 	if task == nil {
 		return "", fmt.Errorf("task is nil")
 	}
-	if cfg.Backend != "aliyun_oss" && cfg.Backend != "s3" {
-		return "", fmt.Errorf("unsupported task result rehost backend: %s", cfg.Backend)
-	}
 	if err := cfg.validate(); err != nil {
 		return "", err
 	}
@@ -104,9 +105,6 @@ func RehostTaskResultDataURL(ctx context.Context, task *model.Task, dataURL stri
 	if task == nil {
 		return "", fmt.Errorf("task is nil")
 	}
-	if cfg.Backend != "aliyun_oss" && cfg.Backend != "s3" {
-		return "", fmt.Errorf("unsupported task result rehost backend: %s", cfg.Backend)
-	}
 	if err := cfg.validate(); err != nil {
 		return "", err
 	}
@@ -138,21 +136,30 @@ func loadTaskResultRehostConfig() taskResultRehostConfig {
 	if timeoutSeconds <= 0 {
 		timeoutSeconds = 180
 	}
-	backend := strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_BACKEND", "aliyun_oss"))
+	backend := strings.ToLower(strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_BACKEND", taskResultRehostBackendAliyunOSS)))
 	if backend == "" {
-		backend = "aliyun_oss"
+		backend = taskResultRehostBackendAliyunOSS
 	}
+	bucket := strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_BUCKET", ""))
+	region := strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_REGION", ""))
 	endpoint := strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_ENDPOINT", ""))
+	if endpoint == "" && backend == taskResultRehostBackendTencentCOS && region != "" {
+		endpoint = tencentCOSServiceEndpoint(region)
+	}
 	uploadEndpoint := strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_UPLOAD_ENDPOINT", endpoint))
+	publicBaseURL := strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_PUBLIC_BASE_URL", ""))
+	if publicBaseURL == "" && backend == taskResultRehostBackendTencentCOS && bucket != "" && region != "" {
+		publicBaseURL = tencentCOSBucketURL(bucket, region)
+	}
 	return taskResultRehostConfig{
 		Enabled:         common.GetEnvOrDefaultBool("TASK_RESULT_REHOST_ENABLED", false),
 		Domains:         parseRehostDomains(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_DOMAINS", "")),
 		Backend:         backend,
 		Endpoint:        endpoint,
 		UploadEndpoint:  uploadEndpoint,
-		Bucket:          strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_BUCKET", "")),
-		Region:          strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_REGION", "")),
-		PublicBaseURL:   strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_PUBLIC_BASE_URL", "")),
+		Bucket:          bucket,
+		Region:          region,
+		PublicBaseURL:   publicBaseURL,
 		Prefix:          strings.Trim(strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_PREFIX", defaultTaskResultRehostPrefix)), "/"),
 		AccessKeyID:     strings.TrimSpace(os.Getenv("TASK_RESULT_REHOST_ACCESS_KEY_ID")),
 		AccessKeySecret: strings.TrimSpace(os.Getenv("TASK_RESULT_REHOST_ACCESS_KEY_SECRET")),
@@ -160,6 +167,14 @@ func loadTaskResultRehostConfig() taskResultRehostConfig {
 		MaxBytes:        int64(maxMB) * 1024 * 1024,
 		Timeout:         time.Duration(timeoutSeconds) * time.Second,
 	}
+}
+
+func tencentCOSServiceEndpoint(region string) string {
+	return "https://cos." + strings.TrimSpace(region) + ".myqcloud.com"
+}
+
+func tencentCOSBucketURL(bucket, region string) string {
+	return "https://" + strings.TrimSpace(bucket) + ".cos." + strings.TrimSpace(region) + ".myqcloud.com"
 }
 
 func parseRehostDomains(value string) map[string]bool {
@@ -208,6 +223,12 @@ func (c taskResultRehostConfig) withDataURLPrefix(task *model.Task) taskResultRe
 }
 
 func (c taskResultRehostConfig) validate() error {
+	switch c.Backend {
+	case taskResultRehostBackendAliyunOSS, taskResultRehostBackendS3, taskResultRehostBackendTencentCOS:
+	default:
+		return fmt.Errorf("unsupported task result rehost backend: %s", c.Backend)
+	}
+
 	missing := []string{}
 	if c.UploadEndpoint == "" {
 		missing = append(missing, "TASK_RESULT_REHOST_UPLOAD_ENDPOINT")
@@ -356,17 +377,7 @@ func sanitizeObjectName(value string) string {
 }
 
 func (c taskResultRehostConfig) upload(ctx context.Context, objectKey string, body io.Reader, contentType string) error {
-	resolver := s3.EndpointResolverFunc(func(region string, options s3.EndpointResolverOptions) (aws.Endpoint, error) {
-		return aws.Endpoint{URL: c.UploadEndpoint, SigningRegion: c.Region}, nil
-	})
-	client := s3.New(s3.Options{
-		Region:                     c.Region,
-		Credentials:                credentials.NewStaticCredentialsProvider(c.AccessKeyID, c.AccessKeySecret, ""),
-		EndpointResolver:           resolver,
-		UsePathStyle:               false,
-		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
-		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
-	})
+	client := c.newObjectStorageClient(nil)
 	_, err := client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:      ptr.String(c.Bucket),
 		Key:         ptr.String(objectKey),
@@ -374,6 +385,21 @@ func (c taskResultRehostConfig) upload(ctx context.Context, objectKey string, bo
 		ContentType: ptr.String(contentType),
 	})
 	return err
+}
+
+func (c taskResultRehostConfig) newObjectStorageClient(httpClient s3.HTTPClient) *s3.Client {
+	resolver := s3.EndpointResolverFunc(func(region string, options s3.EndpointResolverOptions) (aws.Endpoint, error) {
+		return aws.Endpoint{URL: c.UploadEndpoint, SigningRegion: c.Region}, nil
+	})
+	return s3.New(s3.Options{
+		Region:                     c.Region,
+		Credentials:                credentials.NewStaticCredentialsProvider(c.AccessKeyID, c.AccessKeySecret, ""),
+		EndpointResolver:           resolver,
+		UsePathStyle:               false,
+		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
+		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
+		HTTPClient:                 httpClient,
+	})
 }
 
 func sourceHost(rawURL string) string {
