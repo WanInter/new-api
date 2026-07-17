@@ -172,6 +172,70 @@ func TestEvaluateChannelVideoRoutingSeedanceSlowCapability(t *testing.T) {
 	}
 }
 
+func TestEvaluateChannelVideoRoutingSeedanceFastCapability(t *testing.T) {
+	channel := channelWithVideoModelMapping(t, constant.ChannelTypeSora, seedance20FastModel)
+
+	testCases := []struct {
+		name           string
+		features       VideoRequestFeatures
+		wantEligible   bool
+		wantViolations []VideoConstraintViolation
+	}{
+		{
+			name:         "maximum media at minimum duration",
+			features:     VideoRequestFeatures{Images: 4, Videos: 3, Audios: 1, Duration: common.GetPointer(4)},
+			wantEligible: true,
+		},
+		{
+			name:         "non fixed duration within range",
+			features:     VideoRequestFeatures{Duration: common.GetPointer(7)},
+			wantEligible: true,
+		},
+		{
+			name:         "maximum duration",
+			features:     VideoRequestFeatures{Duration: common.GetPointer(15)},
+			wantEligible: true,
+		},
+		{
+			name:     "duration below minimum",
+			features: VideoRequestFeatures{Duration: common.GetPointer(3)},
+			wantViolations: []VideoConstraintViolation{
+				{Code: "duration_below_min", Field: "duration", Actual: common.GetPointer(3), Expected: common.GetPointer(4)},
+			},
+		},
+		{
+			name:     "duration above maximum",
+			features: VideoRequestFeatures{Duration: common.GetPointer(16)},
+			wantViolations: []VideoConstraintViolation{
+				{Code: "duration_above_max", Field: "duration", Actual: common.GetPointer(16), Expected: common.GetPointer(15)},
+			},
+		},
+		{
+			name:     "too many media references",
+			features: VideoRequestFeatures{Images: 5, Videos: 4, Audios: 2},
+			wantViolations: []VideoConstraintViolation{
+				{Code: "images_above_max", Field: "images", Actual: common.GetPointer(5), Expected: common.GetPointer(4)},
+				{Code: "videos_above_max", Field: "videos", Actual: common.GetPointer(4), Expected: common.GetPointer(3)},
+				{Code: "audios_above_max", Field: "audios", Actual: common.GetPointer(2), Expected: common.GetPointer(1)},
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			result := EvaluateChannelVideoRouting(channel, StrictVideoRoutingModelSDBak1, testCase.features)
+
+			assert.Equal(t, testCase.wantEligible, result.Eligible)
+			assert.Equal(t, seedance20FastModel, result.Mapping.Model)
+			require.NotNil(t, result.Capability)
+			require.NotNil(t, result.Capability.Duration)
+			assert.Equal(t, common.GetPointer(4), result.Capability.Duration.Min)
+			assert.Equal(t, common.GetPointer(15), result.Capability.Duration.Max)
+			assert.ElementsMatch(t, testCase.wantViolations, result.Violations)
+		})
+	}
+}
+
 func TestGetVideoRequestFeaturesCountsEveryReferenceEntry(t *testing.T) {
 	body := `{
 		"model":"sd-bak-1",
