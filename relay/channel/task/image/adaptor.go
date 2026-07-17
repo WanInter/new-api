@@ -105,9 +105,18 @@ func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, info *relaycommon.Re
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
-	if native && strings.HasPrefix(strings.ToLower(strings.TrimSpace(upstreamModelName(info))), "imagen") {
+	hasReferences := imageReq.HasImageReferences()
+	if hasReferences && a.channelType == constant.ChannelTypeVertexAi {
 		return service.TaskErrorWrapperLocal(
-			fmt.Errorf("Gemini native image requests are not supported by Imagen models"),
+			fmt.Errorf("OpenAI-style image reference requests are not supported by Vertex AI channels"),
+			"unsupported_request_format",
+			http.StatusBadRequest,
+		)
+	}
+	geminiReferenceRequest := a.channelType == constant.ChannelTypeGemini && hasReferences
+	if (native || geminiReferenceRequest) && strings.HasPrefix(strings.ToLower(strings.TrimSpace(upstreamModelName(info))), "imagen") {
+		return service.TaskErrorWrapperLocal(
+			fmt.Errorf("Gemini image reference requests are not supported by Imagen models"),
 			"unsupported_request_format",
 			http.StatusBadRequest,
 		)

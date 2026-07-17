@@ -72,6 +72,14 @@ func GetImageFromUrl(url string) (mimeType string, data string, err error) {
 }
 
 func GetImageFromUrlWithContext(ctx context.Context, url string) (mimeType string, data string, err error) {
+	maxImageSize := int64(constant.MaxFileDownloadMB * 1024 * 1024)
+	return GetImageFromUrlWithContextAndLimit(ctx, url, maxImageSize)
+}
+
+func GetImageFromUrlWithContextAndLimit(ctx context.Context, url string, maxImageSize int64) (mimeType string, data string, err error) {
+	if maxImageSize <= 0 {
+		return "", "", errors.New("maximum image download size must be positive")
+	}
 	resp, err := DoDownloadRequestWithContext(ctx, url)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to download image: %w", err)
@@ -87,22 +95,20 @@ func GetImageFromUrlWithContext(ctx context.Context, url string) (mimeType strin
 	if contentType != "application/octet-stream" && !strings.HasPrefix(contentType, "image/") {
 		return "", "", fmt.Errorf("invalid content type: %s, required image/*", contentType)
 	}
-	maxImageSize := int64(constant.MaxFileDownloadMB * 1024 * 1024)
-
 	// Check Content-Length if available
 	if resp.ContentLength > maxImageSize {
 		return "", "", fmt.Errorf("image size %d exceeds maximum allowed size of %d bytes", resp.ContentLength, maxImageSize)
 	}
 
 	// Use LimitReader to prevent reading oversized images
-	limitReader := io.LimitReader(resp.Body, maxImageSize)
+	limitReader := io.LimitReader(resp.Body, maxImageSize+1)
 	buffer := &bytes.Buffer{}
 
 	written, err := io.Copy(buffer, limitReader)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to read image data: %w", err)
 	}
-	if written >= maxImageSize {
+	if written > maxImageSize {
 		return "", "", fmt.Errorf("image size exceeds maximum allowed size of %d bytes", maxImageSize)
 	}
 

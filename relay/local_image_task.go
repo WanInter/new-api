@@ -217,7 +217,7 @@ func localImageRequestMode(apiType int, imageReq dto.ImageRequest) (int, string)
 }
 
 func hasLocalImageReference(imageReq dto.ImageRequest) bool {
-	return rawJSONHasValue(imageReq.Images) || rawJSONHasValue(imageReq.Image)
+	return imageReq.HasImageReferences()
 }
 
 func rawJSONHasValue(raw []byte) bool {
@@ -236,6 +236,18 @@ func buildLocalImageRequestBody(c *gin.Context, adaptor channel.Adaptor, info *r
 	if err != nil {
 		return nil, fmt.Errorf("convert local image request failed: %w", err)
 	}
+	if info.ApiType == constant.APITypeGemini && hasLocalImageReference(imageReq) {
+		_, native, parseErr := imageReq.ParseGeminiNativeRequest()
+		if parseErr != nil {
+			return nil, fmt.Errorf("parse local Gemini image request failed: %w", parseErr)
+		}
+		if !native {
+			convertedRequest, err = addLocalGeminiReferenceImages(c, convertedRequest, imageReq)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
 	if buffer, ok := convertedRequest.(*bytes.Buffer); ok {
 		return buffer, nil
@@ -252,6 +264,79 @@ func buildLocalImageRequestBody(c *gin.Context, adaptor channel.Adaptor, info *r
 	}
 	syncUpstreamModelFromJSONBody(info, jsonData)
 	return bytes.NewReader(jsonData), nil
+}
+
+func addLocalGeminiReferenceImages(c *gin.Context, convertedRequest any, request dto.ImageRequest) (any, error) {
+	var geminiRequest *dto.GeminiChatRequest
+	returnPointer := false
+	switch converted := convertedRequest.(type) {
+	case dto.GeminiChatRequest:
+		geminiRequest = &converted
+	case *dto.GeminiChatRequest:
+		if converted == nil {
+			return nil, fmt.Errorf("converted Gemini image request is nil")
+		}
+		geminiRequest = converted
+		returnPointer = true
+	default:
+		return nil, fmt.Errorf("Gemini reference images require a generateContent image model")
+	}
+
+	imageURLs, err := localImageReferenceURLs(request)
+	if err != nil {
+		return nil, err
+	}
+	if len(imageURLs) == 0 {
+		return nil, fmt.Errorf("Gemini image edit requires at least one reference image")
+	}
+	if len(imageURLs) > localImageMaxReferences {
+		return nil, fmt.Errorf("Gemini image edit supports at most %d reference images", localImageMaxReferences)
+	}
+	if c == nil || c.Request == nil {
+		return nil, fmt.Errorf("Gemini image edit request context is missing")
+	}
+
+	maxInputMB := constant.LocalImageTaskMaxInputMB
+	if maxInputMB < 1 {
+		maxInputMB = constant.DefaultLocalImageTaskMaxInputMB
+	}
+	remainingBytes := int64(maxInputMB) << 20
+	parts := make([]dto.GeminiPart, 0, len(imageURLs))
+	for index, imageURL := range imageURLs {
+		mimeType, encoded, err := service.GetImageFromUrlWithContextAndLimit(c.Request.Context(), imageURL, remainingBytes)
+		if err != nil {
+			return nil, fmt.Errorf("download Gemini reference image %d failed: %w", index+1, err)
+		}
+		remainingBytes -= localBase64DecodedSize(encoded)
+		if remainingBytes < 0 {
+			return nil, fmt.Errorf("Gemini reference images exceed the %d MB local image task limit", maxInputMB)
+		}
+		mimeType = strings.TrimSpace(strings.Split(mimeType, ";")[0])
+		parts = append(parts, dto.GeminiPart{
+			InlineData: &dto.GeminiInlineData{MimeType: mimeType, Data: encoded},
+		})
+	}
+
+	if len(geminiRequest.Contents) == 0 {
+		geminiRequest.Contents = []dto.GeminiChatContent{{Role: "user"}}
+	}
+	geminiRequest.Contents[0].Parts = append(parts, geminiRequest.Contents[0].Parts...)
+
+	if returnPointer {
+		return geminiRequest, nil
+	}
+	return *geminiRequest, nil
+}
+
+func localBase64DecodedSize(encoded string) int64 {
+	decodedSize := int64(base64.StdEncoding.DecodedLen(len(encoded)))
+	if strings.HasSuffix(encoded, "==") {
+		return decodedSize - 2
+	}
+	if strings.HasSuffix(encoded, "=") {
+		return decodedSize - 1
+	}
+	return decodedSize
 }
 
 func syncUpstreamModelFromJSONBody(info *relaycommon.RelayInfo, body []byte) {

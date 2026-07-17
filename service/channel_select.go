@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
@@ -14,7 +15,10 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-const ginKeyNativeGeminiImageTask = "native_gemini_image_task"
+const (
+	ginKeyNativeGeminiImageTask    = "native_gemini_image_task"
+	ginKeyOpenAIImageTaskReference = "openai_image_task_reference"
+)
 
 type RetryParam struct {
 	Ctx          *gin.Context
@@ -64,6 +68,18 @@ func ChannelSupportsRequestConstraints(c *gin.Context, channel *model.Channel, m
 	if nativeGeminiImage {
 		return channelSupportsNativeGeminiImageTask(channel, modelName)
 	}
+	openAIImageReferences, err := hasOpenAIImageTaskReferences(c)
+	if err != nil {
+		return false
+	}
+	if openAIImageReferences {
+		switch channel.Type {
+		case constant.ChannelTypeGemini:
+			return channelSupportsNativeGeminiImageTask(channel, modelName)
+		case constant.ChannelTypeVertexAi:
+			return false
+		}
+	}
 	if !isVideoGenerationSubmit(c) {
 		return true
 	}
@@ -84,6 +100,25 @@ func channelFilterForRequest(c *gin.Context, modelName string) (model.ChannelFil
 			return channelSupportsNativeGeminiImageTask(channel, modelName)
 		}, nil
 	}
+	openAIImageReferences, err := hasOpenAIImageTaskReferences(c)
+	if err != nil {
+		return nil, err
+	}
+	if openAIImageReferences {
+		return func(channel *model.Channel) bool {
+			if channel == nil {
+				return false
+			}
+			switch channel.Type {
+			case constant.ChannelTypeGemini:
+				return channelSupportsNativeGeminiImageTask(channel, modelName)
+			case constant.ChannelTypeVertexAi:
+				return false
+			default:
+				return true
+			}
+		}, nil
+	}
 	if !isVideoGenerationSubmit(c) {
 		return nil, nil
 	}
@@ -94,6 +129,31 @@ func channelFilterForRequest(c *gin.Context, modelName string) (model.ChannelFil
 	return func(channel *model.Channel) bool {
 		return EvaluateChannelVideoRouting(channel, modelName, features).Eligible
 	}, nil
+}
+
+func hasOpenAIImageTaskReferences(c *gin.Context) (bool, error) {
+	if c == nil || c.Request == nil || c.Request.Method != http.MethodPost || c.Request.URL.Path != "/v1/image/generations" {
+		return false, nil
+	}
+	if cached, ok := c.Get(ginKeyOpenAIImageTaskReference); ok {
+		hasReferences, _ := cached.(bool)
+		return hasReferences, nil
+	}
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return false, err
+	}
+	body, err := storage.Bytes()
+	if err != nil {
+		return false, err
+	}
+	var request dto.ImageRequest
+	if err := common.Unmarshal(body, &request); err != nil {
+		return false, err
+	}
+	hasReferences := request.HasImageReferences()
+	c.Set(ginKeyOpenAIImageTaskReference, hasReferences)
+	return hasReferences, nil
 }
 
 func channelSupportsNativeGeminiImageTask(channel *model.Channel, modelName string) bool {

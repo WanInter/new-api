@@ -234,6 +234,97 @@ func TestValidateMappedRequestRejectsNativeGeminiPayloadForImagenModel(t *testin
 	require.ErrorContains(t, taskErr.Error, "Imagen")
 }
 
+func TestValidateMappedRequestRejectsOpenAIReferencesForImagenModel(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/image/generations", strings.NewReader(`{
+		"model":"nano-banana-2",
+		"prompt":"edit the reference",
+		"images":[{"image_url":"https://example.com/reference.png"}]
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{RelayMode: relayconstant.RelayModeImagesGenerations}
+	adaptor := &TaskAdaptor{channelType: constant.ChannelTypeGemini}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	info.ChannelMeta = &relaycommon.ChannelMeta{UpstreamModelName: "imagen-4.0-generate-001"}
+
+	taskErr := adaptor.ValidateMappedRequest(c, info)
+
+	require.NotNil(t, taskErr)
+	require.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	require.Equal(t, "unsupported_request_format", taskErr.Code)
+	require.ErrorContains(t, taskErr.Error, "Imagen")
+}
+
+func TestValidateMappedRequestRejectsOpenAIReferencesForVertexChannel(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/image/generations", strings.NewReader(`{
+		"model":"nano-banana-2",
+		"prompt":"edit the reference",
+		"images":[{"image_url":"https://example.com/reference.png"}]
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{RelayMode: relayconstant.RelayModeImagesGenerations}
+	adaptor := &TaskAdaptor{channelType: constant.ChannelTypeVertexAi}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	info.ChannelMeta = &relaycommon.ChannelMeta{UpstreamModelName: "gemini-3.1-flash-image-preview"}
+
+	taskErr := adaptor.ValidateMappedRequest(c, info)
+
+	require.NotNil(t, taskErr)
+	require.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	require.Equal(t, "unsupported_request_format", taskErr.Code)
+	require.ErrorContains(t, taskErr.Error, "Vertex AI")
+}
+
+func TestValidateMappedRequestIgnoresEmptyReferenceCollections(t *testing.T) {
+	tests := []struct {
+		name          string
+		channelType   int
+		upstreamModel string
+		referenceJSON string
+	}{
+		{
+			name:          "formatted empty array for Imagen",
+			channelType:   constant.ChannelTypeGemini,
+			upstreamModel: "imagen-4.0-generate-001",
+			referenceJSON: `"images":[ ]`,
+		},
+		{
+			name:          "formatted empty object for Imagen",
+			channelType:   constant.ChannelTypeGemini,
+			upstreamModel: "imagen-4.0-generate-001",
+			referenceJSON: `"image":{ }`,
+		},
+		{
+			name:          "formatted empty array for Vertex",
+			channelType:   constant.ChannelTypeVertexAi,
+			upstreamModel: "gemini-3.1-flash-image-preview",
+			referenceJSON: `"images":[ ]`,
+		},
+		{
+			name:          "formatted empty object for Vertex",
+			channelType:   constant.ChannelTypeVertexAi,
+			upstreamModel: "gemini-3.1-flash-image-preview",
+			referenceJSON: `"image":{ }`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body := fmt.Sprintf(`{"model":"nano-banana-2","prompt":"draw a cat",%s}`, test.referenceJSON)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/image/generations", strings.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			info := &relaycommon.RelayInfo{RelayMode: relayconstant.RelayModeImagesGenerations}
+			adaptor := &TaskAdaptor{channelType: test.channelType}
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+			info.ChannelMeta = &relaycommon.ChannelMeta{UpstreamModelName: test.upstreamModel}
+
+			require.Nil(t, adaptor.ValidateMappedRequest(c, info))
+		})
+	}
+}
+
 func TestValidateRequestUsesLocalAsyncForAliSyncImageModel(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/image/generations", strings.NewReader(`{"model":"qwen-image","prompt":"cat"}`))

@@ -66,6 +66,87 @@ func TestOpenAIImageTaskChannelConstraintsRemainUnchanged(t *testing.T) {
 	assert.Nil(t, filter)
 }
 
+func TestOpenAIStyleGeminiImageReferencesExcludeImagenMappings(t *testing.T) {
+	c := newChannelConstraintTestContext(t, "/v1/image/generations", `{
+		"model":"nano-banana-2",
+		"prompt":"edit the reference",
+		"images":[{"image_url":"https://example.com/reference.png"}]
+	}`)
+	generateContentMapping := `{"nano-banana-2":"gemini-3.1-flash-image-preview"}`
+	imagenMapping := `{"nano-banana-2":"imagen-4.0-generate-001"}`
+	mappedGemini := &model.Channel{Type: constant.ChannelTypeGemini, ModelMapping: &generateContentMapping}
+	mappedImagen := &model.Channel{Type: constant.ChannelTypeGemini, ModelMapping: &imagenMapping}
+	vertex := &model.Channel{Type: constant.ChannelTypeVertexAi, ModelMapping: &generateContentMapping}
+	openAI := &model.Channel{Type: constant.ChannelTypeOpenAI}
+
+	assert.True(t, ChannelSupportsRequestConstraints(c, mappedGemini, "nano-banana-2"))
+	assert.False(t, ChannelSupportsRequestConstraints(c, mappedImagen, "nano-banana-2"))
+	assert.False(t, ChannelSupportsRequestConstraints(c, vertex, "nano-banana-2"))
+	assert.True(t, ChannelSupportsRequestConstraints(c, openAI, "nano-banana-2"))
+
+	filter, err := channelFilterForRequest(c, "nano-banana-2")
+	require.NoError(t, err)
+	require.NotNil(t, filter)
+	assert.True(t, filter(mappedGemini))
+	assert.False(t, filter(mappedImagen))
+	assert.False(t, filter(vertex))
+	assert.True(t, filter(openAI))
+}
+
+func TestOpenAIStyleImageReferenceRoutingDoesNotDependOnContentType(t *testing.T) {
+	generateContentMapping := `{"nano-banana-2":"gemini-3.1-flash-image-preview"}`
+	imagenMapping := `{"nano-banana-2":"imagen-4.0-generate-001"}`
+	mappedGemini := &model.Channel{Type: constant.ChannelTypeGemini, ModelMapping: &generateContentMapping}
+	mappedImagen := &model.Channel{Type: constant.ChannelTypeGemini, ModelMapping: &imagenMapping}
+	vertex := &model.Channel{Type: constant.ChannelTypeVertexAi, ModelMapping: &generateContentMapping}
+
+	for _, contentType := range []string{"", "application/vnd.api+json"} {
+		t.Run(contentType, func(t *testing.T) {
+			c := newChannelConstraintTestContext(t, "/v1/image/generations", `{
+				"model":"nano-banana-2",
+				"prompt":"edit the reference",
+				"images":[{"image_url":"https://example.com/reference.png"}]
+			}`)
+			if contentType == "" {
+				c.Request.Header.Del("Content-Type")
+			} else {
+				c.Request.Header.Set("Content-Type", contentType)
+			}
+
+			assert.True(t, ChannelSupportsRequestConstraints(c, mappedGemini, "nano-banana-2"))
+			assert.False(t, ChannelSupportsRequestConstraints(c, mappedImagen, "nano-banana-2"))
+			assert.False(t, ChannelSupportsRequestConstraints(c, vertex, "nano-banana-2"))
+
+			filter, err := channelFilterForRequest(c, "nano-banana-2")
+			require.NoError(t, err)
+			require.NotNil(t, filter)
+			assert.True(t, filter(mappedGemini))
+			assert.False(t, filter(mappedImagen))
+			assert.False(t, filter(vertex))
+		})
+	}
+}
+
+func TestEmptyImageReferenceCollectionsDoNotConstrainChannels(t *testing.T) {
+	generateContentMapping := `{"nano-banana-2":"gemini-3.1-flash-image-preview"}`
+	imagenMapping := `{"nano-banana-2":"imagen-4.0-generate-001"}`
+	mappedImagen := &model.Channel{Type: constant.ChannelTypeGemini, ModelMapping: &imagenMapping}
+	vertex := &model.Channel{Type: constant.ChannelTypeVertexAi, ModelMapping: &generateContentMapping}
+
+	for _, body := range []string{
+		`{"model":"nano-banana-2","prompt":"draw a cat","images":[ ]}`,
+		`{"model":"nano-banana-2","prompt":"draw a cat","image":{ }}`,
+	} {
+		c := newChannelConstraintTestContext(t, "/v1/image/generations", body)
+
+		assert.True(t, ChannelSupportsRequestConstraints(c, mappedImagen, "nano-banana-2"))
+		assert.True(t, ChannelSupportsRequestConstraints(c, vertex, "nano-banana-2"))
+		filter, err := channelFilterForRequest(c, "nano-banana-2")
+		require.NoError(t, err)
+		assert.Nil(t, filter)
+	}
+}
+
 func TestChannelSupportsRequestConstraintsForYoboxReferenceImages(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	yobox := &model.Channel{Type: constant.ChannelTypeYobox}

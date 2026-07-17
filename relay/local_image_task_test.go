@@ -3,6 +3,7 @@ package relay
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"mime"
@@ -17,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -74,6 +76,21 @@ func TestLocalImageRequestModeKeepsGenerationWithoutReferenceImages(t *testing.T
 
 	require.Equal(t, relayconstant.RelayModeImagesGenerations, mode)
 	require.Equal(t, localImageGenerationPath, path)
+}
+
+func TestLocalImageRequestModeKeepsGenerationWithEmptyReferenceCollections(t *testing.T) {
+	for _, body := range []string{
+		`{"model":"gpt-image-2-c","prompt":"cat","images":[ ]}`,
+		`{"model":"gpt-image-2-c","prompt":"cat","image":{ }}`,
+	} {
+		var req dto.ImageRequest
+		require.NoError(t, common.Unmarshal([]byte(body), &req))
+
+		mode, path := localImageRequestMode(constant.APITypeOpenAI, req)
+
+		assert.Equal(t, relayconstant.RelayModeImagesGenerations, mode)
+		assert.Equal(t, localImageGenerationPath, path)
+	}
 }
 
 func TestLocalImageRequestModeKeepsNonOpenAIProviderGeneration(t *testing.T) {
@@ -410,6 +427,120 @@ func TestBuildLocalImageRequestBodyConvertsJSONReferencesToMultipart(t *testing.
 	}
 }
 
+func TestBuildLocalImageRequestBodyConvertsOpenAIReferencesToGeminiInlineData(t *testing.T) {
+	referenceBytes := []byte("gemini-reference-image")
+	referenceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(referenceBytes)
+	}))
+	defer referenceServer.Close()
+
+	fetchSetting := system_setting.GetFetchSetting()
+	originalFetchSetting := *fetchSetting
+	referenceURL, err := url.Parse(referenceServer.URL)
+	require.NoError(t, err)
+	fetchSetting.AllowPrivateIp = true
+	fetchSetting.AllowedPorts = append([]string(nil), originalFetchSetting.AllowedPorts...)
+	fetchSetting.AllowedPorts = append(fetchSetting.AllowedPorts, referenceURL.Port())
+	originalMaxFileDownloadMB := constant.MaxFileDownloadMB
+	constant.MaxFileDownloadMB = 10
+	t.Cleanup(func() {
+		*fetchSetting = originalFetchSetting
+		constant.MaxFileDownloadMB = originalMaxFileDownloadMB
+	})
+	service.InitHttpClient()
+
+	var imageReq dto.ImageRequest
+	require.NoError(t, common.Unmarshal([]byte(`{
+		"model":"nano-banana-2",
+		"prompt":"keep the subject and add snowy mountains",
+		"n":1,
+		"size":"1024x1024",
+		"response_format":"url",
+		"images":[{"image_url":"`+referenceServer.URL+`/reference.png"}]
+	}`), &imageReq))
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, localImageGenerationPath, nil)
+	c.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{
+		RelayMode:   relayconstant.RelayModeImagesGenerations,
+		RelayFormat: types.RelayFormatOpenAIImage,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ApiType:           constant.APITypeGemini,
+			UpstreamModelName: "gemini-3.1-flash-image-preview",
+		},
+	}
+
+	body, err := buildLocalImageRequestBody(c, &gemini.Adaptor{}, info, imageReq)
+	require.NoError(t, err)
+	bodyBytes, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	var upstream dto.GeminiChatRequest
+	require.NoError(t, common.Unmarshal(bodyBytes, &upstream))
+	require.Len(t, upstream.Contents, 1)
+	require.Len(t, upstream.Contents[0].Parts, 2)
+	require.NotNil(t, upstream.Contents[0].Parts[0].InlineData)
+	assert.Equal(t, "image/png", upstream.Contents[0].Parts[0].InlineData.MimeType)
+	assert.Equal(t, base64.StdEncoding.EncodeToString(referenceBytes), upstream.Contents[0].Parts[0].InlineData.Data)
+	assert.Equal(t, "keep the subject and add snowy mountains", upstream.Contents[0].Parts[1].Text)
+	require.NotNil(t, upstream.GenerationConfig.CandidateCount)
+	assert.Equal(t, 1, *upstream.GenerationConfig.CandidateCount)
+	assert.Equal(t, []string{"IMAGE"}, upstream.GenerationConfig.ResponseModalities)
+	var imageConfig map[string]string
+	require.NoError(t, common.Unmarshal(upstream.GenerationConfig.ImageConfig, &imageConfig))
+	assert.Equal(t, "1:1", imageConfig["aspectRatio"])
+}
+
+func TestBuildLocalImageRequestBodyRejectsGeminiReferencesOverCombinedLimit(t *testing.T) {
+	referenceBytes := bytes.Repeat([]byte("a"), 600<<10)
+	referenceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(referenceBytes)
+	}))
+	defer referenceServer.Close()
+
+	fetchSetting := system_setting.GetFetchSetting()
+	originalFetchSetting := *fetchSetting
+	referenceURL, err := url.Parse(referenceServer.URL)
+	require.NoError(t, err)
+	fetchSetting.AllowPrivateIp = true
+	fetchSetting.AllowedPorts = append([]string(nil), originalFetchSetting.AllowedPorts...)
+	fetchSetting.AllowedPorts = append(fetchSetting.AllowedPorts, referenceURL.Port())
+	originalLimit := constant.LocalImageTaskMaxInputMB
+	constant.LocalImageTaskMaxInputMB = 1
+	t.Cleanup(func() {
+		*fetchSetting = originalFetchSetting
+		constant.LocalImageTaskMaxInputMB = originalLimit
+	})
+	service.InitHttpClient()
+
+	var imageReq dto.ImageRequest
+	require.NoError(t, common.Unmarshal([]byte(`{
+		"model":"nano-banana-2",
+		"prompt":"combine the references",
+		"images":[
+			{"image_url":"`+referenceServer.URL+`/first.png"},
+			{"image_url":"`+referenceServer.URL+`/second.png"}
+		]
+	}`), &imageReq))
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, localImageGenerationPath, nil)
+	info := &relaycommon.RelayInfo{
+		RelayMode:   relayconstant.RelayModeImagesGenerations,
+		RelayFormat: types.RelayFormatOpenAIImage,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ApiType:           constant.APITypeGemini,
+			UpstreamModelName: "gemini-3.1-flash-image-preview",
+		},
+	}
+
+	_, err = buildLocalImageRequestBody(c, &gemini.Adaptor{}, info, imageReq)
+
+	require.ErrorContains(t, err, "download Gemini reference image 2 failed")
+	require.ErrorContains(t, err, "exceeds maximum allowed size")
+}
+
 func TestBuildLocalImageRequestBodyCancelsReferenceDownload(t *testing.T) {
 	requestStarted := make(chan struct{})
 	referenceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -425,7 +556,12 @@ func TestBuildLocalImageRequestBodyCancelsReferenceDownload(t *testing.T) {
 	fetchSetting.AllowPrivateIp = true
 	fetchSetting.AllowedPorts = append([]string(nil), originalFetchSetting.AllowedPorts...)
 	fetchSetting.AllowedPorts = append(fetchSetting.AllowedPorts, referenceURL.Port())
-	t.Cleanup(func() { *fetchSetting = originalFetchSetting })
+	originalMaxFileDownloadMB := constant.MaxFileDownloadMB
+	constant.MaxFileDownloadMB = 10
+	t.Cleanup(func() {
+		*fetchSetting = originalFetchSetting
+		constant.MaxFileDownloadMB = originalMaxFileDownloadMB
+	})
 	service.InitHttpClient()
 
 	var imageReq dto.ImageRequest

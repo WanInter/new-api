@@ -21,6 +21,7 @@
 - 查询：`GET /v1/image/generations/{task_id}`
 - 普通请求继续使用 `dto.ImageRequest` 的 OpenAI 风格字段。
 - Gemini 渠道还支持顶层 `model` 加 Gemini 原生 `contents` 请求；`contents` 存在时按原生请求处理，保留 `inlineData`、`fileData`、多 Part、`safetySettings` 和 `generationConfig`。Vertex 暂不支持此异步原生请求形态。
+- Gemini 渠道也兼容 OpenAI 风格的 `prompt` + `images[].image_url`；后台执行时会使用统一的 SSRF、MIME 和下载大小限制获取参考图，再转换为 Gemini `inlineData`。任务快照只保存原始 URL，下载后的参考图总大小受 `LOCAL_IMAGE_TASK_MAX_INPUT_MB` 限制；Vertex 暂不支持此请求形态。
 - 异步任务必须生成图片：未设置 `generationConfig.responseModalities` 时默认补充 `IMAGE`；显式设置但不包含 `IMAGE` 时拒绝请求。
 - 当前每个任务最多接受 16 个图片输入，且 `generationConfig.candidateCount` 只能为 `1`（未设置时按 `1` 处理）。
 - 请求体默认上限为 32 MB（包含 base64 图片），可通过 `LOCAL_IMAGE_TASK_MAX_INPUT_MB` 调整。

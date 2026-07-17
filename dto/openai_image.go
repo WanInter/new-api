@@ -41,6 +41,33 @@ type ImageRequest struct {
 	Extra map[string]json.RawMessage `json:"-"`
 }
 
+// HasImageReferences reports whether image or images contains a non-empty JSON value.
+func (r ImageRequest) HasImageReferences() bool {
+	return imageReferenceFieldHasValue(r.Images) || imageReferenceFieldHasValue(r.Image)
+}
+
+func imageReferenceFieldHasValue(raw json.RawMessage) bool {
+	if strings.TrimSpace(string(raw)) == "" {
+		return false
+	}
+	var value any
+	if err := common.Unmarshal(raw, &value); err != nil {
+		return true
+	}
+	switch typed := value.(type) {
+	case nil:
+		return false
+	case string:
+		return strings.TrimSpace(typed) != ""
+	case []any:
+		return len(typed) > 0
+	case map[string]any:
+		return len(typed) > 0
+	default:
+		return true
+	}
+}
+
 func (i *ImageRequest) UnmarshalJSON(data []byte) error {
 	// 先解析成 map[string]interface{}
 	var rawMap map[string]json.RawMessage

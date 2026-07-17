@@ -72,3 +72,29 @@ func TestImageRequestNativeGeminiRoundTrip(t *testing.T) {
 	assert.Equal(t, "cmVmZXJlbmNl", native.Contents[0].Parts[0].InlineData.Data)
 	assert.Equal(t, []string{"IMAGE"}, native.GenerationConfig.ResponseModalities)
 }
+
+func TestImageRequestHasImageReferencesUsesJSONStructure(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{name: "absent", body: `{}`, want: false},
+		{name: "null", body: `{"images":null}`, want: false},
+		{name: "empty string", body: `{"images":"  "}`, want: false},
+		{name: "formatted empty array", body: `{"images":[ ]}`, want: false},
+		{name: "formatted empty object", body: `{"image":{ }}`, want: false},
+		{name: "array reference", body: `{"images":[{"image_url":"https://example.com/reference.png"}]}`, want: true},
+		{name: "singular reference", body: `{"image":{"url":"https://example.com/reference.png"}}`, want: true},
+		{name: "nonempty invalid collection", body: `{"images":[null]}`, want: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var request ImageRequest
+			require.NoError(t, common.Unmarshal([]byte(test.body), &request))
+
+			assert.Equal(t, test.want, request.HasImageReferences())
+		})
+	}
+}
