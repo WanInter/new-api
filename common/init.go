@@ -195,6 +195,10 @@ func initConstantEnv() {
 	if constant.LocalImageTaskMaxAttempts < 1 {
 		constant.LocalImageTaskMaxAttempts = 1
 	}
+	constant.LocalImageTaskMaxInputMB = GetEnvOrDefault("LOCAL_IMAGE_TASK_MAX_INPUT_MB", constant.DefaultLocalImageTaskMaxInputMB)
+	if constant.LocalImageTaskMaxInputMB < 1 {
+		constant.LocalImageTaskMaxInputMB = 1
+	}
 
 	soraPatchStr := GetEnvOrDefaultString("TASK_PRICE_PATCH", "")
 	if soraPatchStr != "" {

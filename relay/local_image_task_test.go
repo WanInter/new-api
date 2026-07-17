@@ -195,6 +195,114 @@ func TestExecuteLocalImageTaskStoresWireModel(t *testing.T) {
 	assert.Equal(t, "wire-model", task.Properties.UpstreamModelName)
 }
 
+func TestExecuteLocalImageTaskPreservesMultipleOpenAIResults(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"created":1,
+			"data":[
+				{"url":"https://example.com/first.png"},
+				{"url":"https://example.com/second.png"}
+			]
+		}`))
+	}))
+	defer server.Close()
+
+	request, err := common.Marshal(dto.ImageRequest{
+		Model:  "gpt-image-1",
+		Prompt: "two cats",
+		N:      common.GetPointer(uint(2)),
+	})
+	require.NoError(t, err)
+	baseURL := server.URL
+	task := &model.Task{
+		ChannelId: 1,
+		Properties: model.Properties{
+			OriginModelName:   "gpt-image-1",
+			UpstreamModelName: "gpt-image-1",
+		},
+		PrivateData: model.TaskPrivateData{LocalImageTask: &model.LocalImageTaskPrivateData{
+			Request: request, ChannelType: constant.ChannelTypeOpenAI,
+			APIType: constant.APITypeOpenAI, BaseURL: server.URL,
+		}},
+	}
+	channel := &model.Channel{
+		Id: 1, Type: constant.ChannelTypeOpenAI, Key: "test-key", BaseURL: &baseURL,
+	}
+
+	result, err := executeLocalImageTask(context.Background(), task, channel, channel.Key, "")
+
+	require.NoError(t, err)
+	assert.Equal(t, string(model.TaskStatusSuccess), result.Status)
+	assert.Equal(t, "https://example.com/first.png", result.ResultURL)
+	require.Len(t, result.Data.Data, 2)
+	assert.Equal(t, "https://example.com/first.png", result.Data.Data[0].Url)
+	assert.Equal(t, "https://example.com/second.png", result.Data.Data[1].Url)
+}
+
+func TestExecuteLocalImageTaskForwardsNativeGeminiImageEdit(t *testing.T) {
+	var received dto.GeminiChatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1beta/models/gemini-3.1-flash-image-preview:generateContent", r.URL.Path)
+		require.Equal(t, "test-key", r.Header.Get("x-goog-api-key"))
+		require.NoError(t, common.DecodeJson(r.Body, &received))
+		w.Header().Set("Content-Type", "application/json")
+		response, err := common.Marshal(dto.GeminiChatResponse{
+			Candidates: []dto.GeminiChatCandidate{{
+				Content: dto.GeminiChatContent{Parts: []dto.GeminiPart{
+					{InlineData: &dto.GeminiInlineData{MimeType: "image/jpeg", Data: "cmVzdWx0"}},
+					{InlineData: &dto.GeminiInlineData{MimeType: "image/png", Data: "ZXh0cmE="}},
+				}},
+			}},
+		})
+		require.NoError(t, err)
+		_, _ = w.Write(response)
+	}))
+	defer server.Close()
+
+	var request dto.ImageRequest
+	require.NoError(t, common.Unmarshal([]byte(`{
+		"model":"gemini-3.1-flash-image-preview",
+		"contents":[{"role":"user","parts":[
+			{"inlineData":{"mimeType":"image/png","data":"cmVmZXJlbmNl"}},
+			{"text":"turn this into a pencil sketch"}
+		]}],
+		"generationConfig":{"responseModalities":["IMAGE"]}
+	}`), &request))
+	requestBody, err := request.MarshalJSONWithExtra()
+	require.NoError(t, err)
+	baseURL := server.URL
+	task := &model.Task{
+		ChannelId: 1,
+		Properties: model.Properties{
+			OriginModelName:   "nano-banana-2",
+			UpstreamModelName: "gemini-3.1-flash-image-preview",
+		},
+		PrivateData: model.TaskPrivateData{LocalImageTask: &model.LocalImageTaskPrivateData{
+			Request: requestBody, ChannelType: constant.ChannelTypeGemini,
+			APIType: constant.APITypeGemini, BaseURL: server.URL,
+		}},
+	}
+	channel := &model.Channel{
+		Id: 1, Type: constant.ChannelTypeGemini, Key: "test-key", BaseURL: &baseURL,
+	}
+
+	result, err := executeLocalImageTask(context.Background(), task, channel, channel.Key, "")
+
+	require.NoError(t, err)
+	assert.Equal(t, string(model.TaskStatusSuccess), result.Status)
+	assert.Equal(t, "data:image/jpeg;base64,cmVzdWx0", result.ResultURL)
+	require.Len(t, result.Data.Data, 1)
+	assert.Equal(t, "data:image/jpeg;base64,cmVzdWx0", result.Data.Data[0].Url)
+	require.Len(t, received.Contents, 1)
+	require.Len(t, received.Contents[0].Parts, 2)
+	require.NotNil(t, received.Contents[0].Parts[0].InlineData)
+	assert.Equal(t, "cmVmZXJlbmNl", received.Contents[0].Parts[0].InlineData.Data)
+	assert.Equal(t, "turn this into a pencil sketch", received.Contents[0].Parts[1].Text)
+	assert.Equal(t, []string{"IMAGE"}, received.GenerationConfig.ResponseModalities)
+	assert.Equal(t, "gemini-3.1-flash-image-preview", task.Properties.UpstreamModelName)
+}
+
 func TestBuildLocalImageRequestBodyConvertsJSONReferencesToMultipart(t *testing.T) {
 	referenceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")

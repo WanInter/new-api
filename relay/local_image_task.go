@@ -123,12 +123,17 @@ func executeLocalImageTask(ctx context.Context, task *model.Task, ch *model.Chan
 	if err := common.Unmarshal(privateData.Request, &imageReq); err != nil {
 		return localImagePollResponse{}, fmt.Errorf("unmarshal local image request failed: %w", err)
 	}
+	_, nativeGeminiRequest, err := imageReq.ParseGeminiNativeRequest()
+	if err != nil {
+		return localImagePollResponse{}, fmt.Errorf("parse local Gemini image request failed: %w", err)
+	}
 
 	relayMode, requestPath := localImageRequestMode(apiType, imageReq)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, requestPath, bytes.NewReader(privateData.Request))
 	c.Request.Header.Set("Content-Type", "application/json")
+	common.SetContextKey(c, constant.ContextKeyLocalImageTask, true)
 	setLocalImageContext(c, task, ch, key, proxy)
 
 	info := &relaycommon.RelayInfo{
@@ -190,9 +195,12 @@ func executeLocalImageTask(ctx context.Context, task *model.Task, ch *model.Chan
 	if err := common.Unmarshal(responseBody, &imageResp); err != nil {
 		return localImagePollResponse{}, fmt.Errorf("unmarshal local image response failed: %w", err)
 	}
-	resultURL := firstLocalImageResultURL(imageResp.Data)
-	if resultURL == "" {
+	resultURL, resultImage, ok := firstLocalImageResult(imageResp.Data)
+	if !ok {
 		return localImagePollResponse{}, fmt.Errorf("local image response contains no image result")
+	}
+	if nativeGeminiRequest {
+		imageResp.Data = []dto.ImageData{resultImage}
 	}
 	return localImagePollResponse{
 		Status:    string(model.TaskStatusSuccess),
@@ -535,10 +543,10 @@ func readLocalImageError(resp *http.Response, info *relaycommon.RelayInfo) strin
 	return sanitizeTaskUpstreamError([]byte(message), info)
 }
 
-func firstLocalImageResultURL(data []dto.ImageData) string {
+func firstLocalImageResult(data []dto.ImageData) (string, dto.ImageData, bool) {
 	for _, image := range data {
 		if strings.TrimSpace(image.Url) != "" {
-			return image.Url
+			return image.Url, image, true
 		}
 	}
 	for _, image := range data {
@@ -547,9 +555,9 @@ func firstLocalImageResultURL(data []dto.ImageData) string {
 			continue
 		}
 		if strings.HasPrefix(b64, "data:") {
-			return b64
+			return b64, image, true
 		}
-		return "data:image/png;base64," + b64
+		return "data:image/png;base64," + b64, image, true
 	}
-	return ""
+	return "", dto.ImageData{}, false
 }

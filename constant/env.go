@@ -1,5 +1,7 @@
 package constant
 
+const DefaultLocalImageTaskMaxInputMB = 32
+
 var StreamingTimeout int
 var DifyDebug bool
 var MaxFileDownloadMB int
@@ -28,6 +30,7 @@ var LocalImageTaskConcurrency int
 var LocalImageTaskLeaseSeconds int
 var LocalImageTaskAttemptTimeoutMinutes int
 var LocalImageTaskMaxAttempts int
+var LocalImageTaskMaxInputMB int
 
 // temporary variable for sora patch, will be removed in future
 var TaskPricePatches []string

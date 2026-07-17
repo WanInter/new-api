@@ -27,6 +27,7 @@ import (
 )
 
 const imageTaskRequestKey = "image_task_request"
+const maxNativeGeminiImageInputs = 16
 
 var localAsyncSubmitBody = []byte(`{"local_async":true}`)
 
@@ -49,10 +50,40 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if info.RelayMode != relayconstant.RelayModeImagesGenerations {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("unsupported async image relay mode: %d", info.RelayMode), "unsupported_relay_mode", http.StatusBadRequest)
 	}
+	if err := validateLocalImageTaskRequestSize(c); err != nil {
+		return service.TaskErrorWrapperLocal(err, "request_too_large", http.StatusRequestEntityTooLarge)
+	}
 
 	imageReq, err := helper.GetAndValidOpenAIImageRequest(c, relayconstant.RelayModeImagesGenerations)
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	if nativeRequest, native, err := imageReq.ParseGeminiNativeRequest(); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	} else if native && a.channelType != constant.ChannelTypeGemini {
+		return service.TaskErrorWrapperLocal(
+			fmt.Errorf("Gemini native image requests require a Gemini channel"),
+			"unsupported_request_format",
+			http.StatusBadRequest,
+		)
+	} else if native {
+		if err := nativeRequest.EnsureImageOutput(); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		if imageInputs := nativeRequest.ImageInputCount(); imageInputs > maxNativeGeminiImageInputs {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("Gemini native image request supports at most %d image inputs", maxNativeGeminiImageInputs),
+				"invalid_request",
+				http.StatusBadRequest,
+			)
+		}
+		if candidateCount := nativeRequest.GenerationConfig.CandidateCount; candidateCount != nil && *candidateCount != 1 {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("Gemini native async image tasks currently require generationConfig.candidateCount to be 1"),
+				"invalid_request",
+				http.StatusBadRequest,
+			)
+		}
 	}
 	a.refreshNativeAsync(info, imageReq.Model)
 
@@ -65,6 +96,25 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	return nil
 }
 
+func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	imageReq, err := getImageTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	_, native, err := imageReq.ParseGeminiNativeRequest()
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	if native && strings.HasPrefix(strings.ToLower(strings.TrimSpace(upstreamModelName(info))), "imagen") {
+		return service.TaskErrorWrapperLocal(
+			fmt.Errorf("Gemini native image requests are not supported by Imagen models"),
+			"unsupported_request_format",
+			http.StatusBadRequest,
+		)
+	}
+	return nil
+}
+
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	imageReq, err := getImageTaskRequest(c)
 	if err != nil {
@@ -72,7 +122,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	}
 
 	ratios := map[string]float64{}
-	imageN := lo.FromPtrOr(imageReq.N, uint(1))
+	imageN := imageTaskOutputCount(imageReq)
 	if imageN > 0 {
 		ratios["n"] = float64(imageN)
 	}
@@ -87,6 +137,39 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		}
 	}
 	return ratios
+}
+
+func imageTaskOutputCount(request *dto.ImageRequest) uint {
+	if request == nil {
+		return 1
+	}
+	if nativeRequest, native, err := request.ParseGeminiNativeRequest(); err == nil && native {
+		candidateCount := lo.FromPtrOr(nativeRequest.GenerationConfig.CandidateCount, 1)
+		if candidateCount > 0 {
+			return uint(candidateCount)
+		}
+		return 1
+	}
+	return lo.FromPtrOr(request.N, uint(1))
+}
+
+func validateLocalImageTaskRequestSize(c *gin.Context) error {
+	maxMB := constant.LocalImageTaskMaxInputMB
+	if maxMB < 1 {
+		maxMB = constant.DefaultLocalImageTaskMaxInputMB
+	}
+	maxBytes := int64(maxMB) << 20
+	if c != nil && c.Request != nil && c.Request.ContentLength > maxBytes {
+		return fmt.Errorf("%w: async image task request exceeds %d MB", common.ErrRequestBodyTooLarge, maxMB)
+	}
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return err
+	}
+	if storage.Size() > maxBytes {
+		return fmt.Errorf("%w: async image task request exceeds %d MB", common.ErrRequestBodyTooLarge, maxMB)
+	}
+	return nil
 }
 
 func (a *TaskAdaptor) AdjustBillingOnSubmit(info *relaycommon.RelayInfo, taskData []byte) map[string]float64 {

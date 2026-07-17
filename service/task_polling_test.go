@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -97,6 +98,54 @@ func TestUpdateTaskPermanentHTTPFailsAndRefundsOnce(t *testing.T) {
 	assert.False(t, won)
 	assert.Equal(t, 1200, getUserQuota(t, userID))
 	assert.Equal(t, int64(1), countLogs(t))
+}
+
+func TestApplyTaskPollResponseClearsLocalImageRequestOnTerminalState(t *testing.T) {
+	truncate(t)
+	testCases := []struct {
+		name   string
+		status model.TaskStatus
+	}{
+		{name: "success", status: model.TaskStatusSuccess},
+		{name: "failure", status: model.TaskStatusFailure},
+	}
+
+	for index, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			task := &model.Task{
+				TaskID:   fmt.Sprintf("task_local_image_terminal_%d", index),
+				Platform: constant.TaskPlatformImage,
+				Status:   model.TaskStatusInProgress,
+				PrivateData: model.TaskPrivateData{LocalImageTask: &model.LocalImageTaskPrivateData{
+					Request:     []byte(`{"model":"nano-banana-2","contents":[{"parts":[{"text":"draw"}]}]}`),
+					ChannelType: constant.ChannelTypeGemini,
+				}},
+			}
+			require.NoError(t, model.DB.Create(task).Error)
+			adaptor := &taskPollingTestAdaptor{
+				statusCode: http.StatusOK,
+				body:       `{}`,
+				result: &relaycommon.TaskInfo{
+					Status: string(testCase.status),
+					Reason: "test failure",
+				},
+			}
+			response := &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{}`)),
+				Header:     make(http.Header),
+			}
+
+			require.NoError(t, ApplyTaskPollResponse(context.Background(), adaptor, &model.Channel{}, task, response, ""))
+
+			var reloaded model.Task
+			require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+			assert.Equal(t, testCase.status, reloaded.Status)
+			require.NotNil(t, reloaded.PrivateData.LocalImageTask)
+			assert.Empty(t, reloaded.PrivateData.LocalImageTask.Request)
+			assert.Equal(t, constant.ChannelTypeGemini, reloaded.PrivateData.LocalImageTask.ChannelType)
+		})
+	}
 }
 
 func TestUpdateTaskStopsAfterPollErrorBudget(t *testing.T) {

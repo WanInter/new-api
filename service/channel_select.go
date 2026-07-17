@@ -2,6 +2,8 @@ package service
 
 import (
 	"errors"
+	"net/http"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -9,7 +11,10 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
+
+const ginKeyNativeGeminiImageTask = "native_gemini_image_task"
 
 type RetryParam struct {
 	Ctx          *gin.Context
@@ -52,6 +57,13 @@ func ChannelSupportsRequestConstraints(c *gin.Context, channel *model.Channel, m
 	if channel == nil {
 		return false
 	}
+	nativeGeminiImage, err := isNativeGeminiImageTaskRequest(c)
+	if err != nil {
+		return false
+	}
+	if nativeGeminiImage {
+		return channelSupportsNativeGeminiImageTask(channel, modelName)
+	}
 	if !isVideoGenerationSubmit(c) {
 		return true
 	}
@@ -63,6 +75,15 @@ func ChannelSupportsRequestConstraints(c *gin.Context, channel *model.Channel, m
 }
 
 func channelFilterForRequest(c *gin.Context, modelName string) (model.ChannelFilter, error) {
+	nativeGeminiImage, err := isNativeGeminiImageTaskRequest(c)
+	if err != nil {
+		return nil, err
+	}
+	if nativeGeminiImage {
+		return func(channel *model.Channel) bool {
+			return channelSupportsNativeGeminiImageTask(channel, modelName)
+		}, nil
+	}
 	if !isVideoGenerationSubmit(c) {
 		return nil, nil
 	}
@@ -73,6 +94,42 @@ func channelFilterForRequest(c *gin.Context, modelName string) (model.ChannelFil
 	return func(channel *model.Channel) bool {
 		return EvaluateChannelVideoRouting(channel, modelName, features).Eligible
 	}, nil
+}
+
+func channelSupportsNativeGeminiImageTask(channel *model.Channel, modelName string) bool {
+	if channel == nil || channel.Type != constant.ChannelTypeGemini {
+		return false
+	}
+	mapping, err := common.ResolveModelMapping(channel.GetModelMapping(), modelName)
+	if err != nil {
+		return false
+	}
+	upstreamModel := strings.ToLower(strings.TrimSpace(mapping.Model))
+	return !strings.HasPrefix(upstreamModel, "imagen")
+}
+
+func isNativeGeminiImageTaskRequest(c *gin.Context) (bool, error) {
+	if c == nil || c.Request == nil || c.Request.Method != http.MethodPost || c.Request.URL.Path != "/v1/image/generations" {
+		return false, nil
+	}
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.GetHeader("Content-Type"))), "application/json") {
+		return false, nil
+	}
+	if cached, ok := c.Get(ginKeyNativeGeminiImageTask); ok {
+		native, _ := cached.(bool)
+		return native, nil
+	}
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return false, err
+	}
+	body, err := storage.Bytes()
+	if err != nil {
+		return false, err
+	}
+	native := gjson.GetBytes(body, "contents").Exists()
+	c.Set(ginKeyNativeGeminiImageTask, native)
+	return native, nil
 }
 
 // CacheGetRandomSatisfiedChannel tries to get a random channel that satisfies the requirements.

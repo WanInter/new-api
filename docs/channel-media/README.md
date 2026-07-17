@@ -15,6 +15,50 @@
   {"created": 1710000000, "data": [{"url": "...", "b64_json": "...", "revised_prompt": "..."}]}
   ```
 
+### 图片异步任务接口
+
+- 提交：`POST /v1/image/generations`
+- 查询：`GET /v1/image/generations/{task_id}`
+- 普通请求继续使用 `dto.ImageRequest` 的 OpenAI 风格字段。
+- Gemini 渠道还支持顶层 `model` 加 Gemini 原生 `contents` 请求；`contents` 存在时按原生请求处理，保留 `inlineData`、`fileData`、多 Part、`safetySettings` 和 `generationConfig`。Vertex 暂不支持此异步原生请求形态。
+- 异步任务必须生成图片：未设置 `generationConfig.responseModalities` 时默认补充 `IMAGE`；显式设置但不包含 `IMAGE` 时拒绝请求。
+- 当前每个任务最多接受 16 个图片输入，且 `generationConfig.candidateCount` 只能为 `1`（未设置时按 `1` 处理）。
+- 请求体默认上限为 32 MB（包含 base64 图片），可通过 `LOCAL_IMAGE_TASK_MAX_INPUT_MB` 调整。
+
+Gemini 原生图生图异步示例：
+
+```json
+{
+  "model": "nano-banana-2",
+  "contents": [
+    {
+      "role": "user",
+      "parts": [
+        {
+          "inlineData": {
+            "mimeType": "image/png",
+            "data": "<base64 image>"
+          }
+        },
+        {
+          "text": "保留主体，将背景改成水彩风格"
+        }
+      ]
+    }
+  ],
+  "generationConfig": {
+    "candidateCount": 1,
+    "responseModalities": ["IMAGE"],
+    "imageConfig": {
+      "aspectRatio": "16:9",
+      "imageSize": "2K"
+    }
+  }
+}
+```
+
+提交成功立即返回公开 `task_id` 和 `queued` 状态。后台执行器调用渠道的同步图片接口，完成后由查询接口返回任务状态和 `result_url`。Gemini 通常返回 base64 图片，因此部署环境必须配置可用的任务结果对象存储。任务进入成功或失败终态后会清除持久化的原始请求快照，避免长期保留输入图片。
+
 ### 视频/异步任务接口
 
 - OpenAI 风格视频入口：`/v1/videos`、`/v1/videos/{video_id}`、`/v1/videos/{video_id}/remix`

@@ -2,6 +2,7 @@ package dto
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -44,9 +45,9 @@ func (r *GeminiChatRequest) UnmarshalJSON(data []byte) error {
 }
 
 type ToolConfig struct {
-	FunctionCallingConfig *FunctionCallingConfig `json:"functionCallingConfig,omitempty"`
-	RetrievalConfig       *RetrievalConfig       `json:"retrievalConfig,omitempty"`
-	IncludeServerSideToolInvocations *bool       `json:"includeServerSideToolInvocations,omitempty"`
+	FunctionCallingConfig            *FunctionCallingConfig `json:"functionCallingConfig,omitempty"`
+	RetrievalConfig                  *RetrievalConfig       `json:"retrievalConfig,omitempty"`
+	IncludeServerSideToolInvocations *bool                  `json:"includeServerSideToolInvocations,omitempty"`
 }
 
 type FunctionCallingConfig struct {
@@ -122,6 +123,50 @@ func (r *GeminiChatRequest) IsStream(c *gin.Context) bool {
 
 func (r *GeminiChatRequest) SetModelName(modelName string) {
 	// GeminiChatRequest does not have a model field, so this method does nothing.
+}
+
+func (r *GeminiChatRequest) EnsureImageOutput() error {
+	if r == nil {
+		return errors.New("Gemini native image request is nil")
+	}
+	modalities := r.GenerationConfig.ResponseModalities
+	if len(modalities) == 0 {
+		if r.GenerationConfig.ResponseModalitiesSpecified {
+			return errors.New("generationConfig.responseModalities must include IMAGE for async image tasks")
+		}
+		r.GenerationConfig.ResponseModalities = []string{"IMAGE"}
+		return nil
+	}
+	for index, modality := range modalities {
+		if strings.EqualFold(strings.TrimSpace(modality), "IMAGE") {
+			r.GenerationConfig.ResponseModalities[index] = "IMAGE"
+			return nil
+		}
+	}
+	return errors.New("generationConfig.responseModalities must include IMAGE for async image tasks")
+}
+
+func (r *GeminiChatRequest) ImageInputCount() int {
+	if r == nil {
+		return 0
+	}
+	count := 0
+	for _, content := range r.Contents {
+		for _, part := range content.Parts {
+			if part.InlineData != nil && isImageMimeTypeOrUnspecified(part.InlineData.MimeType) {
+				count++
+			}
+			if part.FileData != nil && isImageMimeTypeOrUnspecified(part.FileData.MimeType) {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+func isImageMimeTypeOrUnspecified(mimeType string) bool {
+	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
+	return mimeType == "" || strings.HasPrefix(mimeType, "image/")
 }
 
 func (r *GeminiChatRequest) GetTools() []GeminiChatTool {
@@ -327,30 +372,38 @@ type GeminiChatTool struct {
 }
 
 type GeminiChatGenerationConfig struct {
-	Temperature                *float64              `json:"temperature,omitempty"`
-	TopP                       *float64              `json:"topP,omitempty"`
-	TopK                       *float64              `json:"topK,omitempty"`
-	MaxOutputTokens            *uint                 `json:"maxOutputTokens,omitempty"`
-	CandidateCount             *int                  `json:"candidateCount,omitempty"`
-	StopSequences              []string              `json:"stopSequences,omitempty"`
-	ResponseMimeType           string                `json:"responseMimeType,omitempty"`
-	ResponseSchema             any                   `json:"responseSchema,omitempty"`
-	ResponseJsonSchema         json.RawMessage       `json:"responseJsonSchema,omitempty"`
-	PresencePenalty            *float32              `json:"presencePenalty,omitempty"`
-	FrequencyPenalty           *float32              `json:"frequencyPenalty,omitempty"`
-	ResponseLogprobs           *bool                 `json:"responseLogprobs,omitempty"`
-	Logprobs                   *int32                `json:"logprobs,omitempty"`
-	EnableEnhancedCivicAnswers *bool                 `json:"enableEnhancedCivicAnswers,omitempty"`
-	MediaResolution            MediaResolution       `json:"mediaResolution,omitempty"`
-	Seed                       *int64                `json:"seed,omitempty"`
-	ResponseModalities         []string              `json:"responseModalities,omitempty"`
-	ThinkingConfig             *GeminiThinkingConfig `json:"thinkingConfig,omitempty"`
-	SpeechConfig               json.RawMessage       `json:"speechConfig,omitempty"` // RawMessage to allow flexible speech config
-	ImageConfig                json.RawMessage       `json:"imageConfig,omitempty"`  // RawMessage to allow flexible image config
+	Temperature                 *float64              `json:"temperature,omitempty"`
+	TopP                        *float64              `json:"topP,omitempty"`
+	TopK                        *float64              `json:"topK,omitempty"`
+	MaxOutputTokens             *uint                 `json:"maxOutputTokens,omitempty"`
+	CandidateCount              *int                  `json:"candidateCount,omitempty"`
+	StopSequences               []string              `json:"stopSequences,omitempty"`
+	ResponseMimeType            string                `json:"responseMimeType,omitempty"`
+	ResponseSchema              any                   `json:"responseSchema,omitempty"`
+	ResponseJsonSchema          json.RawMessage       `json:"responseJsonSchema,omitempty"`
+	PresencePenalty             *float32              `json:"presencePenalty,omitempty"`
+	FrequencyPenalty            *float32              `json:"frequencyPenalty,omitempty"`
+	ResponseLogprobs            *bool                 `json:"responseLogprobs,omitempty"`
+	Logprobs                    *int32                `json:"logprobs,omitempty"`
+	EnableEnhancedCivicAnswers  *bool                 `json:"enableEnhancedCivicAnswers,omitempty"`
+	MediaResolution             MediaResolution       `json:"mediaResolution,omitempty"`
+	Seed                        *int64                `json:"seed,omitempty"`
+	ResponseModalities          []string              `json:"responseModalities,omitempty"`
+	ResponseModalitiesSpecified bool                  `json:"-"`
+	ThinkingConfig              *GeminiThinkingConfig `json:"thinkingConfig,omitempty"`
+	SpeechConfig                json.RawMessage       `json:"speechConfig,omitempty"` // RawMessage to allow flexible speech config
+	ImageConfig                 json.RawMessage       `json:"imageConfig,omitempty"`  // RawMessage to allow flexible image config
 }
 
 // UnmarshalJSON allows GeminiChatGenerationConfig to accept both snake_case and camelCase fields.
 func (c *GeminiChatGenerationConfig) UnmarshalJSON(data []byte) error {
+	var rawFields map[string]json.RawMessage
+	if err := common.Unmarshal(data, &rawFields); err != nil {
+		return err
+	}
+	_, responseModalitiesCamelSpecified := rawFields["responseModalities"]
+	_, responseModalitiesSnakeSpecified := rawFields["response_modalities"]
+
 	type Alias GeminiChatGenerationConfig
 	var aux struct {
 		Alias
@@ -378,6 +431,7 @@ func (c *GeminiChatGenerationConfig) UnmarshalJSON(data []byte) error {
 	}
 
 	*c = GeminiChatGenerationConfig(aux.Alias)
+	c.ResponseModalitiesSpecified = responseModalitiesCamelSpecified || responseModalitiesSnakeSpecified
 
 	// Prioritize snake_case if present
 	if aux.TopPSnake != nil {
@@ -419,7 +473,7 @@ func (c *GeminiChatGenerationConfig) UnmarshalJSON(data []byte) error {
 	if aux.MediaResolutionSnake != "" {
 		c.MediaResolution = aux.MediaResolutionSnake
 	}
-	if len(aux.ResponseModalitiesSnake) > 0 {
+	if responseModalitiesSnakeSpecified {
 		c.ResponseModalities = aux.ResponseModalitiesSnake
 	}
 	if aux.ThinkingConfigSnake != nil {

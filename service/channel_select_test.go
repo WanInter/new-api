@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func newChannelConstraintTestContext(t *testing.T, path string, body string) *gin.Context {
@@ -23,6 +24,46 @@ func newChannelConstraintTestContext(t *testing.T, path string, body string) *gi
 		common.CleanupBodyStorage(c)
 	})
 	return c
+}
+
+func TestNativeGeminiImageTaskChannelConstraints(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c := newChannelConstraintTestContext(t, "/v1/image/generations", `{
+		"model":"nano-banana-2",
+		"contents":[{"parts":[{"text":"draw a cat"}]}]
+	}`)
+	generateContentMapping := `{"nano-banana-2":"gemini-3.1-flash-image-preview"}`
+	imagenMapping := `{"nano-banana-2":"imagen-4.0-generate-001"}`
+	gemini := &model.Channel{Type: constant.ChannelTypeGemini}
+	mappedGemini := &model.Channel{Type: constant.ChannelTypeGemini, ModelMapping: &generateContentMapping}
+	mappedImagen := &model.Channel{Type: constant.ChannelTypeGemini, ModelMapping: &imagenMapping}
+	openAI := &model.Channel{Type: constant.ChannelTypeOpenAI}
+
+	assert.True(t, ChannelSupportsRequestConstraints(c, gemini, "nano-banana-2"))
+	assert.True(t, ChannelSupportsRequestConstraints(c, mappedGemini, "nano-banana-2"))
+	assert.False(t, ChannelSupportsRequestConstraints(c, mappedImagen, "nano-banana-2"))
+	assert.False(t, ChannelSupportsRequestConstraints(c, openAI, "nano-banana-2"))
+
+	filter, err := channelFilterForRequest(c, "nano-banana-2")
+	require.NoError(t, err)
+	require.NotNil(t, filter)
+	assert.True(t, filter(gemini))
+	assert.True(t, filter(mappedGemini))
+	assert.False(t, filter(mappedImagen))
+	assert.False(t, filter(openAI))
+}
+
+func TestOpenAIImageTaskChannelConstraintsRemainUnchanged(t *testing.T) {
+	c := newChannelConstraintTestContext(t, "/v1/image/generations", `{
+		"model":"gpt-image-1",
+		"prompt":"draw a cat"
+	}`)
+	openAI := &model.Channel{Type: constant.ChannelTypeOpenAI}
+
+	assert.True(t, ChannelSupportsRequestConstraints(c, openAI, "gpt-image-1"))
+	filter, err := channelFilterForRequest(c, "gpt-image-1")
+	require.NoError(t, err)
+	assert.Nil(t, filter)
 }
 
 func TestChannelSupportsRequestConstraintsForYoboxReferenceImages(t *testing.T) {

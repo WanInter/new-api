@@ -1,6 +1,7 @@
 package dto
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -33,4 +34,41 @@ func TestImageRequestMarshalJSONWithExtraIsOptIn(t *testing.T) {
 		"size":         "1K",
 		"aspect_ratio": "9:16",
 	}, preservedPayload["parameters"])
+}
+
+func TestImageRequestNativeGeminiRoundTrip(t *testing.T) {
+	input := []byte(`{
+		"model":"nano-banana-2",
+		"contents":[{"role":"user","parts":[
+			{"inlineData":{"mimeType":"image/jpeg","data":"cmVmZXJlbmNl"}},
+			{"text":"change the background"}
+		]}],
+		"generationConfig":{"candidateCount":1,"responseModalities":["IMAGE"]},
+		"customProviderField":{"keep":true}
+	}`)
+	var request ImageRequest
+	require.NoError(t, common.Unmarshal(input, &request))
+	require.NotNil(t, request.GeminiNative)
+	assert.NotContains(t, request.Extra, "contents")
+	assert.NotContains(t, request.Extra, "generationConfig")
+
+	output, err := request.MarshalJSONWithExtra()
+	require.NoError(t, err)
+	var raw map[string]json.RawMessage
+	require.NoError(t, common.Unmarshal(output, &raw))
+	assert.Contains(t, raw, "contents")
+	assert.Contains(t, raw, "generationConfig")
+	assert.Contains(t, raw, "customProviderField")
+
+	var roundTripped ImageRequest
+	require.NoError(t, common.Unmarshal(output, &roundTripped))
+	native, ok, err := roundTripped.ParseGeminiNativeRequest()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Len(t, native.Contents, 1)
+	require.Len(t, native.Contents[0].Parts, 2)
+	require.NotNil(t, native.Contents[0].Parts[0].InlineData)
+	assert.Equal(t, "image/jpeg", native.Contents[0].Parts[0].InlineData.MimeType)
+	assert.Equal(t, "cmVmZXJlbmNl", native.Contents[0].Parts[0].InlineData.Data)
+	assert.Equal(t, []string{"IMAGE"}, native.GenerationConfig.ResponseModalities)
 }

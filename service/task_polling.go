@@ -74,6 +74,7 @@ func sweepTimedOutTasks(ctx context.Context) {
 		task.FinishTime = now
 		task.ExecutionLeaseOwner = ""
 		task.ExecutionLeaseUntil = 0
+		clearLocalImageTaskRequest(task)
 		if isLegacy {
 			task.FailReason = legacyReason
 		} else {
@@ -523,6 +524,7 @@ func failTaskWithRefund(ctx context.Context, task *model.Task, fromStatus model.
 	task.LastPollError = reason
 	task.ExecutionLeaseOwner = ""
 	task.ExecutionLeaseUntil = 0
+	clearLocalImageTaskRequest(task)
 	if task.Quota != 0 {
 		setTaskBillingIntent(task, 0, reason)
 	}
@@ -833,6 +835,7 @@ func ApplyTaskPollResponse(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
 	if isDone {
+		clearLocalImageTaskRequest(task)
 		task.NextPollTime = 0
 		if leaseOwner != "" {
 			owned, err := model.IsTaskExecutionLeaseOwner(task.ID, leaseOwner, snap.Status)
@@ -901,6 +904,13 @@ func parseTaskPollResult(ctx context.Context, adaptor TaskPollingAdaptor, body [
 		return parser.ParseTaskResultWithContext(ctx, body)
 	}
 	return adaptor.ParseTaskResult(body)
+}
+
+func clearLocalImageTaskRequest(task *model.Task) {
+	if task == nil || task.PrivateData.LocalImageTask == nil {
+		return
+	}
+	task.PrivateData.LocalImageTask.Request = nil
 }
 
 func updateTaskWithExecutionGuard(task *model.Task, fromStatus model.TaskStatus, leaseOwner string) (bool, error) {

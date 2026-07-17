@@ -1642,7 +1642,12 @@ func GeminiGenerateContentImageHandler(c *gin.Context, info *relaycommon.RelayIn
 			if part.InlineData == nil || !strings.HasPrefix(part.InlineData.MimeType, "image/") || part.InlineData.Data == "" {
 				continue
 			}
-			openAIResponse.Data = append(openAIResponse.Data, dto.ImageData{B64Json: part.InlineData.Data})
+			imageData := dto.ImageData{B64Json: part.InlineData.Data}
+			if common.GetContextKeyBool(c, constant.ContextKeyLocalImageTask) {
+				imageData.Url = fmt.Sprintf("data:%s;base64,%s", part.InlineData.MimeType, part.InlineData.Data)
+				imageData.B64Json = ""
+			}
+			openAIResponse.Data = append(openAIResponse.Data, imageData)
 		}
 	}
 	if len(openAIResponse.Data) == 0 {

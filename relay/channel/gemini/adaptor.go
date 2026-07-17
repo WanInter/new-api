@@ -59,6 +59,20 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	nativeRequest, native, err := request.ParseGeminiNativeRequest()
+	if err != nil {
+		return nil, err
+	}
+	if native {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(info.UpstreamModelName)), "imagen") {
+			return nil, errors.New("Gemini native image requests are not supported by Imagen models")
+		}
+		if err := nativeRequest.EnsureImageOutput(); err != nil {
+			return nil, err
+		}
+		return a.ConvertGeminiRequest(c, info, nativeRequest)
+	}
+
 	if !strings.HasPrefix(info.UpstreamModelName, "imagen") {
 		return convertOpenAIImageToGeminiGenerateContent(request)
 	}

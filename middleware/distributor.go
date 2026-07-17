@@ -35,7 +35,11 @@ func Distribute() func(c *gin.Context) {
 		channelId, ok := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
 		modelRequest, shouldSelectChannel, err := getModelRequest(c)
 		if err != nil {
-			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
+			statusCode := http.StatusBadRequest
+			if common.IsRequestBodyTooLargeError(err) {
+				statusCode = http.StatusRequestEntityTooLarge
+			}
+			abortWithOpenAiMessage(c, statusCode, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 			return
 		}
 		if ok {
@@ -353,6 +357,9 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		relayMode := relayconstant.RelayModeUnknown
 		c.Set("platform", string(constant.TaskPlatformImage))
 		if c.Request.Method == http.MethodPost {
+			if err := validateLocalImageTaskRequestSize(c); err != nil {
+				return nil, false, err
+			}
 			req, err := getModelFromRequest(c)
 			if err != nil {
 				return nil, false, err
@@ -445,6 +452,25 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		modelRequest.Model = ratio_setting.WithCompactModelSuffix(modelRequest.Model)
 	}
 	return &modelRequest, shouldSelectChannel, nil
+}
+
+func validateLocalImageTaskRequestSize(c *gin.Context) error {
+	maxMB := constant.LocalImageTaskMaxInputMB
+	if maxMB < 1 {
+		maxMB = constant.DefaultLocalImageTaskMaxInputMB
+	}
+	maxBytes := int64(maxMB) << 20
+	if c != nil && c.Request != nil && c.Request.ContentLength > maxBytes {
+		return fmt.Errorf("%w: async image task request exceeds %d MB", common.ErrRequestBodyTooLarge, maxMB)
+	}
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return err
+	}
+	if storage.Size() > maxBytes {
+		return fmt.Errorf("%w: async image task request exceeds %d MB", common.ErrRequestBodyTooLarge, maxMB)
+	}
+	return nil
 }
 
 // 修复 #4834: GET /v1/video/generations/:task_id && /v1/video/:task_id 此前不解析 model，

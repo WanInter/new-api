@@ -87,3 +87,36 @@ func TestGeminiChatGenerationConfigPreservesExplicitZeroValuesSnakeCase(t *testi
 	assert.Equal(t, float64(0), generationConfig["seed"])
 	assert.Equal(t, false, generationConfig["responseLogprobs"])
 }
+
+func TestEnsureImageOutputDistinguishesMissingAndExplicitEmptyModalities(t *testing.T) {
+	testCases := []struct {
+		name             string
+		generationConfig string
+		wantError        bool
+	}{
+		{name: "missing", generationConfig: `{}`},
+		{name: "empty array", generationConfig: `{"responseModalities":[]}`, wantError: true},
+		{name: "null", generationConfig: `{"responseModalities":null}`, wantError: true},
+		{name: "snake case empty array", generationConfig: `{"response_modalities":[]}`, wantError: true},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var config GeminiChatGenerationConfig
+			require.NoError(t, common.Unmarshal([]byte(testCase.generationConfig), &config))
+			request := &GeminiChatRequest{GenerationConfig: config}
+
+			err := request.EnsureImageOutput()
+
+			if testCase.wantError {
+				require.ErrorContains(t, err, "must include IMAGE")
+				assert.Empty(t, request.GenerationConfig.ResponseModalities)
+				assert.True(t, request.GenerationConfig.ResponseModalitiesSpecified)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, []string{"IMAGE"}, request.GenerationConfig.ResponseModalities)
+			assert.False(t, request.GenerationConfig.ResponseModalitiesSpecified)
+		})
+	}
+}

@@ -2,6 +2,7 @@ package dto
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 
@@ -32,9 +33,10 @@ type ImageRequest struct {
 	InputFidelity     json.RawMessage `json:"input_fidelity,omitempty"`
 	Watermark         *bool           `json:"watermark,omitempty"`
 	// zhipu 4v
-	WatermarkEnabled json.RawMessage `json:"watermark_enabled,omitempty"`
-	UserId           json.RawMessage `json:"user_id,omitempty"`
-	Image            json.RawMessage `json:"image,omitempty"`
+	WatermarkEnabled json.RawMessage    `json:"watermark_enabled,omitempty"`
+	UserId           json.RawMessage    `json:"user_id,omitempty"`
+	Image            json.RawMessage    `json:"image,omitempty"`
+	GeminiNative     *GeminiChatRequest `json:"-"`
 	// 用匿名参数接收额外参数
 	Extra map[string]json.RawMessage `json:"-"`
 }
@@ -56,11 +58,21 @@ func (i *ImageRequest) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*i = ImageRequest(known)
+	if _, ok := rawMap["contents"]; ok {
+		var native GeminiChatRequest
+		if err := common.Unmarshal(data, &native); err != nil {
+			return fmt.Errorf("unmarshal Gemini native image request: %w", err)
+		}
+		i.GeminiNative = &native
+	}
 
 	// 提取多余字段
 	i.Extra = make(map[string]json.RawMessage)
 	for k, v := range rawMap {
 		if _, ok := knownFields[k]; !ok {
+			if i.GeminiNative != nil && isGeminiNativeImageField(k) {
+				continue
+			}
 			i.Extra[k] = v
 		}
 	}
@@ -78,6 +90,34 @@ func (r ImageRequest) MarshalJSONWithExtra() ([]byte, error) {
 	return r.marshalJSON(true)
 }
 
+// ParseGeminiNativeRequest returns the embedded Gemini generateContent payload
+// accepted by the async image endpoint. The top-level model field remains an
+// image-task routing field and is ignored by GeminiChatRequest.
+func (r ImageRequest) ParseGeminiNativeRequest() (*GeminiChatRequest, bool, error) {
+	if r.GeminiNative != nil {
+		if len(r.GeminiNative.Contents) == 0 {
+			return nil, true, fmt.Errorf("contents is required for Gemini native image request")
+		}
+		return r.GeminiNative, true, nil
+	}
+	if _, ok := r.Extra["contents"]; !ok {
+		return nil, false, nil
+	}
+
+	payload, err := r.MarshalJSONWithExtra()
+	if err != nil {
+		return nil, true, fmt.Errorf("marshal Gemini native image request: %w", err)
+	}
+	var request GeminiChatRequest
+	if err := common.Unmarshal(payload, &request); err != nil {
+		return nil, true, fmt.Errorf("unmarshal Gemini native image request: %w", err)
+	}
+	if len(request.Contents) == 0 {
+		return nil, true, fmt.Errorf("contents is required for Gemini native image request")
+	}
+	return &request, true, nil
+}
+
 func (r ImageRequest) marshalJSON(includeExtra bool) ([]byte, error) {
 	// 将已定义字段转为 map
 	type Alias ImageRequest
@@ -93,6 +133,19 @@ func (r ImageRequest) marshalJSON(includeExtra bool) ([]byte, error) {
 	}
 
 	if includeExtra {
+		if r.GeminiNative != nil {
+			nativeJSON, err := common.Marshal(r.GeminiNative)
+			if err != nil {
+				return nil, err
+			}
+			var nativeMap map[string]json.RawMessage
+			if err := common.Unmarshal(nativeJSON, &nativeMap); err != nil {
+				return nil, err
+			}
+			for k, v := range nativeMap {
+				baseMap[k] = v
+			}
+		}
 		for k, v := range r.Extra {
 			if _, exists := baseMap[k]; !exists {
 				baseMap[k] = v
@@ -101,6 +154,15 @@ func (r ImageRequest) marshalJSON(includeExtra bool) ([]byte, error) {
 	}
 
 	return common.Marshal(baseMap)
+}
+
+func isGeminiNativeImageField(field string) bool {
+	switch field {
+	case "contents", "requests", "safetySettings", "generationConfig", "tools", "toolConfig", "systemInstruction", "system_instruction", "cachedContent":
+		return true
+	default:
+		return false
+	}
 }
 
 func GetJSONFieldNames(t reflect.Type) map[string]struct{} {
