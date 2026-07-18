@@ -227,6 +227,12 @@ func TestParseTaskResultSupportsByteforAndDoubaoResponses(t *testing.T) {
 			expectedProgress: "12%",
 		},
 		{
+			name:             "bytefor configuring",
+			body:             `{"status":"configuring","progress":35,"progress_text":"configuring video"}`,
+			expectedStatus:   model.TaskStatusInProgress,
+			expectedProgress: "35%",
+		},
+		{
 			name:             "bytefor completed data URL",
 			body:             `{"status":"completed","progress":100,"data":[{"url":"https://cdn.example.com/video.mp4"}]}`,
 			expectedStatus:   model.TaskStatusSuccess,
@@ -260,6 +266,20 @@ func TestParseTaskResultSupportsByteforAndDoubaoResponses(t *testing.T) {
 			expectedStatus:   model.TaskStatusFailure,
 			expectedProgress: "100%",
 			expectedReason:   "generation rejected",
+		},
+		{
+			name:             "bytefor failed with top-level error fields",
+			body:             `{"status":"failed","progress":100,"error_code":"GENERATION_FAILED","error_msg":"视频生成失败，请检查素材是否清晰、可访问且符合要求，调整后重试","progress_text":"fallback progress text","queue_info":"fallback queue info"}`,
+			expectedStatus:   model.TaskStatusFailure,
+			expectedProgress: "100%",
+			expectedReason:   "视频生成失败，请检查素材是否清晰、可访问且符合要求，调整后重试",
+		},
+		{
+			name:             "bytefor failed falls back to progress text",
+			body:             `{"status":"failed","error_code":"GENERATION_FAILED","progress_text":"generation failed during rendering","queue_info":"fallback queue info"}`,
+			expectedStatus:   model.TaskStatusFailure,
+			expectedProgress: "100%",
+			expectedReason:   "generation failed during rendering",
 		},
 	}
 

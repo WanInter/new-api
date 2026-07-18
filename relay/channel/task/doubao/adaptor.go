@@ -146,10 +146,14 @@ type responseTask struct {
 			WebSearch int `json:"web_search"`
 		} `json:"tool_usage"`
 	} `json:"usage"`
-	Error     taskError `json:"error"`
-	Created   int64     `json:"created"`
-	CreatedAt int64     `json:"created_at"`
-	UpdatedAt int64     `json:"updated_at"`
+	Error        taskError `json:"error"`
+	ErrorCode    string    `json:"error_code"`
+	ErrorMessage string    `json:"error_msg"`
+	ProgressText string    `json:"progress_text"`
+	QueueInfo    string    `json:"queue_info"`
+	Created      int64     `json:"created"`
+	CreatedAt    int64     `json:"created_at"`
+	UpdatedAt    int64     `json:"updated_at"`
 }
 
 // ============================
@@ -545,6 +549,16 @@ func extractResponseTaskVideoURL(task responseTask) string {
 	return ""
 }
 
+func extractResponseTaskError(task responseTask) string {
+	return firstNonEmpty(
+		task.Error.Message,
+		task.ErrorMessage,
+		task.ProgressText,
+		task.QueueInfo,
+		task.ErrorCode,
+	)
+}
+
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 	resTask := responseTask{}
 	if err := common.Unmarshal(respBody, &resTask); err != nil {
@@ -560,7 +574,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	case "pending", "queued":
 		taskResult.Status = model.TaskStatusQueued
 		taskResult.Progress = "10%"
-	case "processing", "running", "in_progress":
+	case "processing", "running", "in_progress", "configuring":
 		taskResult.Status = model.TaskStatusInProgress
 		taskResult.Progress = "50%"
 	case "succeeded", "completed":
@@ -573,7 +587,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	case "failed":
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = "100%"
-		taskResult.Reason = resTask.Error.Message
+		taskResult.Reason = extractResponseTaskError(resTask)
 	default:
 		return nil, fmt.Errorf("unknown Doubao task status %q", resTask.Status)
 	}
@@ -614,7 +628,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 
 func toOpenAIVideoStatus(status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "processing", "running", "in_progress":
+	case "processing", "running", "in_progress", "configuring":
 		return dto.VideoStatusInProgress
 	case "succeeded", "completed":
 		return dto.VideoStatusCompleted
