@@ -128,6 +128,7 @@ var tokenStackMultiResolutionModels = map[string]struct{}{
 
 var tokenStackSora15sProfile = soraModelProfile{
 	JSONFinalTransform: requestTransformTokenStackSora15s,
+	FixedSeconds:       15,
 	RequireJSON:        true,
 }
 

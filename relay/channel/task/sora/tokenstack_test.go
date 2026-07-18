@@ -17,7 +17,7 @@ import (
 
 func TestBuildRequestBodyNormalizesTokenStackPayload(t *testing.T) {
 	bodyJSON := `{
-		"duration":15,
+		"duration":5,
 		"images":["image-1","image-2","image-3","image-4"],
 		"model":"sd-bak-1",
 		"prompt":"animate the references",
@@ -299,7 +299,7 @@ func TestEstimateBillingUsesTokenStackProtocolDuration(t *testing.T) {
 		{
 			name:          "sora compatible fixed duration",
 			upstreamModel: "seedance-2-0-15s-slow",
-			bodyJSON:      `{"model":"sd-bak-1","prompt":"animate","seconds":"1"}`,
+			bodyJSON:      `{"model":"sd-bak-1","prompt":"animate","duration":5}`,
 			wantSeconds:   15,
 		},
 	}
