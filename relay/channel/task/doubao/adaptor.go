@@ -402,7 +402,7 @@ func convertToByteforRequestPayload(req *relaycommon.TaskSubmitReq, info *relayc
 	payload := &byteforRequestPayload{
 		Model:      relayInfoModelName(info),
 		Prompt:     req.Prompt,
-		Size:       firstNonEmpty(req.Size, metadataString(req.Metadata, "size", "ratio", "aspect_ratio")),
+		Size:       firstNonEmpty(req.Size, req.AspectRatio, metadataString(req.Metadata, "size", "ratio", "aspect_ratio")),
 		Resolution: firstNonEmpty(req.Resolution, metadataString(req.Metadata, "resolution")),
 		Duration:   byteforDuration(req),
 	}
@@ -618,8 +618,8 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 
 	if dResp.Status == "failed" {
 		openAIVideo.Error = &dto.OpenAIVideoError{
-			Message: dResp.Error.Message,
-			Code:    dResp.Error.Code,
+			Message: extractResponseTaskError(dResp),
+			Code:    firstNonEmpty(dResp.Error.Code, dResp.ErrorCode),
 		}
 	}
 

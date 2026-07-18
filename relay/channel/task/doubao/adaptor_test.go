@@ -102,6 +102,35 @@ func TestBuildRequestBodyConvertsByteforNativeRequest(t *testing.T) {
 	}, payload.Images)
 }
 
+func TestBuildRequestBodyPreservesTopLevelAspectRatio(t *testing.T) {
+	bodyJSON := `{"model":"public-bytefor","prompt":"参考图片生成竖屏视频","aspect_ratio":"9:16","resolution":"720p","duration":15,"images":["https://example.com/reference.png"]}`
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(bodyJSON))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "public-bytefor",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "bytefor-2.0-real-priority",
+		},
+	}
+	adaptor := &TaskAdaptor{}
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	requestBody, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(requestBody)
+	require.NoError(t, err)
+
+	var payload byteforRequestPayload
+	require.NoError(t, common.Unmarshal(data, &payload))
+	assert.Equal(t, "9:16", payload.Size)
+	assert.Equal(t, "720P", payload.Resolution)
+	assert.Equal(t, "15s", payload.Duration)
+	assert.Equal(t, []string{"https://example.com/reference.png"}, payload.Images)
+}
+
 func TestConvertByteforRequestPreservesAllMediaAliasesAndDuplicates(t *testing.T) {
 	req := &relaycommon.TaskSubmitReq{
 		Images:               []string{"duplicate", "duplicate"},
@@ -154,7 +183,7 @@ func TestEstimateBillingUsesByteforDurationSeconds(t *testing.T) {
 	}{
 		{name: "duration", request: relaycommon.TaskSubmitReq{Duration: 8}, expected: 8},
 		{name: "seconds alias", request: relaycommon.TaskSubmitReq{Seconds: "12s"}, expected: 12},
-		{name: "default", request: relaycommon.TaskSubmitReq{}, expected: byteforDefaultDurationSeconds},
+		{name: "default", request: relaycommon.TaskSubmitReq{}, expected: 15},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -175,10 +204,10 @@ func TestEstimateBillingUsesByteforDurationSeconds(t *testing.T) {
 	}
 }
 
-func TestByteforDurationDefaultsToBilledDuration(t *testing.T) {
+func TestByteforDurationDefaultsToFifteenSeconds(t *testing.T) {
 	request := relaycommon.TaskSubmitReq{}
 
-	assert.Equal(t, "4s", byteforDuration(&request))
+	assert.Equal(t, "15s", byteforDuration(&request))
 }
 
 func TestDoResponseAcceptsByteforTaskID(t *testing.T) {
@@ -358,6 +387,25 @@ func TestConvertToOpenAIVideoExtractsByteforDataURL(t *testing.T) {
 	require.NoError(t, common.Unmarshal(body, &response))
 	require.NotNil(t, response.Metadata)
 	assert.Equal(t, "https://cdn.example.com/video.mp4", response.Metadata["url"])
+}
+
+func TestConvertToOpenAIVideoIncludesByteforFailureReason(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task_public",
+		Status: model.TaskStatusFailure,
+		Properties: model.Properties{
+			OriginModelName: "bytefor-2.0-real-priority",
+		},
+		Data: []byte(`{"status":"failed","error_code":"GENERATION_FAILED","error_msg":"视频生成失败，请检查素材是否清晰、可访问且符合要求，调整后重试"}`),
+	}
+
+	body, err := (&TaskAdaptor{}).ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+	var response dto.OpenAIVideo
+	require.NoError(t, common.Unmarshal(body, &response))
+	require.NotNil(t, response.Error)
+	assert.Equal(t, "GENERATION_FAILED", response.Error.Code)
+	assert.Equal(t, "视频生成失败，请检查素材是否清晰、可访问且符合要求，调整后重试", response.Error.Message)
 }
 
 func TestModelListIncludesByteforModels(t *testing.T) {

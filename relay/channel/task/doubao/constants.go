@@ -2,7 +2,7 @@ package doubao
 
 const (
 	ByteforBaseURL                = "https://k7q9m2x4a8z3.bytefor.com"
-	byteforDefaultDurationSeconds = 4
+	byteforDefaultDurationSeconds = 15
 )
 
 var doubaoModelList = []string{
