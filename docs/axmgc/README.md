@@ -9,11 +9,11 @@
 | 上游模型 | `seedance-2-720p-933` |
 | 密钥 | 以 `hm_` 开头的 API Key |
 | 鉴权 | `Authorization: Bearer <API_KEY>` |
-| 任务提交 | `POST /v1/video/generations` 或 `POST /v1/video/generations/multipart` |
+| 任务提交 | `POST /v1/video/generations`（JSON） |
 | 任务查询 | `GET /v1/video/generations/{video_id}` |
 
-在渠道模型列表中添加公开模型名，并将其映射到
-`seedance-2-720p-933`。如果公开模型名相同，无需额外模型映射。
+在渠道模型列表中添加公开模型名 `seedance-2-720p-933`。该名称会原样转发给
+Axmgc；只有需要切换其他上游型号时才配置显式模型映射。
 供应商文档中的 ¥4.50/次是上游价格，不会自动成为 New API 的用户售价；
 启用渠道前还需在模型定价设置中配置该公开模型的本地按次价格。
 
@@ -41,10 +41,8 @@ curl https://axmgc.com/v1/models \
 
 ## JSON 提交：公网素材 URL
 
-New API 对外接受 JSON 中的公网素材 URL。Axmgc 适配器会先通过统一的 SSRF
-防护和文件大小限制下载素材，再重建为 multipart 文件请求提交给 Axmgc。素材 URL
-必须能被 New API 服务端直接访问，不能使用本地路径、内网地址或依赖登录 Cookie
-的 URL。
+New API 直接将 JSON `content` 转发到 Axmgc 的 JSON 生成接口。素材 URL 必须能被
+Axmgc 上游直接访问，不能使用本地路径、内网地址或依赖登录 Cookie 的 URL。
 
 ```bash
 curl -X POST https://your-new-api.example/v1/videos \
@@ -66,14 +64,10 @@ curl -X POST https://your-new-api.example/v1/videos \
   }'
 ```
 
-URL 字段兼容以下三种形式，推荐第一种标准写法：
+URL 字段兼容以下两种形式，推荐第一种标准写法：
 
 ```json
 {"type":"image_url","image_url":{"url":"https://cdn.example.com/role.png"}}
-```
-
-```json
-{"type":"image_url","image_url":"https://cdn.example.com/role.png"}
 ```
 
 ```json
@@ -81,39 +75,23 @@ URL 字段兼容以下三种形式，推荐第一种标准写法：
 ```
 
 对于本项目的 Axmgc 渠道，公开 API 使用第一种标准写法。适配器也接受本项目
-常用的顶层 `prompt`、`images`、`videos` 和 `audios` 字段。两种写法都会在转发
-时转换为上游 `/v1/video/generations/multipart` 要求的文件字段。
+常用的顶层 `prompt`、`images`、`videos` 和 `audios` 字段，并在转发时转换为标准
+`content` URL 对象。`content` 中的素材必须在 `text` 前出现。
 
-## Multipart 提交：本地素材
+## 本地文件
 
-调用方可以将本地文件直接上传到 `/v1/video/generations/multipart`。字段名为
-`images`、`videos` 和 `audios`，可重复传入多个文件：
-
-```bash
-curl -X POST https://axmgc.com/v1/video/generations/multipart \
-  -H 'Authorization: Bearer hm_xxx' \
-  -H 'X-Idempotency-Key: scene-001' \
-  -F 'model=seedance-2-720p-933' \
-  -F 'prompt=@Image1 是主角，@Image2 是场景，@Video1 参考运镜，@Audio1 参考音乐氛围。15秒横屏。' \
-  -F 'aspect_ratio=16:9' \
-  -F 'resolution=720p' \
-  -F 'duration=15' \
-  -F 'images=@role.png' \
-  -F 'images=@scene.jpg' \
-  -F 'videos=@camera.mp4' \
-  -F 'audios=@bgm.mp3'
-```
-
-New API 对外仍使用统一的视频生成路由。无论收到 JSON URL 还是 multipart 文件，
-Axmgc 适配器都会将其安全重建并转发到上游的 `/multipart` 端点；不会把文件内容
-写入任务数据库。
+Axmgc 渠道不接受 multipart 和本地文件上传。请先将素材上传到可公开访问的存储，
+然后使用 URL `content`；也可以复用已在 Axmgc 账户中创建的 `asset_id`。
 
 ## 上传资产后复用
 
-Axmgc 还提供 `POST /v1/assets` 上传接口，返回 `asset_id`。生成时可在 `content`
-中使用 `image_asset` 等资产引用。当前 New API 渠道优先支持 URL 引用和 multipart
-直传；需要资产长期复用时，由调用方管理资产上传与生命周期，再以可访问 URL
-提交生成任务。
+Axmgc 的 `POST /v1/assets` 上传接口会返回 `asset_id`。生成时可在 `content` 中使用
+`image_asset`、`video_asset`、`audio_asset`；这些资产必须属于当前渠道 API Key 对应的
+Axmgc 账户。New API 不提供资产上传接口，也不管理资产生命周期。
+
+```json
+{"type":"image_asset","image_asset":{"asset_id":"asset_xxx"}}
+```
 
 ## 任务状态和结果
 
@@ -153,8 +131,8 @@ GET /v1/video/generations/{task_xxx}
 
 ## Python 快速接入
 
-下面示例直接调用 Axmgc 上游，展示上游原生响应结构。通过 New API 调用时，
-请使用本站 Base URL 和令牌，并按上文保存提交响应中的公开 `task_xxx`。
+下面示例直接调用 Axmgc 上游，展示与 New API 一致的 JSON 内容结构。通过 New API
+调用时，请使用本站 Base URL 和令牌，并按上文保存提交响应中的公开 `task_xxx`。
 
 ```python
 import time
@@ -167,23 +145,22 @@ headers = {
     "Authorization": f"Bearer {KEY}",
     "X-Idempotency-Key": "scene-001",
 }
-files = [
-    ("images", open("role.png", "rb")),
-    ("images", open("scene.jpg", "rb")),
-]
-data = {
+payload = {
     "model": "seedance-2-720p-933",
-    "prompt": "@Image1 是主角，@Image2 是场景。15 秒横屏，镜头推进。",
+    "content": [
+        {"type": "image_url", "image_url": {"url": "https://cdn.example.com/role.png"}},
+        {"type": "image_url", "url": "https://cdn.example.com/scene.jpg"},
+        {"type": "text", "text": "@Image1 是主角，@Image2 是场景。15 秒横屏，镜头推进。"},
+    ],
     "aspect_ratio": "16:9",
     "resolution": "720p",
-    "duration": "15",
+    "duration": 15,
 }
 
 response = requests.post(
-    f"{BASE}/v1/video/generations/multipart",
+    f"{BASE}/v1/video/generations",
     headers=headers,
-    data=data,
-    files=files,
+    json=payload,
     timeout=120,
 )
 response.raise_for_status()

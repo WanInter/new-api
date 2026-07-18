@@ -1,12 +1,8 @@
 package axmgc
 
 import (
-	"bytes"
 	"context"
-	"fmt"
 	"io"
-	"mime"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -42,124 +38,72 @@ func newRelayInfo() *relaycommon.RelayInfo {
 	}
 }
 
-type remoteMediaFixture struct {
-	ContentType string
-	Body        string
-	StatusCode  int
-	ContentSize int64
-}
-
-func stubRemoteMediaDownloads(t *testing.T, fixtures map[string]remoteMediaFixture) {
+func parseBuiltJSONBody(t *testing.T, c *gin.Context, body io.Reader) axmgcJSONRequest {
 	t.Helper()
-	previous := downloadRemoteMedia
-	downloadRemoteMedia = func(_ context.Context, mediaURL string, _ ...string) (*http.Response, error) {
-		fixture, ok := fixtures[mediaURL]
-		if !ok {
-			return nil, fmt.Errorf("unexpected media URL %q", mediaURL)
-		}
-		statusCode := fixture.StatusCode
-		if statusCode == 0 {
-			statusCode = http.StatusOK
-		}
-		contentLength := fixture.ContentSize
-		if contentLength == 0 {
-			contentLength = int64(len(fixture.Body))
-		}
-		return &http.Response{
-			StatusCode:    statusCode,
-			ContentLength: contentLength,
-			Header:        http.Header{"Content-Type": []string{fixture.ContentType}},
-			Body:          io.NopCloser(strings.NewReader(fixture.Body)),
-		}, nil
-	}
-	t.Cleanup(func() { downloadRemoteMedia = previous })
+	assert.Equal(t, "application/json", c.GetHeader("Content-Type"))
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload axmgcJSONRequest
+	require.NoError(t, common.Unmarshal(data, &payload))
+	return payload
 }
 
-func parseBuiltMultipartBody(t *testing.T, c *gin.Context, body io.Reader) *multipart.Form {
-	t.Helper()
-	mediaType, params, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
-	require.NoError(t, err)
-	require.Equal(t, "multipart/form-data", mediaType)
-	form, err := multipart.NewReader(body, params["boundary"]).ReadForm(1 << 20)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = form.RemoveAll() })
-	return form
-}
-
-func readMultipartFile(t *testing.T, header *multipart.FileHeader) string {
-	t.Helper()
-	file, err := header.Open()
-	require.NoError(t, err)
-	defer file.Close()
-	data, err := io.ReadAll(file)
-	require.NoError(t, err)
-	return string(data)
-}
-
-func TestBuildJSONRequestSupportsDocumentedURLFormsAndMappedModel(t *testing.T) {
-	stubRemoteMediaDownloads(t, map[string]remoteMediaFixture{
-		"https://example.com/role.png":   {ContentType: "image/png", Body: "role image"},
-		"https://example.com/scene.jpg":  {ContentType: "image/jpeg", Body: "scene image"},
-		"https://example.com/camera.mp4": {ContentType: "video/mp4", Body: "camera video"},
-		"https://example.com/bgm.mp3":    {ContentType: "audio/mpeg", Body: "background audio"},
-	})
+func TestBuildJSONRequestSupportsDocumentedURLForms(t *testing.T) {
 	c := newJSONContext(t, `{
-		"model":"public-seedance",
+		"model":"seedance-2-720p-933",
 		"content":[
 			{"type":"image_url","image_url":{"url":"https://example.com/role.png"}},
-			{"type":"image_url","image_url":"https://example.com/scene.jpg"},
-			{"type":"video_url","url":"https://example.com/camera.mp4"},
+			{"type":"image_url","url":"https://example.com/scene.jpg"},
+			{"type":"video_url","video_url":{"url":"https://example.com/camera.mp4"}},
 			{"type":"audio_url","audio_url":{"url":"https://example.com/bgm.mp3"}},
 			{"type":"text","text":"@Image1 is the lead"}
 		],
 		"aspect_ratio":"16:9",
 		"resolution":"720p",
-		"duration":6
+		"duration":6,
+		"generate_audio":false,
+		"seed":42,
+		"watermark":false,
+		"return_last_frame":false
 	}`)
 	info := newRelayInfo()
-	info.OriginModelName = "public-seedance"
+	info.UpstreamModelName = Seedance720p933Model
 	adaptor := &TaskAdaptor{}
 	adaptor.Init(info)
 
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
-	info.UpstreamModelName = Seedance720p933Model
 	body, err := adaptor.BuildRequestBody(c, info)
 	require.NoError(t, err)
-	assert.Equal(t, DefaultBaseURL+"/v1/video/generations/multipart", mustBuildURL(t, adaptor, info))
+	assert.Equal(t, DefaultBaseURL+"/v1/video/generations", mustBuildURL(t, adaptor, info))
 
-	form := parseBuiltMultipartBody(t, c, body)
-	assert.Equal(t, []string{Seedance720p933Model}, form.Value["model"])
-	assert.Equal(t, []string{"@Image1 is the lead"}, form.Value["prompt"])
-	assert.Equal(t, []string{"16:9"}, form.Value["aspect_ratio"])
-	assert.Equal(t, []string{defaultResolution}, form.Value["resolution"])
-	assert.Equal(t, []string{"15"}, form.Value["duration"])
-	require.Len(t, form.File["images"], 2)
-	require.Len(t, form.File["videos"], 1)
-	require.Len(t, form.File["audios"], 1)
-	assert.Equal(t, "image-1.png", form.File["images"][0].Filename)
-	assert.Equal(t, "image-2.jpg", form.File["images"][1].Filename)
-	assert.Equal(t, "role image", readMultipartFile(t, form.File["images"][0]))
-	assert.Equal(t, "scene image", readMultipartFile(t, form.File["images"][1]))
-	assert.Equal(t, "camera video", readMultipartFile(t, form.File["videos"][0]))
-	assert.Equal(t, "background audio", readMultipartFile(t, form.File["audios"][0]))
+	payload := parseBuiltJSONBody(t, c, body)
+	assert.Equal(t, Seedance720p933Model, payload.Model)
+	assert.Equal(t, "16:9", payload.AspectRatio)
+	assert.Equal(t, defaultResolution, payload.Resolution)
+	assert.Equal(t, defaultDuration, payload.Duration)
+	assert.Equal(t, []map[string]any{
+		urlContentItem("image_url", "https://example.com/role.png"),
+		urlContentItem("image_url", "https://example.com/scene.jpg"),
+		urlContentItem("video_url", "https://example.com/camera.mp4"),
+		urlContentItem("audio_url", "https://example.com/bgm.mp3"),
+		{"type": "text", "text": "@Image1 is the lead"},
+	}, payload.Content)
+	require.NotNil(t, payload.GenerateAudio)
+	require.NotNil(t, payload.Seed)
+	require.NotNil(t, payload.Watermark)
+	require.NotNil(t, payload.ReturnLastFrame)
+	assert.False(t, *payload.GenerateAudio)
+	assert.Equal(t, 42, *payload.Seed)
+	assert.False(t, *payload.Watermark)
+	assert.False(t, *payload.ReturnLastFrame)
+
 	upstreamRequest := httptest.NewRequest(http.MethodPost, "https://example.com", nil)
 	require.NoError(t, adaptor.BuildRequestHeader(c, upstreamRequest, info))
 	assert.Equal(t, "Bearer hm_test", upstreamRequest.Header.Get("Authorization"))
-	assert.Contains(t, upstreamRequest.Header.Get("Content-Type"), "multipart/form-data")
-
-	request, err := relaycommon.GetTaskRequest(c)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"https://example.com/role.png", "https://example.com/scene.jpg"}, request.Images)
-	assert.Equal(t, []string{"https://example.com/camera.mp4"}, request.Videos)
-	assert.Equal(t, []string{"https://example.com/bgm.mp3"}, request.Audios)
+	assert.Equal(t, "application/json", upstreamRequest.Header.Get("Content-Type"))
 }
 
 func TestBuildJSONRequestConvertsTopLevelReferencesToContent(t *testing.T) {
-	stubRemoteMediaDownloads(t, map[string]remoteMediaFixture{
-		"https://example.com/role.png":   {ContentType: "image/png", Body: "image"},
-		"https://example.com/motion.mp4": {ContentType: "video/mp4", Body: "video"},
-		"https://example.com/music.mp3":  {ContentType: "audio/mpeg", Body: "audio"},
-	})
 	c := newJSONContext(t, `{
 		"model":"seedance-2-720p-933",
 		"prompt":"@Image1 runs through the scene",
@@ -174,12 +118,40 @@ func TestBuildJSONRequestConvertsTopLevelReferencesToContent(t *testing.T) {
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
 	body, err := adaptor.BuildRequestBody(c, info)
 	require.NoError(t, err)
-	form := parseBuiltMultipartBody(t, c, body)
-	assert.Equal(t, []string{"@Image1 runs through the scene"}, form.Value["prompt"])
-	assert.Equal(t, []string{"15"}, form.Value["duration"])
-	require.Len(t, form.File["images"], 1)
-	require.Len(t, form.File["videos"], 1)
-	require.Len(t, form.File["audios"], 1)
+	payload := parseBuiltJSONBody(t, c, body)
+	assert.Equal(t, []map[string]any{
+		urlContentItem("image_url", "https://example.com/role.png"),
+		urlContentItem("video_url", "https://example.com/motion.mp4"),
+		urlContentItem("audio_url", "https://example.com/music.mp3"),
+		{"type": "text", "text": "@Image1 runs through the scene"},
+	}, payload.Content)
+	assert.Equal(t, defaultDuration, payload.Duration)
+}
+
+func TestBuildJSONRequestSupportsAssetReferences(t *testing.T) {
+	c := newJSONContext(t, `{
+		"model":"seedance-2-720p-933",
+		"content":[
+			{"type":"image_asset","image_asset":{"asset_id":"asset_role"}},
+			{"type":"video_asset","video_asset":{"asset_id":"asset_camera"}},
+			{"type":"audio_asset","audio_asset":{"asset_id":"asset_bgm"}},
+			{"type":"text","text":"@Image1 is the lead; use @Video1 and @Audio1."}
+		]
+	}`)
+	info := newRelayInfo()
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	payload := parseBuiltJSONBody(t, c, body)
+	assert.Equal(t, []map[string]any{
+		{"type": "image_asset", "image_asset": map[string]any{"asset_id": "asset_role"}},
+		{"type": "video_asset", "video_asset": map[string]any{"asset_id": "asset_camera"}},
+		{"type": "audio_asset", "audio_asset": map[string]any{"asset_id": "asset_bgm"}},
+		{"type": "text", "text": "@Image1 is the lead; use @Video1 and @Audio1."},
+	}, payload.Content)
 }
 
 func TestBuildJSONRequestNormalizesDurationTo15Seconds(t *testing.T) {
@@ -195,53 +167,11 @@ func TestBuildJSONRequestNormalizesDurationTo15Seconds(t *testing.T) {
 
 	body, err := adaptor.BuildRequestBody(c, info)
 	require.NoError(t, err)
-	form := parseBuiltMultipartBody(t, c, body)
-	assert.Equal(t, []string{"15"}, form.Value["duration"])
-}
-
-func TestBuildJSONMultipartRejectsUnexpectedRemoteMediaType(t *testing.T) {
-	stubRemoteMediaDownloads(t, map[string]remoteMediaFixture{
-		"https://example.com/not-image": {ContentType: "text/plain", Body: "not an image"},
-	})
-	c := newJSONContext(t, `{
-		"model":"seedance-2-720p-933",
-		"prompt":"animate",
-		"images":["https://example.com/not-image"]
-	}`)
-	info := newRelayInfo()
-	adaptor := &TaskAdaptor{}
-	adaptor.Init(info)
-
-	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
-	_, err := adaptor.BuildRequestBody(c, info)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), `images item 1 returned unsupported content type "text/plain"`)
-}
-
-func TestBuildJSONMultipartRejectsOversizedRemoteMedia(t *testing.T) {
-	stubRemoteMediaDownloads(t, map[string]remoteMediaFixture{
-		"https://example.com/large.png": {
-			ContentType: "image/png",
-			ContentSize: downloadLimitBytes(constant.MaxFileDownloadMB, 64) + 1,
-		},
-	})
-	c := newJSONContext(t, `{
-		"model":"seedance-2-720p-933",
-		"prompt":"animate",
-		"images":["https://example.com/large.png"]
-	}`)
-	info := newRelayInfo()
-	adaptor := &TaskAdaptor{}
-	adaptor.Init(info)
-
-	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
-	_, err := adaptor.BuildRequestBody(c, info)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "images item 1 exceeds the maximum allowed size")
+	assert.Equal(t, defaultDuration, parseBuiltJSONBody(t, c, body).Duration)
 }
 
 func TestValidateJSONRequestRejectsUnsupportedResolution(t *testing.T) {
-	c := newJSONContext(t, `{"model":"seedance-2-720p-933","prompt":"test","duration":15,"resolution":"1080p"}`)
+	c := newJSONContext(t, `{"model":"seedance-2-720p-933","prompt":"test","resolution":"1080p"}`)
 	info := newRelayInfo()
 	adaptor := &TaskAdaptor{}
 	adaptor.Init(info)
@@ -249,6 +179,36 @@ func TestValidateJSONRequestRejectsUnsupportedResolution(t *testing.T) {
 	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
 	require.NotNil(t, taskErr)
 	assert.Contains(t, taskErr.Message, "resolution must be 720p")
+}
+
+func TestValidateJSONRequestRejectsReferenceAfterText(t *testing.T) {
+	c := newJSONContext(t, `{
+		"model":"seedance-2-720p-933",
+		"content":[
+			{"type":"text","text":"late reference"},
+			{"type":"image_url","image_url":{"url":"https://example.com/role.png"}}
+		]
+	}`)
+	info := newRelayInfo()
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+
+	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+	require.NotNil(t, taskErr)
+	assert.Contains(t, taskErr.Message, "reference content must appear before text content")
+}
+
+func TestRejectsMultipartRequests(t *testing.T) {
+	c := newJSONContext(t, `{"model":"seedance-2-720p-933","prompt":"test"}`)
+	c.Request.Header.Set("Content-Type", "multipart/form-data; boundary=test")
+	info := newRelayInfo()
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+
+	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "unsupported_media_type", taskErr.Code)
+	assert.Equal(t, http.StatusUnsupportedMediaType, taskErr.StatusCode)
 }
 
 func TestRejectsRemixRequests(t *testing.T) {
@@ -282,79 +242,6 @@ func TestNormalizeBillingRequestBodyUsesFixedDuration(t *testing.T) {
 	require.NoError(t, common.Unmarshal(body, &normalized))
 	assert.Equal(t, float64(defaultDuration), normalized["duration"])
 	assert.NotContains(t, normalized, "seconds")
-}
-
-func TestValidateJSONRequestRejectsReferenceAfterText(t *testing.T) {
-	c := newJSONContext(t, `{
-		"model":"seedance-2-720p-933",
-		"content":[
-			{"type":"text","text":"late reference"},
-			{"type":"image_url","image_url":{"url":"https://example.com/role.png"}}
-		]
-	}`)
-	info := newRelayInfo()
-	adaptor := &TaskAdaptor{}
-	adaptor.Init(info)
-
-	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
-	require.NotNil(t, taskErr)
-	assert.Contains(t, taskErr.Message, "reference content must appear before text content")
-}
-
-func TestBuildMultipartRequestCanonicalizesFileFieldsAndForwardsIdempotencyKey(t *testing.T) {
-	var incoming bytes.Buffer
-	writer := multipart.NewWriter(&incoming)
-	require.NoError(t, writer.WriteField("model", Seedance720p933Model))
-	require.NoError(t, writer.WriteField("prompt", "@Image1 is the lead"))
-	require.NoError(t, writer.WriteField("aspect_ratio", "16:9"))
-	require.NoError(t, writer.WriteField("resolution", "720p"))
-	require.NoError(t, writer.WriteField("duration", "8"))
-	imagePart, err := writer.CreateFormFile("image", "role.png")
-	require.NoError(t, err)
-	_, err = imagePart.Write([]byte("image data"))
-	require.NoError(t, err)
-	videoPart, err := writer.CreateFormFile("videos", "camera.mp4")
-	require.NoError(t, err)
-	_, err = videoPart.Write([]byte("video data"))
-	require.NoError(t, err)
-	audioPart, err := writer.CreateFormFile("audios", "bgm.mp3")
-	require.NoError(t, err)
-	_, err = audioPart.Write([]byte("audio data"))
-	require.NoError(t, err)
-	require.NoError(t, writer.Close())
-
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations", bytes.NewReader(incoming.Bytes()))
-	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
-	c.Request.Header.Set("X-Idempotency-Key", "scene-001")
-	t.Cleanup(func() { common.CleanupBodyStorage(c) })
-	info := newRelayInfo()
-	adaptor := &TaskAdaptor{}
-	adaptor.Init(info)
-
-	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
-	body, err := adaptor.BuildRequestBody(c, info)
-	require.NoError(t, err)
-	assert.Equal(t, DefaultBaseURL+"/v1/video/generations/multipart", mustBuildURL(t, adaptor, info))
-
-	mediaType, params, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
-	require.NoError(t, err)
-	assert.Equal(t, "multipart/form-data", mediaType)
-	parsed, err := multipart.NewReader(body, params["boundary"]).ReadForm(1 << 20)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = parsed.RemoveAll() })
-	assert.Equal(t, []string{Seedance720p933Model}, parsed.Value["model"])
-	assert.Equal(t, []string{"@Image1 is the lead"}, parsed.Value["prompt"])
-	assert.Equal(t, []string{"15"}, parsed.Value["duration"])
-	require.Len(t, parsed.File["images"], 1)
-	require.Len(t, parsed.File["videos"], 1)
-	require.Len(t, parsed.File["audios"], 1)
-	assert.Equal(t, "role.png", parsed.File["images"][0].Filename)
-
-	upstreamRequest := httptest.NewRequest(http.MethodPost, "https://example.com", nil)
-	require.NoError(t, adaptor.BuildRequestHeader(c, upstreamRequest, info))
-	assert.Equal(t, "Bearer hm_test", upstreamRequest.Header.Get("Authorization"))
-	assert.Equal(t, "scene-001", upstreamRequest.Header.Get("X-Idempotency-Key"))
 }
 
 func mustBuildURL(t *testing.T, adaptor *TaskAdaptor, info *relaycommon.RelayInfo) string {

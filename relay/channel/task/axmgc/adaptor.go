@@ -1,17 +1,12 @@
 package axmgc
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
 	"io"
-	"mime"
-	"mime/multipart"
 	"net/http"
-	"net/textproto"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -28,20 +23,30 @@ import (
 )
 
 const (
-	ChannelName             = "axmgc"
-	DefaultBaseURL          = "https://axmgc.com"
-	Seedance720p933Model    = "seedance-2-720p-933"
-	defaultDuration         = 15
-	defaultResolution       = "720p"
-	maxImages               = 9
-	maxVideos               = 3
-	maxAudios               = 3
-	multipartFormContextKey = "axmgc_multipart_form"
+	ChannelName           = "axmgc"
+	DefaultBaseURL        = "https://axmgc.com"
+	Seedance720p933Model  = "seedance-2-720p-933"
+	defaultDuration       = 15
+	defaultResolution     = "720p"
+	maxImages             = 9
+	maxVideos             = 3
+	maxAudios             = 3
+	jsonRequestContextKey = "axmgc_json_request"
 )
 
 var ModelList = []string{Seedance720p933Model}
 
-var downloadRemoteMedia = service.DoDownloadRequestWithContext
+type axmgcJSONRequest struct {
+	Model           string           `json:"model"`
+	Content         []map[string]any `json:"content"`
+	AspectRatio     string           `json:"aspect_ratio,omitempty"`
+	Resolution      string           `json:"resolution,omitempty"`
+	Duration        int              `json:"duration"`
+	GenerateAudio   *bool            `json:"generate_audio,omitempty"`
+	Seed            *int             `json:"seed,omitempty"`
+	Watermark       *bool            `json:"watermark,omitempty"`
+	ReturnLastFrame *bool            `json:"return_last_frame,omitempty"`
+}
 
 type resource struct {
 	Type string `json:"resource_type"`
@@ -61,9 +66,8 @@ type responseTask struct {
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
-	apiKey            string
-	baseURL           string
-	incomingMultipart bool
+	apiKey  string
+	baseURL string
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
@@ -72,16 +76,18 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	if a.baseURL == "" {
 		a.baseURL = DefaultBaseURL
 	}
-	a.incomingMultipart = false
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
 	if info != nil && info.Action == constant.TaskActionRemix {
 		return service.TaskErrorWrapperLocal(errors.New("Axmgc does not support video remix"), "unsupported_action", http.StatusBadRequest)
 	}
-	a.incomingMultipart = strings.HasPrefix(strings.ToLower(c.GetHeader("Content-Type")), "multipart/form-data")
-	if a.incomingMultipart {
-		return a.validateMultipartRequest(c, info)
+	contentType := strings.ToLower(c.GetHeader("Content-Type"))
+	if strings.HasPrefix(contentType, "multipart/form-data") {
+		return service.TaskErrorWrapperLocal(errors.New("Axmgc only supports JSON content with public URLs or asset IDs"), "unsupported_media_type", http.StatusUnsupportedMediaType)
+	}
+	if !strings.HasPrefix(contentType, "application/json") {
+		return service.TaskErrorWrapperLocal(errors.New("Axmgc requires application/json"), "unsupported_media_type", http.StatusUnsupportedMediaType)
 	}
 	return a.validateJSONRequest(c, info)
 }
@@ -91,20 +97,21 @@ func (a *TaskAdaptor) validateJSONRequest(c *gin.Context, info *relaycommon.Rela
 	if err := common.UnmarshalBodyReusable(c, &raw); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
-
-	content := raw.Content
-	if len(content) == 0 {
-		content = contentFromURLs(raw)
-		if prompt := strings.TrimSpace(raw.Prompt); prompt != "" {
-			content = append(content, relaycommon.TaskContentItem{Type: "text", Text: prompt})
-		}
-	} else if !contentHasText(content) && strings.TrimSpace(raw.Prompt) != "" {
-		content = append(content, relaycommon.TaskContentItem{Type: "text", Text: strings.TrimSpace(raw.Prompt)})
+	var input map[string]any
+	if err := common.UnmarshalBodyReusable(c, &input); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
 
-	prompt, images, videos, audios, err := validateContent(content)
+	content, prompt, images, videos, audios, err := validateJSONContent(input["content"], raw)
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	if prompt == "" && strings.TrimSpace(raw.Prompt) != "" {
+		prompt = strings.TrimSpace(raw.Prompt)
+		content = append(content, map[string]any{"type": "text", "text": prompt})
+	}
+	if prompt == "" {
+		return service.TaskErrorWrapperLocal(errors.New("content must contain a non-empty text item"), "invalid_request", http.StatusBadRequest)
 	}
 	if err := validateResolution(raw.Resolution); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
@@ -115,55 +122,31 @@ func (a *TaskAdaptor) validateJSONRequest(c *gin.Context, info *relaycommon.Rela
 
 	raw.Model = firstNonEmpty(raw.Model, info.OriginModelName)
 	raw.Prompt = prompt
-	raw.Content = content
-	raw.Images = images
-	raw.Videos = videos
-	raw.Audios = audios
 	raw.AspectRatio = strings.TrimSpace(raw.AspectRatio)
 	raw.Resolution = strings.TrimSpace(raw.Resolution)
 	raw.Duration = defaultDuration
-	storeValidatedTaskRequest(c, info, raw, len(images)+len(videos)+len(audios) > 0)
-	return nil
-}
+	storeValidatedTaskRequest(c, info, raw, images+videos+audios > 0)
 
-func (a *TaskAdaptor) validateMultipartRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
-	form, err := common.ParseMultipartFormReusable(c)
-	if err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_multipart_form", http.StatusBadRequest)
-	}
-	fail := func(err error, code string) *dto.TaskError {
-		_ = form.RemoveAll()
-		return service.TaskErrorWrapperLocal(err, code, http.StatusBadRequest)
-	}
-
-	prompt := strings.TrimSpace(firstFormValue(form, "prompt"))
-	if prompt == "" {
-		return fail(errors.New("prompt is required"), "invalid_request")
-	}
-	modelName := firstNonEmpty(firstFormValue(form, "model"), info.OriginModelName)
-	if strings.TrimSpace(modelName) == "" {
-		return fail(errors.New("model field is required"), "missing_model")
-	}
-	resolution := strings.TrimSpace(firstFormValue(form, "resolution"))
-	if err := validateResolution(resolution); err != nil {
-		return fail(err, "invalid_request")
-	}
-	images := countFiles(form, "images", "image")
-	videos := countFiles(form, "videos", "video")
-	audios := countFiles(form, "audios", "audio")
-	if err := validateMediaCounts(images, videos, audios); err != nil {
-		return fail(err, "invalid_request")
-	}
-
-	c.Set(multipartFormContextKey, form)
-	req := relaycommon.TaskSubmitReq{
-		Model:       modelName,
-		Prompt:      prompt,
-		AspectRatio: strings.TrimSpace(firstFormValue(form, "aspect_ratio")),
-		Resolution:  resolution,
+	payload := axmgcJSONRequest{
+		Model:       raw.Model,
+		Content:     content,
+		AspectRatio: raw.AspectRatio,
+		Resolution:  firstNonEmpty(raw.Resolution, defaultResolution),
 		Duration:    defaultDuration,
 	}
-	storeValidatedTaskRequest(c, info, req, images+videos+audios > 0)
+	if payload.GenerateAudio, err = optionalJSONBool(input, "generate_audio"); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	if payload.Seed, err = optionalJSONInt(input, "seed"); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	if payload.Watermark, err = optionalJSONBool(input, "watermark"); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	if payload.ReturnLastFrame, err = optionalJSONBool(input, "return_last_frame"); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	c.Set(jsonRequestContextKey, payload)
 	return nil
 }
 
@@ -175,16 +158,16 @@ func storeValidatedTaskRequest(c *gin.Context, info *relaycommon.RelayInfo, req 
 	c.Set("task_request", req)
 }
 
-func contentFromURLs(raw relaycommon.TaskSubmitReq) []relaycommon.TaskContentItem {
-	content := make([]relaycommon.TaskContentItem, 0, len(raw.Images)+len(raw.ImageURLs)+len(raw.Videos)+len(raw.VideoURLs)+len(raw.Audios)+len(raw.AudioURLs)+3)
+func contentFromURLs(raw relaycommon.TaskSubmitReq) []map[string]any {
+	content := make([]map[string]any, 0, len(raw.Images)+len(raw.ImageURLs)+len(raw.Videos)+len(raw.VideoURLs)+len(raw.Audios)+len(raw.AudioURLs))
 	for _, url := range appendNonEmpty([]string{raw.Image}, raw.Images, raw.ImageURLs, raw.InputStartFrames, raw.InputImageReferences) {
-		content = append(content, relaycommon.TaskContentItem{Type: "image_url", ImageURL: &relaycommon.TaskContentURL{URL: url}})
+		content = append(content, urlContentItem("image_url", url))
 	}
 	for _, url := range appendNonEmpty(raw.Videos, raw.VideoURLs) {
-		content = append(content, relaycommon.TaskContentItem{Type: "video_url", VideoURL: &relaycommon.TaskContentURL{URL: url}})
+		content = append(content, urlContentItem("video_url", url))
 	}
 	for _, url := range appendNonEmpty(raw.Audios, raw.AudioURLs) {
-		content = append(content, relaycommon.TaskContentItem{Type: "audio_url", AudioURL: &relaycommon.TaskContentURL{URL: url}})
+		content = append(content, urlContentItem("audio_url", url))
 	}
 	return content
 }
@@ -201,63 +184,145 @@ func appendNonEmpty(groups ...[]string) []string {
 	return values
 }
 
-func contentHasText(content []relaycommon.TaskContentItem) bool {
-	for _, item := range content {
-		if item.Type == "text" && strings.TrimSpace(item.Text) != "" {
-			return true
-		}
+func validateJSONContent(rawContent any, legacy relaycommon.TaskSubmitReq) ([]map[string]any, string, int, int, int, error) {
+	if rawContent == nil {
+		return contentFromURLs(legacy), "", len(appendNonEmpty([]string{legacy.Image}, legacy.Images, legacy.ImageURLs, legacy.InputStartFrames, legacy.InputImageReferences)), len(appendNonEmpty(legacy.Videos, legacy.VideoURLs)), len(appendNonEmpty(legacy.Audios, legacy.AudioURLs)), nil
 	}
-	return false
+	items, ok := rawContent.([]any)
+	if !ok {
+		return nil, "", 0, 0, 0, errors.New("content must be an array")
+	}
+	content := make([]map[string]any, 0, len(items))
+	prompts := make([]string, 0, 1)
+	images, videos, audios := 0, 0, 0
+	seenText := false
+	for _, rawItem := range items {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			return nil, "", 0, 0, 0, errors.New("content items must be objects")
+		}
+		normalized, category, text, err := normalizeJSONContentItem(item)
+		if err != nil {
+			return nil, "", 0, 0, 0, err
+		}
+		if category != "" && seenText {
+			return nil, "", 0, 0, 0, errors.New("reference content must appear before text content")
+		}
+		switch category {
+		case "image":
+			images++
+		case "video":
+			videos++
+		case "audio":
+			audios++
+		case "text":
+			seenText = true
+			prompts = append(prompts, text)
+		}
+		content = append(content, normalized)
+	}
+	if err := validateMediaCounts(images, videos, audios); err != nil {
+		return nil, "", 0, 0, 0, err
+	}
+	return content, strings.Join(prompts, "\n"), images, videos, audios, nil
 }
 
-func validateContent(content []relaycommon.TaskContentItem) (string, []string, []string, []string, error) {
-	if len(content) == 0 {
-		return "", nil, nil, nil, errors.New("content with a text item is required")
+func normalizeJSONContentItem(item map[string]any) (map[string]any, string, string, error) {
+	contentType, ok := item["type"].(string)
+	if !ok || strings.TrimSpace(contentType) == "" {
+		return nil, "", "", errors.New("content.type is required")
 	}
-	var prompts, images, videos, audios []string
-	seenText := false
-	for _, item := range content {
-		switch item.Type {
-		case "text":
-			if text := strings.TrimSpace(item.Text); text != "" {
-				prompts = append(prompts, text)
-				seenText = true
+	contentType = strings.TrimSpace(contentType)
+	switch contentType {
+	case "text":
+		text, _ := item["text"].(string)
+		if text = strings.TrimSpace(text); text == "" {
+			return nil, "", "", errors.New("text content must be non-empty")
+		}
+		return map[string]any{"type": contentType, "text": text}, "text", text, nil
+	case "image_url", "video_url", "audio_url":
+		url, err := contentURL(item, contentType)
+		if err != nil {
+			return nil, "", "", err
+		}
+		return urlContentItem(contentType, url), strings.TrimSuffix(contentType, "_url"), "", nil
+	case "image_asset", "video_asset", "audio_asset":
+		assetID, err := contentAssetID(item, contentType)
+		if err != nil {
+			return nil, "", "", err
+		}
+		return map[string]any{"type": contentType, contentType: map[string]any{"asset_id": assetID}}, strings.TrimSuffix(contentType, "_asset"), "", nil
+	default:
+		return nil, "", "", fmt.Errorf("unsupported content type %q", contentType)
+	}
+}
+
+func contentURL(item map[string]any, field string) (string, error) {
+	value, ok := item[field]
+	if !ok {
+		value = item["url"]
+	}
+	switch typed := value.(type) {
+	case string:
+		if url := strings.TrimSpace(typed); url != "" {
+			return url, nil
+		}
+	case map[string]any:
+		if rawURL, ok := typed["url"].(string); ok {
+			if url := strings.TrimSpace(rawURL); url != "" {
+				return url, nil
 			}
-		case "image_url":
-			if seenText {
-				return "", nil, nil, nil, errors.New("reference content must appear before text content")
-			}
-			if item.ImageURL == nil || strings.TrimSpace(item.ImageURL.URL) == "" {
-				return "", nil, nil, nil, errors.New("image_url.url is required")
-			}
-			images = append(images, strings.TrimSpace(item.ImageURL.URL))
-		case "video_url":
-			if seenText {
-				return "", nil, nil, nil, errors.New("reference content must appear before text content")
-			}
-			if item.VideoURL == nil || strings.TrimSpace(item.VideoURL.URL) == "" {
-				return "", nil, nil, nil, errors.New("video_url.url is required")
-			}
-			videos = append(videos, strings.TrimSpace(item.VideoURL.URL))
-		case "audio_url":
-			if seenText {
-				return "", nil, nil, nil, errors.New("reference content must appear before text content")
-			}
-			if item.AudioURL == nil || strings.TrimSpace(item.AudioURL.URL) == "" {
-				return "", nil, nil, nil, errors.New("audio_url.url is required")
-			}
-			audios = append(audios, strings.TrimSpace(item.AudioURL.URL))
-		default:
-			return "", nil, nil, nil, fmt.Errorf("unsupported content type %q", item.Type)
 		}
 	}
-	if len(prompts) == 0 {
-		return "", nil, nil, nil, errors.New("content must contain a non-empty text item")
+	return "", fmt.Errorf("%s.url is required", field)
+}
+
+func contentAssetID(item map[string]any, field string) (string, error) {
+	asset, ok := item[field].(map[string]any)
+	if !ok {
+		return "", fmt.Errorf("%s.asset_id is required", field)
 	}
-	if err := validateMediaCounts(len(images), len(videos), len(audios)); err != nil {
-		return "", nil, nil, nil, err
+	assetID, _ := asset["asset_id"].(string)
+	if assetID = strings.TrimSpace(assetID); assetID == "" {
+		return "", fmt.Errorf("%s.asset_id is required", field)
 	}
-	return strings.Join(prompts, "\n"), images, videos, audios, nil
+	return assetID, nil
+}
+
+func urlContentItem(contentType, url string) map[string]any {
+	return map[string]any{"type": contentType, contentType: map[string]any{"url": url}}
+}
+
+func optionalJSONBool(input map[string]any, field string) (*bool, error) {
+	value, ok := input[field]
+	if !ok {
+		return nil, nil
+	}
+	data, err := common.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var result bool
+	if err := common.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("%s must be a boolean", field)
+	}
+	return &result, nil
+}
+
+func optionalJSONInt(input map[string]any, field string) (*int, error) {
+	value, ok := input[field]
+	if !ok {
+		return nil, nil
+	}
+	data, err := common.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var result int
+	if err := common.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("%s must be an integer", field)
+	}
+	return &result, nil
 }
 
 func validateMediaCounts(images, videos, audios int) error {
@@ -280,32 +345,17 @@ func validateResolution(resolution string) error {
 	return nil
 }
 
-func countFiles(form *multipart.Form, fields ...string) int {
-	count := 0
-	for _, field := range fields {
-		count += len(form.File[field])
-	}
-	return count
-}
-
-func firstFormValue(form *multipart.Form, field string) string {
-	if form == nil || len(form.Value[field]) == 0 {
-		return ""
-	}
-	return form.Value[field][0]
-}
-
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	if info != nil && info.Action == constant.TaskActionRemix {
 		return "", errors.New("Axmgc does not support video remix")
 	}
-	return a.baseURL + "/v1/video/generations/multipart", nil
+	return a.baseURL + "/v1/video/generations", nil
 }
 
 func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, _ *relaycommon.RelayInfo) error {
 	req.Header.Set("Authorization", "Bearer "+a.apiKey)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", c.GetHeader("Content-Type"))
+	req.Header.Set("Content-Type", "application/json")
 	if idempotencyKey := strings.TrimSpace(c.GetHeader("X-Idempotency-Key")); idempotencyKey != "" {
 		req.Header.Set("X-Idempotency-Key", idempotencyKey)
 	}
@@ -313,10 +363,21 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, _ *r
 }
 
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
-	if a.incomingMultipart {
-		return a.buildIncomingMultipartRequestBody(c, info)
+	payload, ok := c.Get(jsonRequestContextKey)
+	if !ok {
+		return nil, errors.New("validated Axmgc JSON request is unavailable")
 	}
-	return a.buildRemoteMultipartRequestBody(c, info)
+	request, ok := payload.(axmgcJSONRequest)
+	if !ok {
+		return nil, errors.New("invalid Axmgc JSON request")
+	}
+	request.Model = upstreamModelName(info, request.Model)
+	data, err := common.Marshal(request)
+	if err != nil {
+		return nil, err
+	}
+	c.Request.Header.Set("Content-Type", "application/json")
+	return bytes.NewReader(data), nil
 }
 
 func (a *TaskAdaptor) NormalizeBillingRequestBody(_ *relaycommon.RelayInfo, body []byte) ([]byte, error) {
@@ -330,224 +391,6 @@ func (a *TaskAdaptor) NormalizeBillingRequestBody(_ *relaycommon.RelayInfo, body
 	request["duration"] = defaultDuration
 	delete(request, "seconds")
 	return common.Marshal(request)
-}
-
-func (a *TaskAdaptor) buildIncomingMultipartRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
-	form, ok := c.Get(multipartFormContextKey)
-	if !ok {
-		parsed, err := common.ParseMultipartFormReusable(c)
-		if err != nil {
-			return nil, err
-		}
-		form = parsed
-	}
-	multipartForm, ok := form.(*multipart.Form)
-	if !ok || multipartForm == nil {
-		return nil, errors.New("multipart form is unavailable")
-	}
-	defer multipartForm.RemoveAll()
-
-	req, err := relaycommon.GetTaskRequest(c)
-	if err != nil {
-		return nil, err
-	}
-	var buffer bytes.Buffer
-	writer := multipart.NewWriter(&buffer)
-	if err := writeMultipartFields(writer, info, req); err != nil {
-		return nil, err
-	}
-	for _, spec := range []struct {
-		Target string
-		Fields []string
-	}{
-		{Target: "images", Fields: []string{"images", "image"}},
-		{Target: "videos", Fields: []string{"videos", "video"}},
-		{Target: "audios", Fields: []string{"audios", "audio"}},
-	} {
-		if err := copyMultipartFiles(writer, multipartForm, spec.Target, spec.Fields...); err != nil {
-			return nil, err
-		}
-	}
-	if err := writer.Close(); err != nil {
-		return nil, err
-	}
-	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
-	return &buffer, nil
-}
-
-func (a *TaskAdaptor) buildRemoteMultipartRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
-	req, err := relaycommon.GetTaskRequest(c)
-	if err != nil {
-		return nil, err
-	}
-
-	var buffer bytes.Buffer
-	writer := multipart.NewWriter(&buffer)
-	if err := writeMultipartFields(writer, info, req); err != nil {
-		return nil, err
-	}
-
-	perFileLimit := downloadLimitBytes(constant.MaxFileDownloadMB, 64)
-	totalLimit := downloadLimitBytes(constant.MaxRequestBodyMB, 128)
-	totalDownloaded := int64(0)
-	for _, spec := range []struct {
-		Field string
-		URLs  []string
-	}{
-		{Field: "images", URLs: req.Images},
-		{Field: "videos", URLs: req.Videos},
-		{Field: "audios", URLs: req.Audios},
-	} {
-		for index, mediaURL := range spec.URLs {
-			written, err := writeRemoteMediaPart(c, writer, spec.Field, index, mediaURL, perFileLimit, totalLimit-totalDownloaded)
-			if err != nil {
-				return nil, err
-			}
-			totalDownloaded += written
-		}
-	}
-
-	if err := writer.Close(); err != nil {
-		return nil, err
-	}
-	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
-	return &buffer, nil
-}
-
-func writeMultipartFields(writer *multipart.Writer, info *relaycommon.RelayInfo, req relaycommon.TaskSubmitReq) error {
-	for key, value := range map[string]string{
-		"model":        upstreamModelName(info, req.Model),
-		"prompt":       req.Prompt,
-		"aspect_ratio": req.AspectRatio,
-		"resolution":   firstNonEmpty(req.Resolution, defaultResolution),
-		"duration":     strconv.Itoa(defaultDuration),
-	} {
-		if strings.TrimSpace(value) == "" {
-			continue
-		}
-		if err := writer.WriteField(key, value); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func writeRemoteMediaPart(c *gin.Context, writer *multipart.Writer, field string, index int, mediaURL string, perFileLimit, remainingTotal int64) (int64, error) {
-	if remainingTotal <= 0 {
-		return 0, fmt.Errorf("remote media exceeds the maximum combined size of %dMB", maxInt(constant.MaxRequestBodyMB, 128))
-	}
-
-	resp, err := downloadRemoteMedia(c.Request.Context(), mediaURL, "Axmgc multipart relay")
-	if err != nil {
-		return 0, fmt.Errorf("download %s item %d failed: %w", field, index+1, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("download %s item %d returned HTTP %d", field, index+1, resp.StatusCode)
-	}
-
-	fileLimit := perFileLimit
-	if remainingTotal < fileLimit {
-		fileLimit = remainingTotal
-	}
-	if resp.ContentLength > fileLimit {
-		return 0, fmt.Errorf("%s item %d exceeds the maximum allowed size", field, index+1)
-	}
-
-	reader := bufio.NewReader(resp.Body)
-	preview, _ := reader.Peek(512)
-	contentType := normalizeRemoteMediaType(resp.Header.Get("Content-Type"), preview)
-	expectedPrefix := strings.TrimSuffix(field, "s") + "/"
-	if !strings.HasPrefix(contentType, expectedPrefix) {
-		return 0, fmt.Errorf("%s item %d returned unsupported content type %q", field, index+1, contentType)
-	}
-
-	header := make(textproto.MIMEHeader)
-	header.Set("Content-Disposition", fmt.Sprintf(`form-data; name=%q; filename=%q`, field, remoteMediaFilename(field, index, contentType)))
-	header.Set("Content-Type", contentType)
-	part, err := writer.CreatePart(header)
-	if err != nil {
-		return 0, err
-	}
-	written, err := io.Copy(part, io.LimitReader(reader, fileLimit+1))
-	if err != nil {
-		return 0, fmt.Errorf("copy %s item %d failed: %w", field, index+1, err)
-	}
-	if written > fileLimit {
-		return 0, fmt.Errorf("%s item %d exceeds the maximum allowed size", field, index+1)
-	}
-	return written, nil
-}
-
-func normalizeRemoteMediaType(headerValue string, preview []byte) string {
-	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(headerValue))
-	if err != nil || mediaType == "" || mediaType == "application/octet-stream" {
-		mediaType = http.DetectContentType(preview)
-		if parsed, _, parseErr := mime.ParseMediaType(mediaType); parseErr == nil {
-			mediaType = parsed
-		}
-	}
-	return strings.ToLower(strings.TrimSpace(mediaType))
-}
-
-func remoteMediaFilename(field string, index int, contentType string) string {
-	extension := ".bin"
-	switch contentType {
-	case "image/jpeg":
-		extension = ".jpg"
-	case "image/png":
-		extension = ".png"
-	case "image/webp":
-		extension = ".webp"
-	case "video/mp4":
-		extension = ".mp4"
-	case "audio/mpeg":
-		extension = ".mp3"
-	case "audio/wav", "audio/x-wav":
-		extension = ".wav"
-	}
-	return fmt.Sprintf("%s-%d%s", strings.TrimSuffix(field, "s"), index+1, extension)
-}
-
-func downloadLimitBytes(valueMB, fallbackMB int) int64 {
-	return int64(maxInt(valueMB, fallbackMB)) << 20
-}
-
-func maxInt(value, fallback int) int {
-	if value > 0 {
-		return value
-	}
-	return fallback
-}
-
-func copyMultipartFiles(writer *multipart.Writer, form *multipart.Form, target string, fields ...string) error {
-	for _, field := range fields {
-		for _, fileHeader := range form.File[field] {
-			file, err := fileHeader.Open()
-			if err != nil {
-				return err
-			}
-			contentType := fileHeader.Header.Get("Content-Type")
-			if contentType == "" {
-				contentType = "application/octet-stream"
-			}
-			header := make(textproto.MIMEHeader)
-			header.Set("Content-Disposition", fmt.Sprintf(`form-data; name=%q; filename=%q`, target, fileHeader.Filename))
-			header.Set("Content-Type", contentType)
-			part, err := writer.CreatePart(header)
-			if err == nil {
-				_, err = io.Copy(part, file)
-			}
-			closeErr := file.Close()
-			if err != nil {
-				return err
-			}
-			if closeErr != nil {
-				return closeErr
-			}
-		}
-	}
-	return nil
 }
 
 func upstreamModelName(info *relaycommon.RelayInfo, fallback string) string {
