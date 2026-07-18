@@ -3,6 +3,7 @@ package sora
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -29,25 +30,25 @@ import (
 // ============================
 
 type responseTask struct {
-	ID                 string `json:"id"`
-	TaskID             string `json:"task_id,omitempty"` //兼容旧接口
-	CamelTaskID        string `json:"taskId,omitempty"`
-	Object             string `json:"object"`
-	Model              string `json:"model"`
-	Status             string `json:"status"`
-	Progress           int    `json:"progress"`
-	CreatedAt          int64  `json:"created_at"`
-	CompletedAt        int64  `json:"completed_at,omitempty"`
-	ExpiresAt          int64  `json:"expires_at,omitempty"`
-	Seconds            string `json:"seconds,omitempty"`
-	Size               string `json:"size,omitempty"`
-	RemixedFromVideoID string `json:"remixed_from_video_id,omitempty"`
-	ResultURL          string `json:"result_url,omitempty"`
-	VideoURL           string `json:"video_url,omitempty"`
-	CamelVideoURL      string `json:"videoUrl,omitempty"`
-	OutputURL          string `json:"output_url,omitempty"`
-	URL                string `json:"url,omitempty"`
-	Output             any    `json:"output,omitempty"`
+	ID                 string          `json:"id"`
+	TaskID             string          `json:"task_id,omitempty"` //兼容旧接口
+	CamelTaskID        string          `json:"taskId,omitempty"`
+	Object             string          `json:"object"`
+	Model              string          `json:"model"`
+	Status             string          `json:"status"`
+	Progress           int             `json:"progress"`
+	CreatedAt          int64           `json:"created_at"`
+	CompletedAt        int64           `json:"completed_at,omitempty"`
+	ExpiresAt          int64           `json:"expires_at,omitempty"`
+	Seconds            json.RawMessage `json:"seconds,omitempty"`
+	Size               string          `json:"size,omitempty"`
+	RemixedFromVideoID string          `json:"remixed_from_video_id,omitempty"`
+	ResultURL          string          `json:"result_url,omitempty"`
+	VideoURL           string          `json:"video_url,omitempty"`
+	CamelVideoURL      string          `json:"videoUrl,omitempty"`
+	OutputURL          string          `json:"output_url,omitempty"`
+	URL                string          `json:"url,omitempty"`
+	Output             any             `json:"output,omitempty"`
 	Video              *struct {
 		URL string `json:"url,omitempty"`
 	} `json:"video,omitempty"`
@@ -65,7 +66,15 @@ func extractResponseTaskVideoURL(task responseTask) string {
 	if task.Video != nil && strings.TrimSpace(task.Video.URL) != "" {
 		return strings.TrimSpace(task.Video.URL)
 	}
+	if object := strings.TrimSpace(task.Object); isHTTPVideoURL(object) {
+		return object
+	}
 	return extractVideoURLFromAny(task.Output)
+}
+
+func isHTTPVideoURL(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://")
 }
 
 // ============================
@@ -109,9 +118,6 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 }
 
 func (a *TaskAdaptor) ValidateMappedRequestBeforeDecode(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
-	if isTokenStackChannel(info) {
-		return validateSoraModelContentType(c, info.OriginModelName, soraModelProfile{RequireJSON: true})
-	}
 	profile, ok := soraModelProfileForInfo(info)
 	if !ok {
 		return nil
@@ -156,6 +162,9 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	}
 
 	seconds := estimateVideoSeconds(req, info)
+	if tokenStackSeconds, ok := tokenStackBillingSeconds(c, info); ok {
+		seconds = tokenStackSeconds
+	}
 	size := req.Size
 	if size == "" {
 		size = "720x1280"
@@ -216,8 +225,8 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 					bodyMap["seconds"] = clampNormalizedVideoSeconds(seconds, maxSeconds)
 				}
 			}
-			if isTokenStackChannel(info) {
-				applyTokenStackJSONRequest(bodyMap)
+			if hasProfile {
+				applySoraModelJSONFinalProfile(bodyMap, profile)
 			}
 			if newBody, err := common.Marshal(bodyMap); err == nil {
 				return bytes.NewReader(newBody), nil
@@ -307,6 +316,36 @@ func estimateVideoSeconds(req relaycommon.TaskSubmitReq, info *relaycommon.Relay
 		seconds = defaultVideoSecondsForModel(req.Model, info)
 	}
 	return clampVideoSeconds(seconds, maxVideoSecondsForModel(info))
+}
+
+func tokenStackBillingSeconds(c *gin.Context, info *relaycommon.RelayInfo) (int, bool) {
+	if !isTokenStackChannel(info) {
+		return 0, false
+	}
+	upstreamModel := strings.TrimSpace(info.ChannelMeta.UpstreamModelName)
+	if _, ok := tokenStackSora15sModels[upstreamModel]; ok {
+		return 15, true
+	}
+	if _, ok := tokenStackMultiResolutionModels[upstreamModel]; ok {
+		return 15, true
+	}
+	if upstreamModel != tokenStackMultiModeModel {
+		return 0, false
+	}
+
+	var request struct {
+		Parameters struct {
+			Duration any `json:"duration"`
+		} `json:"parameters"`
+	}
+	if err := common.UnmarshalBodyReusable(c, &request); err != nil {
+		return 0, false
+	}
+	seconds, ok := normalizeVideoSeconds(request.Parameters.Duration)
+	if !ok {
+		return 0, false
+	}
+	return mustParsePositiveInt(seconds), true
 }
 
 func mustParsePositiveInt(value string) int {
@@ -535,23 +574,29 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		Code: 0,
 	}
 
-	switch strings.ToLower(strings.TrimSpace(resTask.Status)) {
-	case "queued", "pending":
-		taskResult.Status = model.TaskStatusQueued
-	case "processing", "in_progress", "running":
-		taskResult.Status = model.TaskStatusInProgress
-	case "completed", "complete", "done", "succeeded", "success":
-		taskResult.Status = model.TaskStatusSuccess
-		taskResult.Url = extractResponseTaskVideoURL(resTask)
-	case "failed", "cancelled", "canceled", "error":
+	status := strings.TrimSpace(resTask.Status)
+	if statusReason, failed := taskStatusFailureReason(status); failed {
 		taskResult.Status = model.TaskStatusFailure
-		taskResult.Reason = responseTaskFailureReason(resTask)
-	default:
-		if reason := responseTaskFailureReason(resTask); reason != "" {
+		taskResult.Reason = firstNonEmpty(statusReason, responseTaskFailureReason(resTask))
+	} else {
+		switch strings.ToLower(status) {
+		case "queued", "pending":
+			taskResult.Status = model.TaskStatusQueued
+		case "processing", "in_progress", "running":
+			taskResult.Status = model.TaskStatusInProgress
+		case "completed", "complete", "done", "succeeded", "success":
+			taskResult.Status = model.TaskStatusSuccess
+			taskResult.Url = extractResponseTaskVideoURL(resTask)
+		case "failed", "cancelled", "canceled", "error":
 			taskResult.Status = model.TaskStatusFailure
-			taskResult.Reason = reason
-		} else {
-			return nil, fmt.Errorf("unknown Sora task status %q", resTask.Status)
+			taskResult.Reason = responseTaskFailureReason(resTask)
+		default:
+			if reason := responseTaskFailureReason(resTask); reason != "" {
+				taskResult.Status = model.TaskStatusFailure
+				taskResult.Reason = reason
+			} else {
+				return nil, fmt.Errorf("unknown Sora task status %q", resTask.Status)
+			}
 		}
 	}
 	if resTask.Progress > 0 && resTask.Progress < 100 {
@@ -559,6 +604,16 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 
 	return &taskResult, nil
+}
+
+func taskStatusFailureReason(status string) (string, bool) {
+	status = strings.TrimSpace(status)
+	if len(status) < len("failed") || !strings.EqualFold(status[:len("failed")], "failed") {
+		return "", false
+	}
+	reason := strings.TrimSpace(status[len("failed"):])
+	reason = strings.TrimLeft(reason, ":：- ")
+	return strings.TrimSpace(reason), true
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {

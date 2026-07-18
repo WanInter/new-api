@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -44,6 +45,72 @@ func TestBuildRequestBodyNormalizesTokenStackPayload(t *testing.T) {
 		"seconds": "15",
 		"size":    "720x1280",
 	}, got)
+}
+
+func TestBuildRequestBodyConvertsCompatibleMediaForTokenStackSora15s(t *testing.T) {
+	bodyJSON := `{
+		"model":"sd-bak-1",
+		"prompt":"animate the references",
+		"image":"image-1",
+		"image_urls":["image-2"],
+		"input_reference":"image-3",
+		"video_url":"video-1",
+		"audio_url":"audio-1",
+		"content":[
+			{"type":"image_url","image_url":{"url":"image-4"}},
+			{"type":"video_url","video_url":{"url":"video-2"}},
+			{"type":"audio_url","audio_url":{"url":"audio-2"}}
+		]
+	}`
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(bodyJSON))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	body, err := (&TaskAdaptor{}).BuildRequestBody(c, tokenStackRelayInfo("https://www.tokenstack.cc"))
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	var got map[string]any
+	require.NoError(t, common.Unmarshal(data, &got))
+	assert.Equal(t, []any{"image-1", "image-2", "image-3", "image-4"}, got["images"])
+	assert.Equal(t, []any{"video-1", "video-2"}, got["videos"])
+	assert.Equal(t, []any{"audio-1", "audio-2"}, got["audios"])
+	assert.NotContains(t, got, "image")
+	assert.NotContains(t, got, "image_urls")
+	assert.NotContains(t, got, "input_reference")
+	assert.NotContains(t, got, "video_url")
+	assert.NotContains(t, got, "audio_url")
+	assert.NotContains(t, got, "content")
+}
+
+func TestBuildRequestBodyAppliesTokenStackFilterAfterOriginModelProfile(t *testing.T) {
+	bodyJSON := `{
+		"model":"ax2.0-9tu",
+		"prompt":"animate the reference",
+		"duration":5,
+		"images":["image-1"]
+	}`
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(bodyJSON))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := tokenStackRelayInfo("https://www.tokenstack.cc")
+	info.OriginModelName = axMultimodalVideoModel
+
+	body, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	var got map[string]any
+	require.NoError(t, common.Unmarshal(data, &got))
+	assert.Equal(t, "seedance-2-0-15s-slow", got["model"])
+	assert.Equal(t, []any{"image-1"}, got["images"])
+	assert.Equal(t, "15", got["seconds"])
+	assert.NotContains(t, got, "duration")
+	assert.NotContains(t, got, "content")
 }
 
 func TestBuildRequestBodyDerivesTokenStackSizeFromLegacyFields(t *testing.T) {
@@ -112,24 +179,189 @@ func TestBuildRequestBodyDoesNotApplyTokenStackRulesToOtherSoraChannels(t *testi
 	assert.Equal(t, "15", got["seconds"])
 }
 
-func TestValidateRequestAndSetActionRequiresJSONForTokenStack(t *testing.T) {
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader("prompt=animate"))
-	c.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+func TestBuildRequestBodyDoesNotApplyTokenStackRulesToOtherTokenStackModels(t *testing.T) {
+	tests := []struct {
+		name          string
+		upstreamModel string
+		bodyJSON      string
+		preserved     []string
+	}{
+		{
+			name:          "multimode",
+			upstreamModel: "seedance-2-0-sale",
+			bodyJSON:      `{"model":"sd-bak-1","prompt":"animate","input":{"prompt":"animate","media":[{"type":"first_frame","url":"image-1"}]},"parameters":{"resolution":"1080P","duration":15}}`,
+			preserved:     []string{"input", "parameters"},
+		},
+		{
+			name:          "doubao",
+			upstreamModel: "doubao-seedance-2-0-260128",
+			bodyJSON:      `{"model":"sd-bak-1","prompt":"animate","mode":"reference_material","aspect_ratio":"16:9","content":[{"type":"image_url","image_url":{"url":"image-1"}}]}`,
+			preserved:     []string{"mode", "aspect_ratio", "content"},
+		},
+		{
+			name:          "multiresolution",
+			upstreamModel: "seedance-2.0-720p-fast-15s",
+			bodyJSON:      `{"model":"sd-bak-1","prompt":"animate","aspect_ratio":"16:9","seconds":"1","reference_image_urls":["image-1"],"reference_videos":["video-1"],"reference_audios":["audio-1"]}`,
+			preserved:     []string{"aspect_ratio", "reference_image_urls", "reference_videos", "reference_audios"},
+		},
+	}
 
-	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, tokenStackRelayInfo("https://www.tokenstack.cc"))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(tt.bodyJSON))
+			c.Request.Header.Set("Content-Type", "application/json")
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
 
-	require.NotNil(t, taskErr)
-	assert.Equal(t, "unsupported_content_type", taskErr.Code)
+			body, err := (&TaskAdaptor{}).BuildRequestBody(c, tokenStackRelayInfo("https://www.tokenstack.cc", tt.upstreamModel))
+			require.NoError(t, err)
+			data, err := io.ReadAll(body)
+			require.NoError(t, err)
+
+			var got map[string]any
+			require.NoError(t, common.Unmarshal(data, &got))
+			assert.Equal(t, tt.upstreamModel, got["model"])
+			for _, field := range tt.preserved {
+				assert.Contains(t, got, field)
+			}
+		})
+	}
 }
 
-func tokenStackRelayInfo(baseURL string) *relaycommon.RelayInfo {
+func TestValidateRequestAndSetActionRequiresJSONForDocumentedTokenStackModels(t *testing.T) {
+	for _, modelName := range []string{
+		"seedance-2-0-15s-slow",
+		"seedance-2-0-sale",
+		"doubao-seedance-2-0-260128",
+		"seedance-2.0-720p-fast-15s",
+	} {
+		t.Run(modelName, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader("prompt=animate"))
+			c.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+			taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, tokenStackRelayInfo("https://www.tokenstack.cc", modelName))
+
+			require.NotNil(t, taskErr)
+			assert.Equal(t, "unsupported_content_type", taskErr.Code)
+		})
+	}
+}
+
+func TestTokenStackSora15sTransformIsLimitedToDocumentedModels(t *testing.T) {
+	for _, model := range []string{
+		"seedance-2-0-15s-slow",
+		"seedance-2-0-15s-high",
+		"seedance-2-0-15s-fast",
+	} {
+		t.Run(model, func(t *testing.T) {
+			profile, ok := soraModelProfileForInfo(tokenStackRelayInfo("https://www.tokenstack.cc", model))
+			require.True(t, ok)
+			assert.Equal(t, requestTransformTokenStackSora15s, profile.JSONFinalTransform)
+			assert.True(t, profile.RequireJSON)
+		})
+	}
+
+	for _, model := range []string{
+		"seedance-2-0-sale",
+		"doubao-seedance-2-0-260128",
+		"doubao-seedance-2-0-fast-260128",
+		"seedance-2.0-720p-fast-15s",
+	} {
+		t.Run(model, func(t *testing.T) {
+			profile, ok := soraModelProfileForInfo(tokenStackRelayInfo("https://www.tokenstack.cc", model))
+			require.True(t, ok)
+			assert.Equal(t, requestTransformNone, profile.JSONFinalTransform)
+			assert.True(t, profile.RequireJSON)
+		})
+	}
+}
+
+func TestEstimateBillingUsesTokenStackProtocolDuration(t *testing.T) {
+	tests := []struct {
+		name          string
+		upstreamModel string
+		bodyJSON      string
+		wantSeconds   float64
+	}{
+		{
+			name:          "multimode nested duration",
+			upstreamModel: tokenStackMultiModeModel,
+			bodyJSON:      `{"model":"sd-bak-1","prompt":"animate","input":{"prompt":"animate"},"parameters":{"duration":15}}`,
+			wantSeconds:   15,
+		},
+		{
+			name:          "multiresolution fixed duration",
+			upstreamModel: "seedance-2.0-720p-fast-15s",
+			bodyJSON:      `{"model":"sd-bak-1","prompt":"animate","aspect_ratio":"16:9","seconds":"1"}`,
+			wantSeconds:   15,
+		},
+		{
+			name:          "sora compatible fixed duration",
+			upstreamModel: "seedance-2-0-15s-slow",
+			bodyJSON:      `{"model":"sd-bak-1","prompt":"animate","seconds":"1"}`,
+			wantSeconds:   15,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(tt.bodyJSON))
+			c.Request.Header.Set("Content-Type", "application/json")
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+			info := tokenStackRelayInfo("https://www.tokenstack.cc", tt.upstreamModel)
+			require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
+
+			ratios := (&TaskAdaptor{}).EstimateBilling(c, info)
+
+			assert.Equal(t, tt.wantSeconds, ratios["seconds"])
+		})
+	}
+}
+
+func TestParseTaskResultSupportsTokenStackMultimodeSuccess(t *testing.T) {
+	body := []byte(`{
+		"id":"task_upstream",
+		"object":"https://example.com/video.mp4",
+		"seconds":15,
+		"status":"SUCCEEDED"
+	}`)
+
+	info, err := (&TaskAdaptor{}).ParseTaskResult(body)
+	require.NoError(t, err)
+	require.NotNil(t, info)
+	assert.Equal(t, string(model.TaskStatusSuccess), info.Status)
+	assert.Equal(t, "https://example.com/video.mp4", info.Url)
+	assert.Empty(t, extractResponseTaskVideoURL(responseTask{Object: "video"}))
+}
+
+func TestParseTaskResultSupportsTokenStackMultimodeFailure(t *testing.T) {
+	body := []byte(`{
+		"id":"task_upstream",
+		"object":"",
+		"seconds":0,
+		"status":"FAILED: content policy violation"
+	}`)
+
+	info, err := (&TaskAdaptor{}).ParseTaskResult(body)
+	require.NoError(t, err)
+	require.NotNil(t, info)
+	assert.Equal(t, string(model.TaskStatusFailure), info.Status)
+	assert.Equal(t, "content policy violation", info.Reason)
+}
+
+func tokenStackRelayInfo(baseURL string, upstreamModels ...string) *relaycommon.RelayInfo {
+	upstreamModel := "seedance-2-0-15s-slow"
+	if len(upstreamModels) > 0 {
+		upstreamModel = upstreamModels[0]
+	}
 	return &relaycommon.RelayInfo{
 		OriginModelName: "sd-bak-1",
 		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
 		ChannelMeta: &relaycommon.ChannelMeta{
 			ChannelBaseUrl:    baseURL,
-			UpstreamModelName: "seedance-2-0-15s-slow",
+			UpstreamModelName: upstreamModel,
 			IsModelMapped:     true,
 		},
 	}

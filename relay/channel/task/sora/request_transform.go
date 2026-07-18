@@ -2,14 +2,11 @@ package sora
 
 import (
 	"mime/multipart"
-	"net/url"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
-
-const tokenStackHostname = "tokenstack.cc"
 
 var tokenStackRequestFields = map[string]bool{
 	"model":   true,
@@ -21,22 +18,11 @@ var tokenStackRequestFields = map[string]bool{
 	"size":    true,
 }
 
-func isTokenStackChannel(info *relaycommon.RelayInfo) bool {
-	if info == nil || info.ChannelMeta == nil {
-		return false
-	}
-	parsed, err := url.Parse(strings.TrimSpace(info.ChannelBaseUrl))
-	if err != nil {
-		return false
-	}
-	hostname := strings.ToLower(parsed.Hostname())
-	return hostname == tokenStackHostname || hostname == "www."+tokenStackHostname
-}
-
 func applyTokenStackJSONRequest(body map[string]interface{}) {
 	if body == nil {
 		return
 	}
+	applyTokenStackMediaFields(body)
 
 	if seconds, ok := normalizeVideoSeconds(body["seconds"]); ok {
 		body["seconds"] = seconds
@@ -55,6 +41,61 @@ func applyTokenStackJSONRequest(body map[string]interface{}) {
 			delete(body, key)
 		}
 	}
+}
+
+func applyTokenStackMediaFields(body map[string]interface{}) {
+	data, err := common.Marshal(body)
+	if err != nil {
+		return
+	}
+	var req relaycommon.TaskSubmitReq
+	if err := common.Unmarshal(data, &req); err != nil {
+		return
+	}
+
+	images := appendNonEmptyTokenStackURLs(nil, req.Images...)
+	images = appendNonEmptyTokenStackURLs(images, req.Image)
+	images = appendNonEmptyTokenStackURLs(images, req.ImageURLs...)
+	images = appendNonEmptyTokenStackURLs(images, req.InputReference)
+	images = appendNonEmptyTokenStackURLs(images, req.InputStartFrames...)
+	images = appendNonEmptyTokenStackURLs(images, req.InputImageReferences...)
+	images = appendNonEmptyTokenStackURLs(images, req.MetadataStartFrames...)
+
+	videos := appendNonEmptyTokenStackURLs(nil, req.Videos...)
+	videos = appendNonEmptyTokenStackURLs(videos, req.VideoURLs...)
+	audios := appendNonEmptyTokenStackURLs(nil, req.Audios...)
+	audios = appendNonEmptyTokenStackURLs(audios, req.AudioURLs...)
+
+	for _, item := range req.Content {
+		if item.ImageURL != nil {
+			images = appendNonEmptyTokenStackURLs(images, item.ImageURL.URL)
+		}
+		if item.VideoURL != nil {
+			videos = appendNonEmptyTokenStackURLs(videos, item.VideoURL.URL)
+		}
+		if item.AudioURL != nil {
+			audios = appendNonEmptyTokenStackURLs(audios, item.AudioURL.URL)
+		}
+	}
+
+	if len(images) > 0 {
+		body["images"] = images
+	}
+	if len(videos) > 0 {
+		body["videos"] = videos
+	}
+	if len(audios) > 0 {
+		body["audios"] = audios
+	}
+}
+
+func appendNonEmptyTokenStackURLs(target []string, values ...string) []string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			target = append(target, value)
+		}
+	}
+	return target
 }
 
 func tokenStackSizeFromLegacyFields(body map[string]interface{}) string {
@@ -85,6 +126,12 @@ func applySoraModelJSONProfile(body map[string]interface{}, profile soraModelPro
 	}
 	if profile.DropSecondsField {
 		delete(body, "seconds")
+	}
+}
+
+func applySoraModelJSONFinalProfile(body map[string]interface{}, profile soraModelProfile) {
+	if profile.JSONFinalTransform == requestTransformTokenStackSora15s {
+		applyTokenStackJSONRequest(body)
 	}
 }
 

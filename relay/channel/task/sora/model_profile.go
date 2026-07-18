@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"mime"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/QuantumNous/new-api/dto"
@@ -33,6 +34,7 @@ const (
 	requestTransformOpenAIContent
 	requestTransformOtoySeedanceReference
 	requestTransformVeoReferenceImages
+	requestTransformTokenStackSora15s
 )
 
 type contentRequestRules struct {
@@ -47,6 +49,7 @@ type contentRequestRules struct {
 type soraModelProfile struct {
 	ContentRules                     *contentRequestRules
 	JSONTransform                    requestTransform
+	JSONFinalTransform               requestTransform
 	MultipartTransform               requestTransform
 	FixedSeconds                     int
 	DefaultSeconds                   int
@@ -101,6 +104,33 @@ var soraModelProfiles = map[string]soraModelProfile{
 	},
 }
 
+const (
+	tokenStackHostname       = "tokenstack.cc"
+	tokenStackMultiModeModel = "seedance-2-0-sale"
+)
+
+var tokenStackSora15sModels = map[string]struct{}{
+	"seedance-2-0-15s-slow": {},
+	"seedance-2-0-15s-high": {},
+	"seedance-2-0-15s-fast": {},
+}
+
+var tokenStackMultiResolutionModels = map[string]struct{}{
+	"seedance-2.0-480p-mini-15s": {},
+	"seedance-2.0-480p-fast-15s": {},
+	"seedance-2.0-480p-15s":      {},
+	"seedance-2.0-720p-mini-15s": {},
+	"seedance-2.0-720p-fast-15s": {},
+	"seedance-2.0-720p-pro-15s":  {},
+	"seedance-2.0-1080p-15s":     {},
+	"seedance-2.0-4k-15s":        {},
+}
+
+var tokenStackSora15sProfile = soraModelProfile{
+	JSONFinalTransform: requestTransformTokenStackSora15s,
+	RequireJSON:        true,
+}
+
 func contentRulesFromRoutingCapability(modelName string, requireImage bool) *contentRequestRules {
 	rules := &contentRequestRules{
 		RequireText:        true,
@@ -136,6 +166,22 @@ func soraModelProfileForInfo(info *relaycommon.RelayInfo) (soraModelProfile, boo
 }
 
 func soraModelProfileForRequest(requestModel string, info *relaycommon.RelayInfo) (soraModelProfile, bool) {
+	profile, ok := baseSoraModelProfileForRequest(requestModel, info)
+	tokenStackProfile, hasTokenStackProfile := tokenStackProfileForInfo(info)
+	if !hasTokenStackProfile {
+		return profile, ok
+	}
+	if !ok {
+		return tokenStackProfile, true
+	}
+	profile.RequireJSON = profile.RequireJSON || tokenStackProfile.RequireJSON
+	if tokenStackProfile.JSONFinalTransform != requestTransformNone {
+		profile.JSONFinalTransform = tokenStackProfile.JSONFinalTransform
+	}
+	return profile, true
+}
+
+func baseSoraModelProfileForRequest(requestModel string, info *relaycommon.RelayInfo) (soraModelProfile, bool) {
 	if info != nil && info.ChannelMeta != nil {
 		if profile, ok := findSoraModelProfile(info.ChannelMeta.UpstreamModelName); ok {
 			return profile, true
@@ -147,6 +193,28 @@ func soraModelProfileForRequest(requestModel string, info *relaycommon.RelayInfo
 		}
 	}
 	return findSoraModelProfile(requestModel)
+}
+
+func tokenStackProfileForInfo(info *relaycommon.RelayInfo) (soraModelProfile, bool) {
+	if !isTokenStackChannel(info) {
+		return soraModelProfile{}, false
+	}
+	if _, ok := tokenStackSora15sModels[strings.TrimSpace(info.ChannelMeta.UpstreamModelName)]; ok {
+		return tokenStackSora15sProfile, true
+	}
+	return soraModelProfile{RequireJSON: true}, true
+}
+
+func isTokenStackChannel(info *relaycommon.RelayInfo) bool {
+	if info == nil || info.ChannelMeta == nil {
+		return false
+	}
+	parsed, err := url.Parse(strings.TrimSpace(info.ChannelBaseUrl))
+	if err != nil {
+		return false
+	}
+	hostname := strings.ToLower(parsed.Hostname())
+	return hostname == tokenStackHostname || hostname == "www."+tokenStackHostname
 }
 
 type soraTimingProfile struct {
