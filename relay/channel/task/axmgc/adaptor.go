@@ -1,10 +1,12 @@
 package axmgc
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -39,13 +41,7 @@ const (
 
 var ModelList = []string{Seedance720p933Model}
 
-type requestPayload struct {
-	Model       string                        `json:"model"`
-	Content     []relaycommon.TaskContentItem `json:"content,omitempty"`
-	AspectRatio string                        `json:"aspect_ratio,omitempty"`
-	Resolution  string                        `json:"resolution,omitempty"`
-	Duration    int                           `json:"duration"`
-}
+var downloadRemoteMedia = service.DoDownloadRequestWithContext
 
 type resource struct {
 	Type string `json:"resource_type"`
@@ -65,9 +61,9 @@ type responseTask struct {
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
-	apiKey    string
-	baseURL   string
-	multipart bool
+	apiKey            string
+	baseURL           string
+	incomingMultipart bool
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
@@ -76,15 +72,15 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	if a.baseURL == "" {
 		a.baseURL = DefaultBaseURL
 	}
-	a.multipart = false
+	a.incomingMultipart = false
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
 	if info != nil && info.Action == constant.TaskActionRemix {
 		return service.TaskErrorWrapperLocal(errors.New("Axmgc does not support video remix"), "unsupported_action", http.StatusBadRequest)
 	}
-	a.multipart = strings.HasPrefix(strings.ToLower(c.GetHeader("Content-Type")), "multipart/form-data")
-	if a.multipart {
+	a.incomingMultipart = strings.HasPrefix(strings.ToLower(c.GetHeader("Content-Type")), "multipart/form-data")
+	if a.incomingMultipart {
 		return a.validateMultipartRequest(c, info)
 	}
 	return a.validateJSONRequest(c, info)
@@ -303,21 +299,13 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 	if info != nil && info.Action == constant.TaskActionRemix {
 		return "", errors.New("Axmgc does not support video remix")
 	}
-	path := "/v1/video/generations"
-	if a.multipart {
-		path += "/multipart"
-	}
-	return a.baseURL + path, nil
+	return a.baseURL + "/v1/video/generations/multipart", nil
 }
 
 func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, _ *relaycommon.RelayInfo) error {
 	req.Header.Set("Authorization", "Bearer "+a.apiKey)
 	req.Header.Set("Accept", "application/json")
-	if a.multipart {
-		req.Header.Set("Content-Type", c.GetHeader("Content-Type"))
-	} else {
-		req.Header.Set("Content-Type", "application/json")
-	}
+	req.Header.Set("Content-Type", c.GetHeader("Content-Type"))
 	if idempotencyKey := strings.TrimSpace(c.GetHeader("X-Idempotency-Key")); idempotencyKey != "" {
 		req.Header.Set("X-Idempotency-Key", idempotencyKey)
 	}
@@ -325,25 +313,10 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, _ *r
 }
 
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
-	if a.multipart {
-		return a.buildMultipartRequestBody(c, info)
+	if a.incomingMultipart {
+		return a.buildIncomingMultipartRequestBody(c, info)
 	}
-	req, err := relaycommon.GetTaskRequest(c)
-	if err != nil {
-		return nil, err
-	}
-	payload := requestPayload{
-		Model:       upstreamModelName(info, req.Model),
-		Content:     req.Content,
-		AspectRatio: req.AspectRatio,
-		Resolution:  firstNonEmpty(req.Resolution, defaultResolution),
-		Duration:    defaultDuration,
-	}
-	data, err := common.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-	return bytes.NewReader(data), nil
+	return a.buildRemoteMultipartRequestBody(c, info)
 }
 
 func (a *TaskAdaptor) NormalizeBillingRequestBody(_ *relaycommon.RelayInfo, body []byte) ([]byte, error) {
@@ -359,7 +332,7 @@ func (a *TaskAdaptor) NormalizeBillingRequestBody(_ *relaycommon.RelayInfo, body
 	return common.Marshal(request)
 }
 
-func (a *TaskAdaptor) buildMultipartRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
+func (a *TaskAdaptor) buildIncomingMultipartRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
 	form, ok := c.Get(multipartFormContextKey)
 	if !ok {
 		parsed, err := common.ParseMultipartFormReusable(c)
@@ -380,19 +353,8 @@ func (a *TaskAdaptor) buildMultipartRequestBody(c *gin.Context, info *relaycommo
 	}
 	var buffer bytes.Buffer
 	writer := multipart.NewWriter(&buffer)
-	for key, value := range map[string]string{
-		"model":        upstreamModelName(info, req.Model),
-		"prompt":       req.Prompt,
-		"aspect_ratio": req.AspectRatio,
-		"resolution":   firstNonEmpty(req.Resolution, defaultResolution),
-		"duration":     strconv.Itoa(defaultDuration),
-	} {
-		if strings.TrimSpace(value) == "" {
-			continue
-		}
-		if err := writer.WriteField(key, value); err != nil {
-			return nil, err
-		}
+	if err := writeMultipartFields(writer, info, req); err != nil {
+		return nil, err
 	}
 	for _, spec := range []struct {
 		Target string
@@ -411,6 +373,151 @@ func (a *TaskAdaptor) buildMultipartRequestBody(c *gin.Context, info *relaycommo
 	}
 	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
 	return &buffer, nil
+}
+
+func (a *TaskAdaptor) buildRemoteMultipartRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return nil, err
+	}
+
+	var buffer bytes.Buffer
+	writer := multipart.NewWriter(&buffer)
+	if err := writeMultipartFields(writer, info, req); err != nil {
+		return nil, err
+	}
+
+	perFileLimit := downloadLimitBytes(constant.MaxFileDownloadMB, 64)
+	totalLimit := downloadLimitBytes(constant.MaxRequestBodyMB, 128)
+	totalDownloaded := int64(0)
+	for _, spec := range []struct {
+		Field string
+		URLs  []string
+	}{
+		{Field: "images", URLs: req.Images},
+		{Field: "videos", URLs: req.Videos},
+		{Field: "audios", URLs: req.Audios},
+	} {
+		for index, mediaURL := range spec.URLs {
+			written, err := writeRemoteMediaPart(c, writer, spec.Field, index, mediaURL, perFileLimit, totalLimit-totalDownloaded)
+			if err != nil {
+				return nil, err
+			}
+			totalDownloaded += written
+		}
+	}
+
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	return &buffer, nil
+}
+
+func writeMultipartFields(writer *multipart.Writer, info *relaycommon.RelayInfo, req relaycommon.TaskSubmitReq) error {
+	for key, value := range map[string]string{
+		"model":        upstreamModelName(info, req.Model),
+		"prompt":       req.Prompt,
+		"aspect_ratio": req.AspectRatio,
+		"resolution":   firstNonEmpty(req.Resolution, defaultResolution),
+		"duration":     strconv.Itoa(defaultDuration),
+	} {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		if err := writer.WriteField(key, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeRemoteMediaPart(c *gin.Context, writer *multipart.Writer, field string, index int, mediaURL string, perFileLimit, remainingTotal int64) (int64, error) {
+	if remainingTotal <= 0 {
+		return 0, fmt.Errorf("remote media exceeds the maximum combined size of %dMB", maxInt(constant.MaxRequestBodyMB, 128))
+	}
+
+	resp, err := downloadRemoteMedia(c.Request.Context(), mediaURL, "Axmgc multipart relay")
+	if err != nil {
+		return 0, fmt.Errorf("download %s item %d failed: %w", field, index+1, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("download %s item %d returned HTTP %d", field, index+1, resp.StatusCode)
+	}
+
+	fileLimit := perFileLimit
+	if remainingTotal < fileLimit {
+		fileLimit = remainingTotal
+	}
+	if resp.ContentLength > fileLimit {
+		return 0, fmt.Errorf("%s item %d exceeds the maximum allowed size", field, index+1)
+	}
+
+	reader := bufio.NewReader(resp.Body)
+	preview, _ := reader.Peek(512)
+	contentType := normalizeRemoteMediaType(resp.Header.Get("Content-Type"), preview)
+	expectedPrefix := strings.TrimSuffix(field, "s") + "/"
+	if !strings.HasPrefix(contentType, expectedPrefix) {
+		return 0, fmt.Errorf("%s item %d returned unsupported content type %q", field, index+1, contentType)
+	}
+
+	header := make(textproto.MIMEHeader)
+	header.Set("Content-Disposition", fmt.Sprintf(`form-data; name=%q; filename=%q`, field, remoteMediaFilename(field, index, contentType)))
+	header.Set("Content-Type", contentType)
+	part, err := writer.CreatePart(header)
+	if err != nil {
+		return 0, err
+	}
+	written, err := io.Copy(part, io.LimitReader(reader, fileLimit+1))
+	if err != nil {
+		return 0, fmt.Errorf("copy %s item %d failed: %w", field, index+1, err)
+	}
+	if written > fileLimit {
+		return 0, fmt.Errorf("%s item %d exceeds the maximum allowed size", field, index+1)
+	}
+	return written, nil
+}
+
+func normalizeRemoteMediaType(headerValue string, preview []byte) string {
+	mediaType, _, err := mime.ParseMediaType(strings.TrimSpace(headerValue))
+	if err != nil || mediaType == "" || mediaType == "application/octet-stream" {
+		mediaType = http.DetectContentType(preview)
+		if parsed, _, parseErr := mime.ParseMediaType(mediaType); parseErr == nil {
+			mediaType = parsed
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(mediaType))
+}
+
+func remoteMediaFilename(field string, index int, contentType string) string {
+	extension := ".bin"
+	switch contentType {
+	case "image/jpeg":
+		extension = ".jpg"
+	case "image/png":
+		extension = ".png"
+	case "image/webp":
+		extension = ".webp"
+	case "video/mp4":
+		extension = ".mp4"
+	case "audio/mpeg":
+		extension = ".mp3"
+	case "audio/wav", "audio/x-wav":
+		extension = ".wav"
+	}
+	return fmt.Sprintf("%s-%d%s", strings.TrimSuffix(field, "s"), index+1, extension)
+}
+
+func downloadLimitBytes(valueMB, fallbackMB int) int64 {
+	return int64(maxInt(valueMB, fallbackMB)) << 20
+}
+
+func maxInt(value, fallback int) int {
+	if value > 0 {
+		return value
+	}
+	return fallback
 }
 
 func copyMultipartFiles(writer *multipart.Writer, form *multipart.Form, target string, fields ...string) error {

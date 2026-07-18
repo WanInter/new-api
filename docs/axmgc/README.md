@@ -41,13 +41,14 @@ curl https://axmgc.com/v1/models \
 
 ## JSON 提交：公网素材 URL
 
-适用于调用方已将素材保存至可公开访问的 CDN、OSS 或文件服务。素材 URL
-必须能被 Axmgc 服务端直接访问，不能使用本地路径、内网地址或依赖登录
-Cookie 的 URL。
+New API 对外接受 JSON 中的公网素材 URL。Axmgc 适配器会先通过统一的 SSRF
+防护和文件大小限制下载素材，再重建为 multipart 文件请求提交给 Axmgc。素材 URL
+必须能被 New API 服务端直接访问，不能使用本地路径、内网地址或依赖登录 Cookie
+的 URL。
 
 ```bash
-curl -X POST https://axmgc.com/v1/video/generations \
-  -H 'Authorization: Bearer hm_xxx' \
+curl -X POST https://your-new-api.example/v1/videos \
+  -H 'Authorization: Bearer sk-xxx' \
   -H 'Content-Type: application/json' \
   -H 'X-Idempotency-Key: scene-001' \
   -d '{
@@ -80,8 +81,8 @@ URL 字段兼容以下三种形式，推荐第一种标准写法：
 ```
 
 对于本项目的 Axmgc 渠道，公开 API 使用第一种标准写法。适配器也接受本项目
-常用的顶层 `prompt`、`images`、`videos` 和 `audios` 字段，并在转发时转换为
-上游要求的 `content` 数组。
+常用的顶层 `prompt`、`images`、`videos` 和 `audios` 字段。两种写法都会在转发
+时转换为上游 `/v1/video/generations/multipart` 要求的文件字段。
 
 ## Multipart 提交：本地素材
 
@@ -103,8 +104,8 @@ curl -X POST https://axmgc.com/v1/video/generations/multipart \
   -F 'audios=@bgm.mp3'
 ```
 
-New API 对外仍使用统一的 `POST /v1/video/generations`。当收到 multipart 请求时，
-Axmgc 适配器会将其安全重建并转发到上游的 `/multipart` 端点；不会把文件内容
+New API 对外仍使用统一的视频生成路由。无论收到 JSON URL 还是 multipart 文件，
+Axmgc 适配器都会将其安全重建并转发到上游的 `/multipart` 端点；不会把文件内容
 写入任务数据库。
 
 ## 上传资产后复用
