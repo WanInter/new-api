@@ -26,7 +26,7 @@ func isVideoGenerationSubmit(c *gin.Context) bool {
 		return false
 	}
 	path := strings.TrimSuffix(c.Request.URL.Path, "/")
-	return path == "/v1/videos" || path == "/v1/video/generations"
+	return path == "/v1/videos" || path == "/v1/videos/generations" || path == "/v1/video/generations"
 }
 
 func GetVideoRequestFeatures(c *gin.Context) (VideoRequestFeatures, error) {

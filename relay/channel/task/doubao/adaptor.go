@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -41,6 +42,51 @@ type MediaURL struct {
 	URL string `json:"url,omitempty"`
 }
 
+type mediaURLValue struct {
+	URL string
+}
+
+func (v *mediaURLValue) UnmarshalJSON(data []byte) error {
+	var url string
+	if err := common.Unmarshal(data, &url); err == nil {
+		v.URL = url
+		return nil
+	}
+
+	var media *MediaURL
+	if err := common.Unmarshal(data, &media); err != nil {
+		return err
+	}
+	if media != nil {
+		v.URL = media.URL
+	}
+	return nil
+}
+
+type taskError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+func (e *taskError) UnmarshalJSON(data []byte) error {
+	var message string
+	if err := common.Unmarshal(data, &message); err == nil {
+		e.Message = message
+		return nil
+	}
+	type alias taskError
+	return common.Unmarshal(data, (*alias)(e))
+}
+
+type byteforRequestPayload struct {
+	Model      string   `json:"model"`
+	Prompt     string   `json:"prompt"`
+	Size       string   `json:"size,omitempty"`
+	Resolution string   `json:"resolution,omitempty"`
+	Duration   string   `json:"duration,omitempty"`
+	Images     []string `json:"images,omitempty"`
+}
+
 type requestPayload struct {
 	Model                 string         `json:"model"`
 	Content               []ContentItem  `json:"content,omitempty"`
@@ -63,15 +109,26 @@ type requestPayload struct {
 }
 
 type responsePayload struct {
-	ID string `json:"id"` // task_id
+	ID      string `json:"id"`
+	TaskID  string `json:"task_id"`
+	Model   string `json:"model"`
+	Status  string `json:"status"`
+	Created int64  `json:"created"`
 }
 
 type responseTask struct {
-	ID      string `json:"id"`
-	Model   string `json:"model"`
-	Status  string `json:"status"`
+	ID       string        `json:"id"`
+	TaskID   string        `json:"task_id"`
+	Model    string        `json:"model"`
+	Status   string        `json:"status"`
+	Progress int           `json:"progress"`
+	VideoURL mediaURLValue `json:"video_url"`
+	Data     []struct {
+		URL           string `json:"url"`
+		RevisedPrompt string `json:"revised_prompt"`
+	} `json:"data"`
 	Content struct {
-		VideoURL string `json:"video_url"`
+		VideoURL mediaURLValue `json:"video_url"`
 	} `json:"content"`
 	Seed            int    `json:"seed"`
 	Resolution      string `json:"resolution"`
@@ -89,12 +146,10 @@ type responseTask struct {
 			WebSearch int `json:"web_search"`
 		} `json:"tool_usage"`
 	} `json:"usage"`
-	Error struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	} `json:"error"`
-	CreatedAt int64 `json:"created_at"`
-	UpdatedAt int64 `json:"updated_at"`
+	Error     taskError `json:"error"`
+	Created   int64     `json:"created"`
+	CreatedAt int64     `json:"created_at"`
+	UpdatedAt int64     `json:"updated_at"`
 }
 
 // ============================
@@ -121,8 +176,13 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 }
 
 // BuildRequestURL constructs the upstream URL.
-func (a *TaskAdaptor) BuildRequestURL(_ *relaycommon.RelayInfo) (string, error) {
-	return fmt.Sprintf("%s/api/v3/contents/generations/tasks", a.baseURL), nil
+func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	baseURL := strings.TrimRight(a.baseURL, "/")
+	if isByteforModel(relayInfoModelName(info)) {
+		baseURL = resolveByteforBaseURL(baseURL)
+		return fmt.Sprintf("%s/v1/videos/generations", baseURL), nil
+	}
+	return fmt.Sprintf("%s/api/v3/contents/generations/tasks", baseURL), nil
 }
 
 // BuildRequestHeader sets required headers.
@@ -133,11 +193,14 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 	return nil
 }
 
-// EstimateBilling 检测请求 metadata 中是否包含视频输入，返回视频折扣 OtherRatio。
+// EstimateBilling returns duration billing for Bytefor and video-input discounts for Doubao.
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return nil
+	}
+	if isByteforModel(relayInfoModelName(info)) {
+		return map[string]float64{"seconds": float64(byteforBillingSeconds(req))}
 	}
 	if hasVideoInMetadata(req.Metadata) {
 		if ratio, ok := GetVideoInputRatio(info.OriginModelName); ok {
@@ -182,6 +245,14 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
+	if isByteforModel(relayInfoModelName(info)) {
+		body := convertToByteforRequestPayload(&req, info)
+		data, err := common.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		return bytes.NewReader(data), nil
+	}
 
 	body, err := a.convertToRequestPayload(&req)
 	if err != nil {
@@ -220,7 +291,8 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return
 	}
 
-	if dResp.ID == "" {
+	upstreamTaskID := firstNonEmpty(dResp.ID, dResp.TaskID)
+	if upstreamTaskID == "" {
 		taskErr = service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
 		return
 	}
@@ -228,11 +300,15 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	ov := dto.NewOpenAIVideo()
 	ov.ID = info.PublicTaskID
 	ov.TaskID = info.PublicTaskID
-	ov.CreatedAt = time.Now().Unix()
+	ov.CreatedAt = dResp.Created
+	if ov.CreatedAt == 0 {
+		ov.CreatedAt = time.Now().Unix()
+	}
 	ov.Model = info.OriginModelName
+	ov.Status = toOpenAIVideoStatus(dResp.Status)
 
 	c.JSON(http.StatusOK, ov)
-	return dResp.ID, responseBody, nil
+	return upstreamTaskID, responseBody, nil
 }
 
 // FetchTask fetch task status
@@ -242,7 +318,13 @@ func (a *TaskAdaptor) FetchTask(ctx context.Context, baseUrl, key string, body m
 		return nil, fmt.Errorf("invalid task_id")
 	}
 
-	uri := fmt.Sprintf("%s/api/v3/contents/generations/tasks/%s", baseUrl, taskID)
+	baseURL := strings.TrimRight(baseUrl, "/")
+	modelName, _ := body["model"].(string)
+	uri := fmt.Sprintf("%s/api/v3/contents/generations/tasks/%s", baseURL, taskID)
+	if isByteforModel(modelName) {
+		baseURL = resolveByteforBaseURL(baseURL)
+		uri = fmt.Sprintf("%s/v1/videos/generations/%s", baseURL, taskID)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, uri, nil)
 	if err != nil {
@@ -291,8 +373,16 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}
 
-	if sec, _ := strconv.Atoi(req.Seconds); sec > 0 {
+	if req.Duration > 0 {
+		r.Duration = lo.ToPtr(dto.IntValue(req.Duration))
+	} else if sec := parseSeconds(req.Seconds); sec > 0 {
 		r.Duration = lo.ToPtr(dto.IntValue(sec))
+	}
+	if req.Resolution != "" {
+		r.Resolution = req.Resolution
+	}
+	if req.Size != "" {
+		r.Ratio = req.Size
 	}
 
 	r.Content = lo.Reject(r.Content, func(c ContentItem, _ int) bool { return c.Type == "text" })
@@ -302,6 +392,157 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	})
 
 	return &r, nil
+}
+
+func convertToByteforRequestPayload(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) *byteforRequestPayload {
+	payload := &byteforRequestPayload{
+		Model:      relayInfoModelName(info),
+		Prompt:     req.Prompt,
+		Size:       firstNonEmpty(req.Size, metadataString(req.Metadata, "size", "ratio", "aspect_ratio")),
+		Resolution: firstNonEmpty(req.Resolution, metadataString(req.Metadata, "resolution")),
+		Duration:   byteforDuration(req),
+	}
+	if payload.Model == "" {
+		payload.Model = req.Model
+	}
+	payload.Resolution = normalizeByteforResolution(payload.Resolution)
+
+	// TaskSubmitReq keeps several compatibility aliases separately. Preserve
+	// every non-empty value and its order because Bytefor binds prompt
+	// references to the positional index in images.
+	for _, media := range [][]string{
+		req.Images,
+		req.ImageURLs,
+		req.InputStartFrames,
+		req.InputImageReferences,
+		req.MetadataStartFrames,
+		req.Audios,
+		req.AudioURLs,
+		req.Videos,
+		req.VideoURLs,
+	} {
+		for _, value := range media {
+			payload.Images = appendNonEmpty(payload.Images, value)
+		}
+	}
+	for _, item := range req.Content {
+		switch item.Type {
+		case "image_url":
+			if item.ImageURL != nil {
+				payload.Images = appendNonEmpty(payload.Images, item.ImageURL.URL)
+			}
+		case "video_url":
+			if item.VideoURL != nil {
+				payload.Images = appendNonEmpty(payload.Images, item.VideoURL.URL)
+			}
+		case "audio_url":
+			if item.AudioURL != nil {
+				payload.Images = appendNonEmpty(payload.Images, item.AudioURL.URL)
+			}
+		default:
+			// Preserve media even when a compatibility client omits type.
+			if item.ImageURL != nil {
+				payload.Images = appendNonEmpty(payload.Images, item.ImageURL.URL)
+			}
+			if item.VideoURL != nil {
+				payload.Images = appendNonEmpty(payload.Images, item.VideoURL.URL)
+			}
+			if item.AudioURL != nil {
+				payload.Images = appendNonEmpty(payload.Images, item.AudioURL.URL)
+			}
+		}
+	}
+	for _, value := range []string{req.Image, req.InputReference} {
+		payload.Images = appendNonEmpty(payload.Images, value)
+	}
+	return payload
+}
+
+func relayInfoModelName(info *relaycommon.RelayInfo) string {
+	if info == nil {
+		return ""
+	}
+	if info.ChannelMeta != nil && strings.TrimSpace(info.UpstreamModelName) != "" {
+		return strings.TrimSpace(info.UpstreamModelName)
+	}
+	return strings.TrimSpace(info.OriginModelName)
+}
+
+func resolveByteforBaseURL(baseURL string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	defaultDoubaoURL := strings.TrimRight(constant.ChannelBaseURLs[constant.ChannelTypeDoubaoVideo], "/")
+	if baseURL == "" || baseURL == defaultDoubaoURL {
+		return ByteforBaseURL
+	}
+	return baseURL
+}
+
+func metadataString(metadata map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := metadata[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func byteforDuration(req *relaycommon.TaskSubmitReq) string {
+	return fmt.Sprintf("%ds", byteforBillingSeconds(*req))
+}
+
+func byteforBillingSeconds(req relaycommon.TaskSubmitReq) int {
+	if req.Duration > 0 {
+		return req.Duration
+	}
+	if seconds := parseSeconds(req.Seconds); seconds > 0 {
+		return seconds
+	}
+	return byteforDefaultDurationSeconds
+}
+
+func parseSeconds(raw string) int {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	for _, suffix := range []string{"seconds", "second", "secs", "sec", "s"} {
+		value = strings.TrimSuffix(value, suffix)
+	}
+	seconds, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || seconds <= 0 {
+		return 0
+	}
+	return seconds
+}
+
+func normalizeByteforResolution(resolution string) string {
+	switch strings.ToLower(strings.TrimSpace(resolution)) {
+	case "720p":
+		return "720P"
+	case "1080p":
+		return "1080P"
+	case "4k":
+		return "4K"
+	default:
+		return strings.TrimSpace(resolution)
+	}
+}
+
+func appendNonEmpty(values []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return values
+	}
+	return append(values, value)
+}
+
+func extractResponseTaskVideoURL(task responseTask) string {
+	if url := firstNonEmpty(task.VideoURL.URL, task.Content.VideoURL.URL); url != "" {
+		return url
+	}
+	for _, item := range task.Data {
+		if strings.TrimSpace(item.URL) != "" {
+			return strings.TrimSpace(item.URL)
+		}
+	}
+	return ""
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
@@ -314,18 +555,18 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		Code: 0,
 	}
 
-	// Map Doubao status to internal status
-	switch resTask.Status {
+	// Map Doubao and Bytefor statuses to internal status.
+	switch strings.ToLower(strings.TrimSpace(resTask.Status)) {
 	case "pending", "queued":
 		taskResult.Status = model.TaskStatusQueued
 		taskResult.Progress = "10%"
-	case "processing", "running":
+	case "processing", "running", "in_progress":
 		taskResult.Status = model.TaskStatusInProgress
 		taskResult.Progress = "50%"
-	case "succeeded":
+	case "succeeded", "completed":
 		taskResult.Status = model.TaskStatusSuccess
 		taskResult.Progress = "100%"
-		taskResult.Url = resTask.Content.VideoURL
+		taskResult.Url = extractResponseTaskVideoURL(resTask)
 		// 解析 usage 信息用于按倍率计费
 		taskResult.CompletionTokens = resTask.Usage.CompletionTokens
 		taskResult.TotalTokens = resTask.Usage.TotalTokens
@@ -335,6 +576,9 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Reason = resTask.Error.Message
 	default:
 		return nil, fmt.Errorf("unknown Doubao task status %q", resTask.Status)
+	}
+	if resTask.Progress > 0 && resTask.Progress <= 100 {
+		taskResult.Progress = fmt.Sprintf("%d%%", resTask.Progress)
 	}
 
 	return &taskResult, nil
@@ -351,7 +595,9 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	openAIVideo.TaskID = originTask.TaskID
 	openAIVideo.Status = originTask.Status.ToVideoStatus()
 	openAIVideo.SetProgressStr(originTask.Progress)
-	openAIVideo.SetMetadata("url", dResp.Content.VideoURL)
+	if url := extractResponseTaskVideoURL(dResp); url != "" {
+		openAIVideo.SetMetadata("url", url)
+	}
 	openAIVideo.CreatedAt = originTask.CreatedAt
 	openAIVideo.CompletedAt = originTask.CompletionTime()
 	openAIVideo.Model = originTask.Properties.OriginModelName
@@ -364,4 +610,26 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	}
 
 	return common.Marshal(openAIVideo)
+}
+
+func toOpenAIVideoStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "processing", "running", "in_progress":
+		return dto.VideoStatusInProgress
+	case "succeeded", "completed":
+		return dto.VideoStatusCompleted
+	case "failed":
+		return dto.VideoStatusFailed
+	default:
+		return dto.VideoStatusQueued
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

@@ -669,12 +669,23 @@ func updateTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *model.Chann
 		resp, err = adaptor.FetchTask(requestCtx, baseURL, key, map[string]any{
 			"task_id": task.GetUpstreamTaskID(),
 			"action":  task.Action,
+			"model":   taskPollingModelName(task),
 		}, proxy)
 	}
 	if err != nil {
 		return handleTaskPollFailure(ctx, task, snap.Status, leaseOwner, fmt.Errorf("fetchTask failed for task %s: %w", taskId, err))
 	}
 	return ApplyTaskPollResponse(responseCtx, adaptor, ch, task, resp, leaseOwner)
+}
+
+func taskPollingModelName(task *model.Task) string {
+	if task == nil {
+		return ""
+	}
+	if task.Properties.UpstreamModelName != "" {
+		return task.Properties.UpstreamModelName
+	}
+	return task.Properties.OriginModelName
 }
 
 // ApplyTaskPollResponse applies a successful upstream fetch through the same

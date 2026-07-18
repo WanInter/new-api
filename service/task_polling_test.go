@@ -22,16 +22,45 @@ type taskPollingTestAdaptor struct {
 	body       string
 	result     *relaycommon.TaskInfo
 	parseCalls int
+	fetchBody  map[string]any
 }
 
 func (a *taskPollingTestAdaptor) Init(*relaycommon.RelayInfo) {}
 
-func (a *taskPollingTestAdaptor) FetchTask(context.Context, string, string, map[string]any, string) (*http.Response, error) {
+func (a *taskPollingTestAdaptor) FetchTask(_ context.Context, _, _ string, body map[string]any, _ string) (*http.Response, error) {
+	a.fetchBody = body
 	return &http.Response{
 		StatusCode: a.statusCode,
 		Body:       io.NopCloser(strings.NewReader(a.body)),
 		Header:     make(http.Header),
 	}, nil
+}
+
+func TestUpdateTaskPassesUpstreamModelToAdaptor(t *testing.T) {
+	truncate(t)
+	task := &model.Task{
+		TaskID:     "task_poll_model_context",
+		Status:     model.TaskStatusInProgress,
+		SubmitTime: time.Now().Unix(),
+		Properties: model.Properties{
+			OriginModelName:   "public-bytefor",
+			UpstreamModelName: "bytefor-2.0-fast",
+		},
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+	adaptor := &taskPollingTestAdaptor{
+		statusCode: http.StatusOK,
+		body:       `{"status":"pending"}`,
+		result: &relaycommon.TaskInfo{
+			Status:   string(model.TaskStatusQueued),
+			Progress: "20%",
+		},
+	}
+
+	require.NoError(t, updateTask(context.Background(), adaptor, &model.Channel{}, task, ""))
+	require.NotNil(t, adaptor.fetchBody)
+	assert.Equal(t, "bytefor-2.0-fast", adaptor.fetchBody["model"])
+	assert.Equal(t, "task_poll_model_context", adaptor.fetchBody["task_id"])
 }
 
 func (a *taskPollingTestAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) {

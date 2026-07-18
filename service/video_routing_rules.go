@@ -14,6 +14,7 @@ const DefaultVideoRoutingRequestPath = "/v1/videos"
 
 var supportedVideoRoutingRequestPaths = []string{
 	DefaultVideoRoutingRequestPath,
+	"/v1/videos/generations",
 	"/v1/video/generations",
 }
 

@@ -1,6 +1,11 @@
 package doubao
 
-var ModelList = []string{
+const (
+	ByteforBaseURL                = "https://k7q9m2x4a8z3.bytefor.com"
+	byteforDefaultDurationSeconds = 4
+)
+
+var doubaoModelList = []string{
 	"doubao-seedance-1-0-pro-250528",
 	"doubao-seedance-1-0-lite-t2v",
 	"doubao-seedance-1-0-lite-i2v",
@@ -8,6 +13,16 @@ var ModelList = []string{
 	"doubao-seedance-2-0-260128",
 	"doubao-seedance-2-0-fast-260128",
 }
+
+var byteforModelList = []string{
+	"bytefor-2.0-fast-real-priority",
+	"bytefor-2.0-fast",
+	"bytefor-2.0",
+	"bytefor-2.0-pro",
+	"bytefor-2.0-real-priority",
+}
+
+var ModelList = append(append([]string{}, doubaoModelList...), byteforModelList...)
 
 var ChannelName = "doubao-video"
 
@@ -22,4 +37,13 @@ var videoInputRatioMap = map[string]float64{
 func GetVideoInputRatio(modelName string) (float64, bool) {
 	r, ok := videoInputRatioMap[modelName]
 	return r, ok
+}
+
+func isByteforModel(modelName string) bool {
+	for _, candidate := range byteforModelList {
+		if modelName == candidate {
+			return true
+		}
+	}
+	return false
 }
