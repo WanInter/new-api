@@ -122,13 +122,14 @@ func TestBuildJSONRequestSupportsDocumentedURLFormsAndMappedModel(t *testing.T) 
 	adaptor.Init(info)
 
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
-	info.UpstreamModelName = Seedance720p933Model
+	info.UpstreamModelName = seedance720pUpstreamModel
+	info.IsModelMapped = true
 	body, err := adaptor.BuildRequestBody(c, info)
 	require.NoError(t, err)
 	assert.Equal(t, DefaultBaseURL+"/v1/video/generations/multipart", mustBuildURL(t, adaptor, info))
 
 	form := parseBuiltMultipartBody(t, c, body)
-	assert.Equal(t, []string{Seedance720p933Model}, form.Value["model"])
+	assert.Equal(t, []string{seedance720pUpstreamModel}, form.Value["model"])
 	assert.Equal(t, []string{"@Image1 is the lead"}, form.Value["prompt"])
 	assert.Equal(t, []string{"16:9"}, form.Value["aspect_ratio"])
 	assert.Equal(t, []string{defaultResolution}, form.Value["resolution"])
@@ -175,6 +176,7 @@ func TestBuildJSONRequestConvertsTopLevelReferencesToContent(t *testing.T) {
 	body, err := adaptor.BuildRequestBody(c, info)
 	require.NoError(t, err)
 	form := parseBuiltMultipartBody(t, c, body)
+	assert.Equal(t, []string{seedance720pUpstreamModel}, form.Value["model"])
 	assert.Equal(t, []string{"@Image1 runs through the scene"}, form.Value["prompt"])
 	assert.Equal(t, []string{"15"}, form.Value["duration"])
 	require.Len(t, form.File["images"], 1)
@@ -196,7 +198,23 @@ func TestBuildJSONRequestNormalizesDurationTo15Seconds(t *testing.T) {
 	body, err := adaptor.BuildRequestBody(c, info)
 	require.NoError(t, err)
 	form := parseBuiltMultipartBody(t, c, body)
+	assert.Equal(t, []string{seedance720pUpstreamModel}, form.Value["model"])
 	assert.Equal(t, []string{"15"}, form.Value["duration"])
+}
+
+func TestBuildJSONRequestPreservesExplicitUpstreamModelMapping(t *testing.T) {
+	c := newJSONContext(t, `{"model":"seedance-2-720p-933","prompt":"test"}`)
+	info := newRelayInfo()
+	info.UpstreamModelName = "seedance-2-720p-custom"
+	info.IsModelMapped = true
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	form := parseBuiltMultipartBody(t, c, body)
+	assert.Equal(t, []string{"seedance-2-720p-custom"}, form.Value["model"])
 }
 
 func TestBuildJSONMultipartRejectsUnexpectedRemoteMediaType(t *testing.T) {
@@ -343,7 +361,7 @@ func TestBuildMultipartRequestCanonicalizesFileFieldsAndForwardsIdempotencyKey(t
 	parsed, err := multipart.NewReader(body, params["boundary"]).ReadForm(1 << 20)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = parsed.RemoveAll() })
-	assert.Equal(t, []string{Seedance720p933Model}, parsed.Value["model"])
+	assert.Equal(t, []string{seedance720pUpstreamModel}, parsed.Value["model"])
 	assert.Equal(t, []string{"@Image1 is the lead"}, parsed.Value["prompt"])
 	assert.Equal(t, []string{"15"}, parsed.Value["duration"])
 	require.Len(t, parsed.File["images"], 1)
