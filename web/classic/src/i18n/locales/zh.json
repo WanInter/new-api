@@ -2638,6 +2638,9 @@
     "图片": "图片",
     "点击预览图片": "点击预览图片",
     "腾讯云点播（可灵）": "腾讯云点播（可灵）",
-    "按照如下格式输入：SecretId|SecretKey|SubAppId": "按照如下格式输入：SecretId|SecretKey|SubAppId"
+    "按照如下格式输入：SecretId|SecretKey|SubAppId": "按照如下格式输入：SecretId|SecretKey|SubAppId",
+    "未查询": "未查询",
+    "余额不可用": "余额不可用",
+    "上游未提供真实余额": "上游未提供真实余额"
   }
 }

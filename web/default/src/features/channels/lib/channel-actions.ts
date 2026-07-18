@@ -369,15 +369,19 @@ export async function handleUpdateChannelBalance(
     const response = await updateChannelBalance(id)
     if (response.success && response.balance !== undefined) {
       const balance = response.balance
-      toast.success(
-        i18next.t('Balance updated: {{balance}}', {
-          balance: formatCurrencyFromUSD(balance, {
-            digitsLarge: 2,
-            digitsSmall: 4,
-            abbreviate: false,
-          }),
-        })
-      )
+      if (response.balance_status === 'unavailable') {
+        toast.info(i18next.t('Upstream did not provide a real balance'))
+      } else {
+        toast.success(
+          i18next.t('Balance updated: {{balance}}', {
+            balance: formatCurrencyFromUSD(balance, {
+              digitsLarge: 2,
+              digitsSmall: 4,
+              abbreviate: false,
+            }),
+          })
+        )
+      }
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
       onSuccess?.(balance)
     } else {

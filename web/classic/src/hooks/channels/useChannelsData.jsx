@@ -768,15 +768,20 @@ export const useChannelsData = () => {
     }
 
     const res = await API.get(`/api/channel/update_balance/${record.id}/`);
-    const { success, message, balance } = res.data;
+    const { success, message, balance, balance_status } = res.data;
     if (success) {
       updateChannelProperty(record.id, (channel) => {
         channel.balance = balance;
+        channel.balance_status = balance_status || 'available';
         channel.balance_updated_time = Date.now() / 1000;
       });
-      showInfo(
-        t('通道 ${name} 余额更新成功！').replace('${name}', record.name),
-      );
+      if (balance_status === 'unavailable') {
+        showInfo(t('上游未提供真实余额'));
+      } else {
+        showInfo(
+          t('通道 ${name} 余额更新成功！').replace('${name}', record.name),
+        );
+      }
     } else {
       showError(message);
     }

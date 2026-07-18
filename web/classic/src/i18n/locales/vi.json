@@ -4240,7 +4240,6 @@
     "已排除": "Đã loại trừ",
     "已配置": "Đã cấu hình",
     "分流详情": "Chi tiết định tuyến",
-    "渠道类型": "Loại kênh",
     "模型映射链": "Chuỗi ánh xạ mô hình",
     "生效能力": "Khả năng có hiệu lực",
     "音频": "Âm thanh",
@@ -4257,6 +4256,9 @@
     "目标优先级": "Mức ưu tiên mục tiêu",
     "重试次数": "Thử lại",
     "严格分流": "Định tuyến nghiêm ngặt",
-    "返回渠道管理": "Quay lại quản lý kênh"
+    "返回渠道管理": "Quay lại quản lý kênh",
+    "未查询": "Chưa truy vấn",
+    "余额不可用": "Số dư không khả dụng",
+    "上游未提供真实余额": "Nhà cung cấp thượng nguồn không cung cấp số dư thực tế"
   }
 }

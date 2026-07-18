@@ -528,6 +528,14 @@ export const getChannelsColumns = ({
       dataIndex: 'expired_time',
       render: (text, record, index) => {
         if (record.children === undefined) {
+          const balanceUnavailable = record.balance_status === 'unavailable';
+          const balanceNotQueried =
+            !balanceUnavailable && !record.balance_updated_time;
+          const balanceDisplay = balanceUnavailable
+            ? t('余额不可用')
+            : balanceNotQueried
+              ? t('未查询')
+              : renderQuotaWithAmount(record.balance);
           return (
             <div>
               <Space spacing={1}>
@@ -540,10 +548,12 @@ export const getChannelsColumns = ({
                   content={
                     record.type === 57
                       ? t('查看 Codex 帐号信息与用量')
-                      : t('剩余额度') +
-                        ': ' +
-                        renderQuotaWithAmount(record.balance) +
-                        t('，点击更新')
+                      : balanceUnavailable
+                        ? t('上游未提供真实余额')
+                        : t('剩余额度') +
+                          ': ' +
+                          balanceDisplay +
+                          t('，点击更新')
                   }
                 >
                   <Tag
@@ -553,9 +563,7 @@ export const getChannelsColumns = ({
                     className={record.type === 57 ? 'cursor-pointer' : ''}
                     onClick={() => updateChannelBalance(record)}
                   >
-                    {record.type === 57
-                      ? t('帐号信息')
-                      : renderQuotaWithAmount(record.balance)}
+                    {record.type === 57 ? t('帐号信息') : balanceDisplay}
                   </Tag>
                 </Tooltip>
               </Space>

@@ -4827,6 +4827,8 @@
     "Upload endpoint": "Upload endpoint",
     "Upload, public read, and cleanup completed in {{latency}} ms": "Upload, public read, and cleanup completed in {{latency}} ms",
     "Use the same-region private endpoint when available": "Use the same-region private endpoint when available",
-    "Used only when downloading the original task result": "Used only when downloading the original task result"
+    "Used only when downloading the original task result": "Used only when downloading the original task result",
+    "Not queried": "Not queried",
+    "Upstream did not provide a real balance": "Upstream did not provide a real balance"
   }
 }

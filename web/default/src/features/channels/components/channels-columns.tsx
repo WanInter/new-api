@@ -285,9 +285,18 @@ function BalanceCell({ channel }: { channel: Channel }) {
     tokenSuffix && value !== '-' ? `${value}${tokenSuffix}` : value
 
   const usedDisplay = withSuffix(formatQuotaValue(usedQuota))
-  const remainingDisplay = withSuffix(formatBalance(balance))
+  const balanceUnavailable = channel.balance_status === 'unavailable'
+  const balanceNotQueried = !balanceUnavailable && !channel.balance_updated_time
+  let remainingDisplay = withSuffix(formatBalance(balance))
+  if (balanceUnavailable) {
+    remainingDisplay = t('Not available')
+  } else if (balanceNotQueried) {
+    remainingDisplay = t('Not queried')
+  }
   const usedLabel = `${t('Used:')} ${usedDisplay}`
-  const remainingLabel = `${t('Remaining:')} ${remainingDisplay}`
+  const remainingLabel = balanceUnavailable
+    ? t('Upstream did not provide a real balance')
+    : `${t('Remaining:')} ${remainingDisplay}`
 
   // Tag row: only show cumulative used quota
   if (isTagRow) {
@@ -304,7 +313,10 @@ function BalanceCell({ channel }: { channel: Channel }) {
   }
 
   // Regular channel row: show used and remaining with click to update
-  const variant = getBalanceVariant(balance)
+  const variant =
+    balanceUnavailable || balanceNotQueried
+      ? 'neutral'
+      : getBalanceVariant(balance)
 
   const handleClickUpdate = async () => {
     if (isUpdating) return

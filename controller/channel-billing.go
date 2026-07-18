@@ -25,6 +25,8 @@ import (
 
 // https://github.com/songquanpeng/one-api/issues/79
 
+const openAIUnlimitedBalanceThreshold = 100_000_000
+
 type OpenAISubscriptionResponse struct {
 	Object             string  `json:"object"`
 	HasPaymentMethod   bool    `json:"has_payment_method"`
@@ -526,6 +528,12 @@ func updateChannelBalance(channel *model.Channel) (float64, error) {
 	if err != nil {
 		return 0, err
 	}
+	// Several OpenAI-compatible providers use this hard limit as an
+	// unlimited-balance placeholder rather than an account balance.
+	if subscription.HardLimitUSD >= openAIUnlimitedBalanceThreshold {
+		channel.UpdateBalanceUnavailable()
+		return 0, nil
+	}
 	now := time.Now()
 	startDate := fmt.Sprintf("%s-01", now.Format("2006-01"))
 	endDate := now.Format("2006-01-02")
@@ -571,9 +579,10 @@ func UpdateChannelBalance(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"balance": balance,
+		"success":        true,
+		"message":        "",
+		"balance":        balance,
+		"balance_status": channel.BalanceStatus,
 	})
 }
 
@@ -596,7 +605,7 @@ func updateAllChannelsBalance() error {
 		balance, err := updateChannelBalance(channel)
 		if err != nil {
 			continue
-		} else {
+		} else if channel.BalanceStatus != model.ChannelBalanceStatusUnavailable {
 			// err is nil & balance <= 0 means quota is used up
 			if balance <= 0 {
 				service.DisableChannel(*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, "", channel.GetAutoBan()), "余额不足")

@@ -3724,6 +3724,9 @@
     "目标优先级": "Priorité cible",
     "重试次数": "Nouvelle tentative",
     "严格分流": "Routage strict",
-    "返回渠道管理": "Retour aux canaux"
+    "返回渠道管理": "Retour aux canaux",
+    "未查询": "Non consulté",
+    "余额不可用": "Solde indisponible",
+    "上游未提供真实余额": "Le fournisseur en amont n’a pas fourni de solde réel"
   }
 }

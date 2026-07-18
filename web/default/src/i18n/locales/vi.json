@@ -4827,6 +4827,8 @@
     "Upload endpoint": "Endpoint tải lên",
     "Upload, public read, and cleanup completed in {{latency}} ms": "Tải lên, đọc công khai và dọn dẹp hoàn tất trong {{latency}} ms",
     "Use the same-region private endpoint when available": "Sử dụng endpoint nội bộ cùng khu vực khi có thể",
-    "Used only when downloading the original task result": "Chỉ dùng khi tải xuống kết quả tác vụ gốc"
+    "Used only when downloading the original task result": "Chỉ dùng khi tải xuống kết quả tác vụ gốc",
+    "Not queried": "Chưa truy vấn",
+    "Upstream did not provide a real balance": "Nhà cung cấp thượng nguồn không cung cấp số dư thực tế"
   }
 }

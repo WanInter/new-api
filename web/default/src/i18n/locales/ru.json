@@ -4827,6 +4827,8 @@
     "Upload endpoint": "Адрес загрузки",
     "Upload, public read, and cleanup completed in {{latency}} ms": "Загрузка, публичное чтение и очистка завершены за {{latency}} мс",
     "Use the same-region private endpoint when available": "Используйте внутренний адрес того же региона, если он доступен",
-    "Used only when downloading the original task result": "Используется только при загрузке исходного результата задачи"
+    "Used only when downloading the original task result": "Используется только при загрузке исходного результата задачи",
+    "Not queried": "Не запрашивался",
+    "Upstream did not provide a real balance": "Вышестоящий поставщик не предоставил фактический баланс"
   }
 }

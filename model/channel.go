@@ -36,6 +36,7 @@ type Channel struct {
 	Other              string  `json:"other"`
 	Balance            float64 `json:"balance"` // in USD
 	BalanceUpdatedTime int64   `json:"balance_updated_time" gorm:"bigint"`
+	BalanceStatus      string  `json:"balance_status" gorm:"type:varchar(16);default:'available'"`
 	Models             string  `json:"models"`
 	Group              string  `json:"group" gorm:"type:varchar(64);default:'default'"`
 	UsedQuota          int64   `json:"used_quota" gorm:"bigint;default:0"`
@@ -58,6 +59,11 @@ type Channel struct {
 	// cache info
 	Keys []string `json:"-" gorm:"-"`
 }
+
+const (
+	ChannelBalanceStatusAvailable   = "available"
+	ChannelBalanceStatusUnavailable = "unavailable"
+)
 
 type ChannelInfo struct {
 	IsMultiKey             bool                  `json:"is_multi_key"`                        // 是否多Key模式
@@ -583,13 +589,35 @@ func (channel *Channel) UpdateResponseTime(responseTime int64) {
 }
 
 func (channel *Channel) UpdateBalance(balance float64) {
-	err := DB.Model(channel).Select("balance_updated_time", "balance").Updates(Channel{
-		BalanceUpdatedTime: common.GetTimestamp(),
+	updatedTime := common.GetTimestamp()
+	err := DB.Model(channel).Select("balance_updated_time", "balance", "balance_status").Updates(Channel{
+		BalanceUpdatedTime: updatedTime,
 		Balance:            balance,
+		BalanceStatus:      ChannelBalanceStatusAvailable,
 	}).Error
 	if err != nil {
 		common.SysLog(fmt.Sprintf("failed to update balance: channel_id=%d, error=%v", channel.Id, err))
+		return
 	}
+	channel.BalanceUpdatedTime = updatedTime
+	channel.Balance = balance
+	channel.BalanceStatus = ChannelBalanceStatusAvailable
+}
+
+func (channel *Channel) UpdateBalanceUnavailable() {
+	updatedTime := common.GetTimestamp()
+	err := DB.Model(channel).Select("balance_updated_time", "balance", "balance_status").Updates(Channel{
+		BalanceUpdatedTime: updatedTime,
+		Balance:            0,
+		BalanceStatus:      ChannelBalanceStatusUnavailable,
+	}).Error
+	if err != nil {
+		common.SysLog(fmt.Sprintf("failed to mark balance unavailable: channel_id=%d, error=%v", channel.Id, err))
+		return
+	}
+	channel.BalanceUpdatedTime = updatedTime
+	channel.Balance = 0
+	channel.BalanceStatus = ChannelBalanceStatusUnavailable
 }
 
 func (channel *Channel) Delete() error {

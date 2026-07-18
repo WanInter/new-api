@@ -1283,6 +1283,8 @@ func CopyChannel(c *gin.Context) {
 	clone.ResponseTime = 0
 	if resetBalance {
 		clone.Balance = 0
+		clone.BalanceUpdatedTime = 0
+		clone.BalanceStatus = model.ChannelBalanceStatusAvailable
 		clone.UsedQuota = 0
 	}
 

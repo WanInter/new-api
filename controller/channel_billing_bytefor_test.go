@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func setupByteforBalanceTestDB(t *testing.T) *gorm.DB {
+func setupChannelBillingTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	originalDB := model.DB
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
@@ -34,7 +34,7 @@ func setupByteforBalanceTestDB(t *testing.T) *gorm.DB {
 }
 
 func TestUpdateChannelBalanceQueriesByteforAvailableBalance(t *testing.T) {
-	db := setupByteforBalanceTestDB(t)
+	db := setupChannelBillingTestDB(t)
 	type observedRequest struct {
 		method        string
 		path          string
@@ -73,4 +73,5 @@ func TestUpdateChannelBalanceQueriesByteforAvailableBalance(t *testing.T) {
 	require.NoError(t, db.First(&stored, channel.Id).Error)
 	assert.Equal(t, 95.0, stored.Balance)
 	assert.NotZero(t, stored.BalanceUpdatedTime)
+	assert.Equal(t, model.ChannelBalanceStatusAvailable, stored.BalanceStatus)
 }

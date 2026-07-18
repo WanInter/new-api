@@ -3870,6 +3870,9 @@
     "目标优先级": "Target priority",
     "重试次数": "Retry",
     "严格分流": "Strict routing",
-    "返回渠道管理": "Back to channels"
+    "返回渠道管理": "Back to channels",
+    "未查询": "Not queried",
+    "余额不可用": "Balance unavailable",
+    "上游未提供真实余额": "Upstream did not provide a real balance"
   }
 }

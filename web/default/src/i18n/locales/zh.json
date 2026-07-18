@@ -4827,6 +4827,8 @@
     "Upload endpoint": "上传端点",
     "Upload, public read, and cleanup completed in {{latency}} ms": "上传、公开读取和清理已在 {{latency}} 毫秒内完成",
     "Use the same-region private endpoint when available": "可用时请使用同地域内网端点",
-    "Used only when downloading the original task result": "仅在下载原始任务结果时使用"
+    "Used only when downloading the original task result": "仅在下载原始任务结果时使用",
+    "Not queried": "未查询",
+    "Upstream did not provide a real balance": "上游未提供真实余额"
   }
 }

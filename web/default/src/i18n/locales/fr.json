@@ -4827,6 +4827,8 @@
     "Upload endpoint": "Point de terminaison de téléversement",
     "Upload, public read, and cleanup completed in {{latency}} ms": "Téléversement, lecture publique et nettoyage terminés en {{latency}} ms",
     "Use the same-region private endpoint when available": "Utilisez le point de terminaison privé de la même région lorsqu’il est disponible",
-    "Used only when downloading the original task result": "Utilisé uniquement pour télécharger le résultat original de la tâche"
+    "Used only when downloading the original task result": "Utilisé uniquement pour télécharger le résultat original de la tâche",
+    "Not queried": "Non consulté",
+    "Upstream did not provide a real balance": "Le fournisseur en amont n’a pas fourni de solde réel"
   }
 }

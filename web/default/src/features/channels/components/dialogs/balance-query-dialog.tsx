@@ -50,6 +50,7 @@ export function BalanceQueryDialog({
   const [balanceUpdatedTime, setBalanceUpdatedTime] = useState<number | null>(
     null
   )
+  const [balanceStatus, setBalanceStatus] = useState<string | null>(null)
   const [codexUsageResponse, setCodexUsageResponse] =
     useState<CodexUsageDialogData | null>(null)
 
@@ -77,6 +78,7 @@ export function BalanceQueryDialog({
   useEffect(() => {
     if (!isCodex) return
     if (!open) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     handleQueryCodexUsage()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, isCodex])
@@ -93,13 +95,20 @@ export function BalanceQueryDialog({
 
         setBalance(newBalance)
         setBalanceUpdatedTime(now)
-        toast.success(t('Balance updated successfully'))
+        const newBalanceStatus = response.balance_status ?? 'available'
+        setBalanceStatus(newBalanceStatus)
+        if (newBalanceStatus === 'unavailable') {
+          toast.info(t('Upstream did not provide a real balance'))
+        } else {
+          toast.success(t('Balance updated successfully'))
+        }
 
         // Update currentRow immediately with new balance and timestamp
         setCurrentRow({
           ...currentRow,
           balance: newBalance,
           balance_updated_time: now,
+          balance_status: newBalanceStatus,
         })
 
         // Invalidate queries to refresh the table
@@ -121,6 +130,7 @@ export function BalanceQueryDialog({
   const handleClose = () => {
     setBalance(null)
     setBalanceUpdatedTime(null)
+    setBalanceStatus(null)
     setCodexUsageResponse(null)
     onOpenChange(false)
   }
@@ -133,8 +143,18 @@ export function BalanceQueryDialog({
     })
 
   const formatDate = (timestamp: number) => {
-    if (!timestamp) return 'Never'
+    if (!timestamp) return t('Never')
     return formatTimestampToDate(timestamp)
+  }
+
+  const displayedBalanceStatus = balanceStatus ?? currentRow.balance_status
+  const displayedBalanceUpdatedTime =
+    balanceUpdatedTime ?? currentRow.balance_updated_time
+  let displayedBalance = formatBalance(balance ?? currentRow.balance)
+  if (displayedBalanceStatus === 'unavailable') {
+    displayedBalance = t('Not available')
+  } else if (!displayedBalanceUpdatedTime) {
+    displayedBalance = t('Not queried')
   }
 
   if (isCodex) {
@@ -181,14 +201,9 @@ export function BalanceQueryDialog({
             <DollarSign className='h-4 w-4' />
             <span>{t('Current Balance')}</span>
           </div>
-          <div className='text-2xl font-bold'>
-            {balance !== null
-              ? formatBalance(balance)
-              : formatBalance(currentRow.balance)}
-          </div>
+          <div className='text-2xl font-bold'>{displayedBalance}</div>
           <div className='text-muted-foreground mt-2 text-xs'>
-            {t('Last updated:')}{' '}
-            {formatDate(balanceUpdatedTime ?? currentRow.balance_updated_time)}
+            {t('Last updated:')} {formatDate(displayedBalanceUpdatedTime)}
           </div>
         </div>
 
