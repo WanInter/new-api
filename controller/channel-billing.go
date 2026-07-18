@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -130,6 +131,16 @@ type AGGCBalanceResponse struct {
 		FrozenCredits flexibleFloat64 `json:"frozen_credits"`
 		UsageCount    int             `json:"usage_count"`
 		TotalSpent    flexibleFloat64 `json:"total_spent"`
+	} `json:"data"`
+}
+
+type ByteforBalanceResponse struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    struct {
+		Balance   *flexibleFloat64 `json:"balance"`
+		Frozen    *flexibleFloat64 `json:"frozen"`
+		Available *flexibleFloat64 `json:"available"`
 	} `json:"data"`
 }
 
@@ -421,6 +432,47 @@ func updateChannelAGGCBalance(channel *model.Channel) (float64, error) {
 	return balance, nil
 }
 
+func updateChannelByteforBalance(channel *model.Channel) (float64, error) {
+	url := fmt.Sprintf("%s/api/v1/balance", strings.TrimRight(channel.GetBaseURL(), "/"))
+	body, err := GetResponseBody(http.MethodGet, url, channel, GetAuthHeader(channel.Key))
+	if err != nil {
+		return 0, err
+	}
+	response := ByteforBalanceResponse{}
+	if err := common.Unmarshal(body, &response); err != nil {
+		return 0, err
+	}
+	if response.Code != 0 {
+		return 0, fmt.Errorf("code: %d, message: %s", response.Code, response.Message)
+	}
+	var available float64
+	switch {
+	case response.Data.Available != nil:
+		available = response.Data.Available.Float64()
+	case response.Data.Balance != nil && response.Data.Frozen != nil:
+		available = response.Data.Balance.Float64() - response.Data.Frozen.Float64()
+	default:
+		return 0, errors.New("Bytefor 余额响应缺少 available 字段")
+	}
+	channel.UpdateBalance(available)
+	return available, nil
+}
+
+func isByteforChannel(channel *model.Channel) bool {
+	if parsedURL, err := neturl.Parse(channel.GetBaseURL()); err == nil {
+		hostname := strings.ToLower(parsedURL.Hostname())
+		if hostname == "bytefor.com" || strings.HasSuffix(hostname, ".bytefor.com") {
+			return true
+		}
+	}
+	for _, modelName := range strings.Split(channel.Models, ",") {
+		if strings.HasPrefix(strings.TrimSpace(modelName), "bytefor-") {
+			return true
+		}
+	}
+	return false
+}
+
 func updateChannelBalance(channel *model.Channel) (float64, error) {
 	baseURL := constant.ChannelBaseURLs[channel.Type]
 	if channel.GetBaseURL() == "" {
@@ -453,6 +505,11 @@ func updateChannelBalance(channel *model.Channel) (float64, error) {
 		return updateChannelMoonshotBalance(channel)
 	case constant.ChannelTypeAGGC:
 		return updateChannelAGGCBalance(channel)
+	case constant.ChannelTypeDoubaoVideo:
+		if isByteforChannel(channel) {
+			return updateChannelByteforBalance(channel)
+		}
+		return 0, errors.New("尚未实现")
 	case constant.ChannelTypeYobox:
 		return 0, errors.New("尚未实现")
 	default:
