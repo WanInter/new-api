@@ -28,16 +28,15 @@ import (
 )
 
 const (
-	ChannelName               = "axmgc"
-	DefaultBaseURL            = "https://axmgc.com"
-	Seedance720p933Model      = "seedance-2-720p-933"
-	seedance720pUpstreamModel = "seedance-2-720p"
-	defaultDuration           = 15
-	defaultResolution         = "720p"
-	maxImages                 = 9
-	maxVideos                 = 3
-	maxAudios                 = 3
-	multipartFormContextKey   = "axmgc_multipart_form"
+	ChannelName             = "axmgc"
+	DefaultBaseURL          = "https://axmgc.com"
+	Seedance720p933Model    = "seedance-2-720p-933"
+	defaultDuration         = 15
+	defaultResolution       = "720p"
+	maxImages               = 9
+	maxVideos               = 3
+	maxAudios               = 3
+	multipartFormContextKey = "axmgc_multipart_form"
 )
 
 var ModelList = []string{Seedance720p933Model}
@@ -552,23 +551,17 @@ func copyMultipartFiles(writer *multipart.Writer, form *multipart.Form, target s
 }
 
 func upstreamModelName(info *relaycommon.RelayInfo, fallback string) string {
-	// The public model name includes the local price suffix. Axmgc expects the
-	// provider model ID without that suffix unless the channel has an explicit
-	// model mapping.
-	if info != nil && info.IsModelMapped {
+	if info != nil {
 		if name := strings.TrimSpace(info.UpstreamModelName); name != "" {
 			return name
 		}
+		if info.ChannelMeta != nil {
+			if name := strings.TrimSpace(info.ChannelMeta.UpstreamModelName); name != "" {
+				return name
+			}
+		}
 	}
-
-	name := strings.TrimSpace(fallback)
-	if name == "" && info != nil {
-		name = strings.TrimSpace(info.UpstreamModelName)
-	}
-	if name == "" || name == Seedance720p933Model {
-		return seedance720pUpstreamModel
-	}
-	return name
+	return firstNonEmpty(fallback, Seedance720p933Model)
 }
 
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
