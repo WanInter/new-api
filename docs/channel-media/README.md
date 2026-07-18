@@ -140,6 +140,7 @@ Gemini 原生图生图异步示例：
 | Xinghe | `XingheVideo` | `relay/channel/task/xinghe` | `xinghe-mini`, `xinghe-fast`, `xinghe-2.0` | `/api/generate-video` | Bearer | 默认 duration/ratio/resolution；metadata 扩展 | `task_status` 和 nested metadata/result_urls |
 | AGGC | `AGGC` | `relay/channel/task/aggc` | `seedance-2.0` | `/api/v1/prot/generate` | `x-api-key` | 多输入：images/image_urls/video_urls/audio_urls；参数规整到 params | Sora-compatible 输出，提取 output URL |
 | Yobox | `Yobox` | `relay/channel/task/yobox` | `seedance2`, `seedance-2.0`, `seedance-2.0-fast` | `/async/tasks` | Bearer | Seedance 任务；图生、参考图、音频/分辨率参数 | 多种嵌套 outputs 兼容，失败原因提取 |
+| Axmgc | `Axmgc` | `relay/channel/task/axmgc` | `seedance-2-720p-933` | `/v1/video/generations`；本地素材为 `/multipart` | Bearer | 固定 15 秒；JSON `content` URL 引用或 multipart 图片/视频/音频 | `resource_list[].resource_url` 转 OpenAI Video URL |
 | Suno | `suno` platform | `relay/channel/task/suno` | `suno_music`, `suno_lyrics` | `/suno/submit/{action}` | Bearer | 音乐/歌词，不是视频，但走 task 框架 | 使用专用批量轮询，不走通用 `ParseTaskResult` |
 
 ### Tencent VOD（腾讯云点播可灵）配置

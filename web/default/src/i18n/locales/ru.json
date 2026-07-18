@@ -498,6 +498,7 @@
     "Average TPM": "Среднее число транзакций в минуту",
     "Average TTFT": "Средний TTFT",
     "AWS": "AWS",
+    "Axmgc": "Axmgc",
     "AWS Bedrock Claude Compat": "AWS Bedrock Claude совместимость",
     "AWS Key Format": "Формат ключа AWS",
     "Azure": "Azure",

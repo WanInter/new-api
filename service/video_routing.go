@@ -14,6 +14,7 @@ const StrictVideoRoutingModelSDBak1 = "sd-bak-1"
 
 const seedance2Slow15sModel = "seedance-2-0-15s-slow"
 const seedance20FastModel = "seedance-2.0-fast"
+const axmgcSeedance720p933Model = "seedance-2-720p-933"
 
 type VideoRequestFeatures struct {
 	Images      int    `json:"images"`
@@ -76,6 +77,9 @@ var videoCapabilitiesByModel = map[string]dto.VideoModelCapability{
 	"sdquan-2":            withContentRequestSemantics(capabilityWithLimits(common.GetPointer(1), common.GetPointer(4), common.GetPointer(3), common.GetPointer(1), common.GetPointer(15), common.GetPointer(true))),
 	seedance2Slow15sModel: withDurationRange(capabilityWithLimits(nil, common.GetPointer(4), common.GetPointer(3), common.GetPointer(1), nil, nil), 5, 15),
 	seedance20FastModel:   withDurationRange(capabilityWithLimits(nil, common.GetPointer(4), common.GetPointer(3), common.GetPointer(1), nil, nil), 4, 15),
+	axmgcSeedance720p933Model: withContentRequestSemantics(
+		capabilityWithLimits(nil, common.GetPointer(9), common.GetPointer(3), common.GetPointer(3), nil, nil),
+	),
 }
 
 var videoCapabilitiesByChannelModel = map[channelModelCapabilityKey]dto.VideoModelCapability{

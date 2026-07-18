@@ -61,6 +61,7 @@ const (
 	ChannelTypeAGGC           = 61
 	ChannelTypeYobox          = 62
 	ChannelTypeTencentVOD     = 63
+	ChannelTypeAxmgc          = 64
 	ChannelTypeDummy          // this one is only for count, do not add any channel after this
 
 )
@@ -130,6 +131,7 @@ var ChannelBaseURLs = []string{
 	"https://aggc.site",                         //61
 	"https://max.yoboxai.com",                   //62
 	"https://vod.tencentcloudapi.com",           //63
+	"https://axmgc.com",                         //64
 }
 
 var ChannelTypeNames = map[int]string{
@@ -193,6 +195,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeAGGC:           "AGGC",
 	ChannelTypeYobox:          "Yobox",
 	ChannelTypeTencentVOD:     "Tencent VOD",
+	ChannelTypeAxmgc:          "Axmgc",
 }
 
 func GetChannelTypeName(channelType int) string {

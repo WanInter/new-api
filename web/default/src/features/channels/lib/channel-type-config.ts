@@ -213,6 +213,13 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
         'Uses Tencent Cloud VOD CreateAigcVideoTask and DescribeTaskDetail with TC3-HMAC-SHA256 signing.',
     },
   },
+  64: {
+    id: 64,
+    name: CHANNEL_TYPES[64],
+    icon: 'video',
+    defaultBaseUrl: 'https://axmgc.com',
+    supportedModels: ['seedance-2-720p-933'],
+  },
 }
 
 /**

@@ -100,6 +100,32 @@ func TestTaskSubmitReqUnmarshalIgnoresBooleanAudioAlias(t *testing.T) {
 	}
 }
 
+func TestTaskSubmitReqUnmarshalContentAcceptsCompatibleURLShapes(t *testing.T) {
+	var req TaskSubmitReq
+	require.NoError(t, common.Unmarshal([]byte(`{
+		"content":[
+			{"type":"image_url","image_url":{"url":"https://example.com/image.png"}},
+			{"type":"video_url","video_url":"https://example.com/video.mp4"},
+			{"type":"audio_url","url":"https://example.com/audio.mp3"},
+			{"type":"text","text":"animate the references"}
+		]
+	}`), &req))
+
+	require.Len(t, req.Content, 4)
+	require.NotNil(t, req.Content[0].ImageURL)
+	assert.Equal(t, "https://example.com/image.png", req.Content[0].ImageURL.URL)
+	require.NotNil(t, req.Content[1].VideoURL)
+	assert.Equal(t, "https://example.com/video.mp4", req.Content[1].VideoURL.URL)
+	require.NotNil(t, req.Content[2].AudioURL)
+	assert.Equal(t, "https://example.com/audio.mp3", req.Content[2].AudioURL.URL)
+	assert.Equal(t, "animate the references", req.Content[3].Text)
+
+	body, err := common.Marshal(req.Content)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), `"video_url":{"url":"https://example.com/video.mp4"}`)
+	assert.Contains(t, string(body), `"audio_url":{"url":"https://example.com/audio.mp3"}`)
+}
+
 func TestValidateBasicTaskRequestDoesNotDuplicateMultipartImages(t *testing.T) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)

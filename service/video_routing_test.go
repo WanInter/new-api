@@ -236,6 +236,65 @@ func TestEvaluateChannelVideoRoutingSeedanceFastCapability(t *testing.T) {
 	}
 }
 
+func TestEvaluateChannelVideoRoutingAxmgcSeedanceCapability(t *testing.T) {
+	channel := channelWithVideoModelMapping(t, constant.ChannelTypeAxmgc, axmgcSeedance720p933Model)
+	duration := 8
+	valid := VideoRequestFeatures{
+		Images:      9,
+		Videos:      3,
+		Audios:      3,
+		Duration:    &duration,
+		ContentType: "application/json",
+		profiledContent: &videoMediaCounts{
+			Images: 9,
+			Videos: 3,
+			Audios: 3,
+			Text:   1,
+		},
+	}
+
+	result := EvaluateChannelVideoRouting(channel, axmgcSeedance720p933Model, valid)
+	assert.True(t, result.Eligible)
+	require.NotNil(t, result.Capability)
+	assert.Nil(t, result.Capability.FixedDuration)
+
+	invalid := valid
+	invalid.profiledContent = &videoMediaCounts{Images: 10, Text: 1}
+	result = EvaluateChannelVideoRouting(channel, axmgcSeedance720p933Model, invalid)
+	assert.False(t, result.Eligible)
+	assert.Contains(t, result.Violations, VideoConstraintViolation{
+		Code: "images_above_max", Field: "images", Actual: common.GetPointer(10), Expected: common.GetPointer(9),
+	})
+}
+
+func TestAxmgcAutomaticRoutingAcceptsCompatibleContentURLShapesAndNormalizesDurationLater(t *testing.T) {
+	body := `{
+		"model":"sd-bak-1",
+		"content":[
+			{"type":"image_url","image_url":"https://example.com/image.png"},
+			{"type":"video_url","url":"https://example.com/video.mp4"},
+			{"type":"audio_url","audio_url":{"url":"https://example.com/audio.mp3"}},
+			{"type":"text","text":"animate the references"}
+		],
+		"duration":8
+	}`
+	c := newChannelConstraintTestContext(t, "/v1/videos", body)
+	features, err := GetVideoRequestFeatures(c)
+	require.NoError(t, err)
+	assert.Equal(t, 1, features.Images)
+	assert.Equal(t, 1, features.Videos)
+	assert.Equal(t, 1, features.Audios)
+	require.NotNil(t, features.Duration)
+	assert.Equal(t, 8, *features.Duration)
+
+	channel := channelWithVideoModelMapping(t, constant.ChannelTypeAxmgc, axmgcSeedance720p933Model)
+	result := EvaluateChannelVideoRouting(channel, StrictVideoRoutingModelSDBak1, features)
+	assert.True(t, result.Eligible)
+	assert.Empty(t, result.Violations)
+	require.NotNil(t, result.Capability)
+	assert.Nil(t, result.Capability.FixedDuration)
+}
+
 func TestGetVideoRequestFeaturesCountsEveryReferenceEntry(t *testing.T) {
 	body := `{
 		"model":"sd-bak-1",

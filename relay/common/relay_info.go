@@ -718,6 +718,68 @@ type TaskContentItem struct {
 	AudioURL *TaskContentURL `json:"audio_url,omitempty"`
 }
 
+func (t *TaskContentItem) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Type     string          `json:"type"`
+		Text     string          `json:"text,omitempty"`
+		ImageURL json.RawMessage `json:"image_url,omitempty"`
+		VideoURL json.RawMessage `json:"video_url,omitempty"`
+		AudioURL json.RawMessage `json:"audio_url,omitempty"`
+		URL      string          `json:"url,omitempty"`
+	}
+	if err := common.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*t = TaskContentItem{Type: strings.TrimSpace(raw.Type), Text: raw.Text}
+
+	imageFallback := ""
+	videoFallback := ""
+	audioFallback := ""
+	switch t.Type {
+	case "image_url":
+		imageFallback = raw.URL
+	case "video_url":
+		videoFallback = raw.URL
+	case "audio_url":
+		audioFallback = raw.URL
+	}
+
+	var err error
+	if t.ImageURL, err = parseTaskContentURL(raw.ImageURL, imageFallback); err != nil {
+		return err
+	}
+	if t.VideoURL, err = parseTaskContentURL(raw.VideoURL, videoFallback); err != nil {
+		return err
+	}
+	t.AudioURL, err = parseTaskContentURL(raw.AudioURL, audioFallback)
+	return err
+}
+
+func parseTaskContentURL(raw json.RawMessage, fallback string) (*TaskContentURL, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		if value := strings.TrimSpace(fallback); value != "" {
+			return &TaskContentURL{URL: value}, nil
+		}
+		return nil, nil
+	}
+
+	var object TaskContentURL
+	if err := common.Unmarshal(raw, &object); err == nil {
+		object.URL = strings.TrimSpace(object.URL)
+		return &object, nil
+	}
+
+	var value string
+	if err := common.Unmarshal(raw, &value); err != nil {
+		return nil, fmt.Errorf("task content URL must be a string or an object with a url")
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	return &TaskContentURL{URL: value}, nil
+}
+
 func (t *TaskSubmitReq) GetPrompt() string {
 	return t.Prompt
 }

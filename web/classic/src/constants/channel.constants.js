@@ -219,6 +219,11 @@ export const CHANNEL_OPTIONS = [
     color: 'teal',
     label: '腾讯云点播（可灵）',
   },
+  {
+    value: 64,
+    color: 'blue',
+    label: 'Axmgc',
+  },
 ];
 
 // Channel types that support upstream model list fetching in UI.

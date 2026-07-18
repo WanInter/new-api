@@ -82,12 +82,13 @@ export const CHANNEL_TYPES = {
   61: 'AGGC',
   62: 'Yobox',
   63: 'Tencent VOD',
+  64: 'Axmgc',
 } as const
 
 const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
   1, 14, 33, 24, 43, 3, 41, 48, 58, 42, 34, 20, 4, 40, 27, 25, 17, 26, 15, 46,
   23, 18, 45, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 22, 21, 44, 2, 5, 36,
-  50, 63, 51, 52, 53, 54, 55, 56, 59, 60, 61, 62,
+  50, 63, 51, 52, 53, 54, 55, 56, 59, 60, 61, 62, 64,
 ]
 
 export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {
