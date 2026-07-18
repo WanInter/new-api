@@ -2,10 +2,77 @@ package sora
 
 import (
 	"mime/multipart"
+	"net/url"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
+
+const tokenStackHostname = "tokenstack.cc"
+
+var tokenStackRequestFields = map[string]bool{
+	"model":   true,
+	"prompt":  true,
+	"images":  true,
+	"videos":  true,
+	"audios":  true,
+	"seconds": true,
+	"size":    true,
+}
+
+func isTokenStackChannel(info *relaycommon.RelayInfo) bool {
+	if info == nil || info.ChannelMeta == nil {
+		return false
+	}
+	parsed, err := url.Parse(strings.TrimSpace(info.ChannelBaseUrl))
+	if err != nil {
+		return false
+	}
+	hostname := strings.ToLower(parsed.Hostname())
+	return hostname == tokenStackHostname || hostname == "www."+tokenStackHostname
+}
+
+func applyTokenStackJSONRequest(body map[string]interface{}) {
+	if body == nil {
+		return
+	}
+
+	if seconds, ok := normalizeVideoSeconds(body["seconds"]); ok {
+		body["seconds"] = seconds
+	} else if seconds, ok := normalizeVideoSeconds(body["duration"]); ok {
+		body["seconds"] = seconds
+	}
+
+	if strings.TrimSpace(stringValue(body["size"])) == "" {
+		if size := tokenStackSizeFromLegacyFields(body); size != "" {
+			body["size"] = size
+		}
+	}
+
+	for key := range body {
+		if !tokenStackRequestFields[key] {
+			delete(body, key)
+		}
+	}
+}
+
+func tokenStackSizeFromLegacyFields(body map[string]interface{}) string {
+	ratio := firstNonEmpty(stringValue(body["aspect_ratio"]), stringValue(body["ratio"]))
+	resolution := strings.ToLower(strings.TrimSpace(stringValue(body["resolution"])))
+	if resolution != "" && resolution != "720p" {
+		return ""
+	}
+
+	switch ratio {
+	case "16:9":
+		return "1280x720"
+	case "9:16":
+		return "720x1280"
+	default:
+		return ""
+	}
+}
 
 func applySoraModelJSONProfile(body map[string]interface{}, profile soraModelProfile) {
 	switch profile.JSONTransform {

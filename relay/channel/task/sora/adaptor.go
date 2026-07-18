@@ -109,6 +109,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 }
 
 func (a *TaskAdaptor) ValidateMappedRequestBeforeDecode(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	if isTokenStackChannel(info) {
+		return validateSoraModelContentType(c, info.OriginModelName, soraModelProfile{RequireJSON: true})
+	}
 	profile, ok := soraModelProfileForInfo(info)
 	if !ok {
 		return nil
@@ -212,6 +215,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 				} else if seconds, ok := normalizeVideoSeconds(bodyMap["duration"]); ok {
 					bodyMap["seconds"] = clampNormalizedVideoSeconds(seconds, maxSeconds)
 				}
+			}
+			if isTokenStackChannel(info) {
+				applyTokenStackJSONRequest(bodyMap)
 			}
 			if newBody, err := common.Marshal(bodyMap); err == nil {
 				return bytes.NewReader(newBody), nil
