@@ -116,11 +116,11 @@ func (a *TaskAdaptor) validateJSONRequest(c *gin.Context, info *relaycommon.Rela
 	if err := validateResolution(raw.Resolution); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
-	if strings.TrimSpace(firstNonEmpty(raw.Model, info.OriginModelName)) == "" {
+	if strings.TrimSpace(raw.Model) == "" {
 		return service.TaskErrorWrapperLocal(errors.New("model field is required"), "missing_model", http.StatusBadRequest)
 	}
 
-	raw.Model = firstNonEmpty(raw.Model, info.OriginModelName)
+	raw.Model = strings.TrimSpace(raw.Model)
 	raw.Prompt = prompt
 	raw.AspectRatio = strings.TrimSpace(raw.AspectRatio)
 	raw.Resolution = strings.TrimSpace(raw.Resolution)
@@ -372,6 +372,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, errors.New("invalid Axmgc JSON request")
 	}
 	request.Model = upstreamModelName(info, request.Model)
+	if request.Model == "" {
+		return nil, errors.New("Axmgc upstream model is required")
+	}
 	data, err := common.Marshal(request)
 	if err != nil {
 		return nil, err
@@ -394,17 +397,12 @@ func (a *TaskAdaptor) NormalizeBillingRequestBody(_ *relaycommon.RelayInfo, body
 }
 
 func upstreamModelName(info *relaycommon.RelayInfo, fallback string) string {
-	if info != nil {
+	if info != nil && info.IsModelMapped {
 		if name := strings.TrimSpace(info.UpstreamModelName); name != "" {
 			return name
 		}
-		if info.ChannelMeta != nil {
-			if name := strings.TrimSpace(info.ChannelMeta.UpstreamModelName); name != "" {
-				return name
-			}
-		}
 	}
-	return firstNonEmpty(fallback, Seedance720p933Model)
+	return strings.TrimSpace(fallback)
 }
 
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {

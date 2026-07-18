@@ -170,6 +170,46 @@ func TestBuildJSONRequestNormalizesDurationTo15Seconds(t *testing.T) {
 	assert.Equal(t, defaultDuration, parseBuiltJSONBody(t, c, body).Duration)
 }
 
+func TestBuildJSONRequestUsesExplicitModelMapping(t *testing.T) {
+	c := newJSONContext(t, `{"model":"seedance-2-720p-933","prompt":"test"}`)
+	info := newRelayInfo()
+	info.IsModelMapped = true
+	info.UpstreamModelName = "seedance-2-720p-mapped"
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	assert.Equal(t, "seedance-2-720p-mapped", parseBuiltJSONBody(t, c, body).Model)
+}
+
+func TestBuildJSONRequestUsesSubmittedModelWithoutMapping(t *testing.T) {
+	c := newJSONContext(t, `{"model":"seedance-2-720p-933","prompt":"test"}`)
+	info := newRelayInfo()
+	info.UpstreamModelName = "legacy-channel-default"
+	info.ChannelMeta.UpstreamModelName = "legacy-channel-default"
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	assert.Equal(t, Seedance720p933Model, parseBuiltJSONBody(t, c, body).Model)
+}
+
+func TestValidateJSONRequestRejectsMissingModel(t *testing.T) {
+	c := newJSONContext(t, `{"prompt":"test"}`)
+	info := newRelayInfo()
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+
+	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "missing_model", taskErr.Code)
+	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+}
+
 func TestValidateJSONRequestRejectsUnsupportedResolution(t *testing.T) {
 	c := newJSONContext(t, `{"model":"seedance-2-720p-933","prompt":"test","resolution":"1080p"}`)
 	info := newRelayInfo()
