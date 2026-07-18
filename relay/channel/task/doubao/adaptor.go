@@ -574,7 +574,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	case "pending", "queued":
 		taskResult.Status = model.TaskStatusQueued
 		taskResult.Progress = "10%"
-	case "processing", "running", "in_progress", "configuring":
+	case "processing", "running", "in_progress", "configuring", "generating":
 		taskResult.Status = model.TaskStatusInProgress
 		taskResult.Progress = "50%"
 	case "succeeded", "completed":
@@ -628,7 +628,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 
 func toOpenAIVideoStatus(status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "processing", "running", "in_progress", "configuring":
+	case "processing", "running", "in_progress", "configuring", "generating":
 		return dto.VideoStatusInProgress
 	case "succeeded", "completed":
 		return dto.VideoStatusCompleted

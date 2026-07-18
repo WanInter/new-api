@@ -233,6 +233,12 @@ func TestParseTaskResultSupportsByteforAndDoubaoResponses(t *testing.T) {
 			expectedProgress: "35%",
 		},
 		{
+			name:             "bytefor generating",
+			body:             `{"status":"generating","progress":60,"progress_text":"generating video"}`,
+			expectedStatus:   model.TaskStatusInProgress,
+			expectedProgress: "60%",
+		},
+		{
 			name:             "bytefor completed data URL",
 			body:             `{"status":"completed","progress":100,"data":[{"url":"https://cdn.example.com/video.mp4"}]}`,
 			expectedStatus:   model.TaskStatusSuccess,
