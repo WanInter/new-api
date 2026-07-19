@@ -183,18 +183,32 @@ function CandidateTable({
   }
   return (
     <div className='overflow-x-auto rounded-md border'>
-      <Table>
+      <Table className='min-w-[1428px] table-fixed'>
         <TableHeader>
           <TableRow>
-            <TableHead className='min-w-44'>{t('Channel')}</TableHead>
-            <TableHead className='min-w-36'>{t('Upstream Model')}</TableHead>
-            <TableHead>{t('Images')}</TableHead>
-            <TableHead>{t('Videos')}</TableHead>
-            <TableHead>{t('Audios')}</TableHead>
-            <TableHead>{t('Duration')}</TableHead>
-            <TableHead>{t('Priority')}</TableHead>
-            <TableHead>{t('Weight')}</TableHead>
-            <TableHead className='min-w-32'>{t('Status')}</TableHead>
+            <TableHead className='w-[520px]'>{t('Channel')}</TableHead>
+            <TableHead className='w-[260px]'>{t('Upstream Model')}</TableHead>
+            <TableHead className='w-[72px] text-center'>
+              {t('Images')}
+            </TableHead>
+            <TableHead className='w-[72px] text-center'>
+              {t('Videos')}
+            </TableHead>
+            <TableHead className='w-[72px] text-center'>
+              {t('Audios')}
+            </TableHead>
+            <TableHead className='w-[84px] text-center'>
+              {t('Duration')}
+            </TableHead>
+            <TableHead className='w-[72px] text-center'>
+              {t('Priority')}
+            </TableHead>
+            <TableHead className='w-[72px] text-center'>
+              {t('Weight')}
+            </TableHead>
+            <TableHead className='w-[108px] text-center'>
+              {t('Status')}
+            </TableHead>
             <TableHead className='w-24' />
           </TableRow>
         </TableHeader>
@@ -213,10 +227,11 @@ function CandidateTable({
               <TableRow key={`${candidate.group}-${candidate.channel_id}`}>
                 <TableCell>
                   <button
-                    className='text-left'
+                    className='block w-full overflow-hidden text-left'
+                    title={candidate.channel_name || `#${candidate.channel_id}`}
                     onClick={() => onInspect(candidate)}
                   >
-                    <span className='block font-medium'>
+                    <span className='block truncate font-medium'>
                       {candidate.channel_name || `#${candidate.channel_id}`}
                     </span>
                     <span className='text-muted-foreground text-xs'>
@@ -231,23 +246,32 @@ function CandidateTable({
                   </button>
                 </TableCell>
                 <TableCell className='font-mono text-xs'>
-                  {candidate.mapping?.model || '—'}
+                  <span
+                    className='block truncate'
+                    title={candidate.mapping?.model || '—'}
+                  >
+                    {candidate.mapping?.model || '—'}
+                  </span>
                 </TableCell>
-                <TableCell>
+                <TableCell className='text-center'>
                   {formatRange(candidate.capability?.images)}
                 </TableCell>
-                <TableCell>
+                <TableCell className='text-center'>
                   {formatRange(candidate.capability?.videos)}
                 </TableCell>
-                <TableCell>
+                <TableCell className='text-center'>
                   {formatRange(candidate.capability?.audios)}
                 </TableCell>
-                <TableCell>
+                <TableCell className='text-center'>
                   {formatDurationCapability(candidate.capability)}
                 </TableCell>
-                <TableCell>{candidate.priority}</TableCell>
-                <TableCell>{candidate.weight}</TableCell>
-                <TableCell>
+                <TableCell className='text-center'>
+                  {candidate.priority}
+                </TableCell>
+                <TableCell className='text-center'>
+                  {candidate.weight}
+                </TableCell>
+                <TableCell className='text-center'>
                   <CandidateStatus candidate={candidate} />
                 </TableCell>
                 <TableCell>

@@ -766,51 +766,74 @@ const ChannelRouting = () => {
       {
         title: t('渠道'),
         dataIndex: 'channel_name',
-        render: (_, record) => (
-          <button
-            className='text-left'
-            onClick={() => setSelectedCandidate(record)}
-          >
-            <div className='font-medium'>
-              {record.channel_name || `#${record.channel_id}`}
-            </div>
-            <Text type='tertiary' size='small'>
-              #{record.channel_id} ·{' '}
-              {channelTypeNames[record.channel_type] || record.channel_type}
-            </Text>
-            {record.editable_rule && (
-              <Tag className='mt-1' color='green' size='small'>
-                {t('数据库覆盖')}
-              </Tag>
-            )}
-          </button>
-        ),
+        width: 520,
+        ellipsis: true,
+        render: (_, record) => {
+          const channelName = record.channel_name || `#${record.channel_id}`;
+          return (
+            <button
+              className='block w-full overflow-hidden text-left'
+              title={channelName}
+              onClick={() => setSelectedCandidate(record)}
+            >
+              <div className='truncate font-medium'>{channelName}</div>
+              <Text type='tertiary' size='small'>
+                #{record.channel_id} ·{' '}
+                {channelTypeNames[record.channel_type] || record.channel_type}
+              </Text>
+              {record.editable_rule && (
+                <Tag className='mt-1' color='green' size='small'>
+                  {t('数据库覆盖')}
+                </Tag>
+              )}
+            </button>
+          );
+        },
       },
       {
         title: t('上游模型'),
         dataIndex: 'mapping',
-        render: (mapping) => <code>{mapping?.model || '—'}</code>,
+        width: 260,
+        ellipsis: true,
+        render: (mapping) => {
+          const upstreamModel = mapping?.model || '—';
+          return (
+            <code className='block truncate' title={upstreamModel}>
+              {upstreamModel}
+            </code>
+          );
+        },
       },
       {
         title: t('图片'),
+        width: 72,
+        align: 'center',
         render: (_, record) => formatRange(record.capability?.images),
       },
       {
         title: t('视频'),
+        width: 72,
+        align: 'center',
         render: (_, record) => formatRange(record.capability?.videos),
       },
       {
         title: t('音频'),
+        width: 72,
+        align: 'center',
         render: (_, record) => formatRange(record.capability?.audios),
       },
       {
         title: t('时长'),
+        width: 84,
+        align: 'center',
         render: (_, record) => formatDurationCapability(record.capability),
       },
-      { title: t('优先级'), dataIndex: 'priority' },
-      { title: t('权重'), dataIndex: 'weight' },
+      { title: t('优先级'), dataIndex: 'priority', width: 72, align: 'center' },
+      { title: t('权重'), dataIndex: 'weight', width: 72, align: 'center' },
       {
         title: t('状态'),
+        width: 108,
+        align: 'center',
         render: (_, record) => <CandidateStatus candidate={record} t={t} />,
       },
       {
@@ -846,7 +869,8 @@ const ChannelRouting = () => {
         dataSource={candidates || []}
         rowKey={(record) => `${record.group}-${record.channel_id}`}
         pagination={false}
-        scroll={{ x: 1100 }}
+        tableLayout='fixed'
+        scroll={{ x: 1428 }}
         empty={t('未找到分流候选渠道')}
       />
     </Spin>
