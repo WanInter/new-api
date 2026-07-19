@@ -19,9 +19,12 @@ Axmgc；只有需要切换其他上游型号时才配置显式模型映射。
 
 视频为固定 15 秒；调用方提交的其他时长会在转发前统一改为 15 秒。渠道支持
 最多 9 张图片、3 个视频和 3 个音频参考素材。
-素材引用必须在 `content` 中出现在文本提示词之前，按顺序分别对应
-`@Image1` 至 `@Image9`、`@Video1` 至 `@Video3` 和 `@Audio1` 至
-`@Audio3`。
+
+公开 API 使用 Sora/OpenAI 兼容的顶层 `prompt`、`seconds`、`images`、
+`video_urls` 和 `audio_urls` 字段。网关会将这些字段转换为 Axmgc 原生的
+`content`。提示词中按请求数组顺序使用 `@Image1` 至 `@Image9`、`@Video1`
+至 `@Video3` 和 `@Audio1` 至 `@Audio3` 引用素材。`content` 只保留给
+`asset_id` 等高级原生能力。
 
 建议调用方为每个任务设置 `X-Idempotency-Key`；同一任务的重试应保留该
 值，避免重复创建视频。
@@ -39,10 +42,11 @@ curl https://axmgc.com/v1/models \
 | --- | --- | --- | --- | --- |
 | `seedance-2-720p-933` | 720p | 固定 15 秒 | 9 图片 / 3 视频 / 3 音频 | ¥4.50/次 |
 
-## JSON 提交：公网素材 URL
+## JSON 提交：Sora/OpenAI 兼容格式
 
-New API 直接将 JSON `content` 转发到 Axmgc 的 JSON 生成接口。素材 URL 必须能被
-Axmgc 上游直接访问，不能使用本地路径、内网地址或依赖登录 Cookie 的 URL。
+素材 URL 必须能被 Axmgc 上游直接访问，不能使用本地路径、内网地址或依赖登录
+Cookie 的 URL。`seconds` 用于与其他 Sora/OpenAI 兼容模型保持统一；此模型始终
+实际生成 15 秒视频。
 
 ```bash
 curl -X POST https://your-new-api.example/v1/videos \
@@ -51,18 +55,27 @@ curl -X POST https://your-new-api.example/v1/videos \
   -H 'X-Idempotency-Key: scene-001' \
   -d '{
     "model": "seedance-2-720p-933",
-    "content": [
-      {"type": "image_url", "image_url": {"url": "https://cdn.example.com/role.png"}},
-      {"type": "image_url", "image_url": {"url": "https://cdn.example.com/scene.jpg"}},
-      {"type": "video_url", "video_url": {"url": "https://cdn.example.com/camera.mp4"}},
-      {"type": "audio_url", "audio_url": {"url": "https://cdn.example.com/bgm.mp3"}},
-      {"type": "text", "text": "@Image1 是主角，@Image2 是场景，参考 @Video1 的运镜和 @Audio1 的音乐氛围。15 秒横屏，电影感。"}
+    "prompt": "@Image1 是主角，@Image2 是场景，参考 @Video1 的运镜和 @Audio1 的音乐氛围。",
+    "seconds": "15",
+    "images": [
+      "https://cdn.example.com/role.png",
+      "https://cdn.example.com/scene.jpg"
+    ],
+    "video_urls": [
+      "https://cdn.example.com/camera.mp4"
+    ],
+    "audio_urls": [
+      "https://cdn.example.com/bgm.mp3"
     ],
     "aspect_ratio": "16:9",
-    "resolution": "720p",
-    "duration": 15
+    "resolution": "720p"
   }'
 ```
+
+## 高级 JSON `content`
+
+仅当需要复用 Axmgc 账户中已有的 `asset_id` 时使用 `content`。普通公网 URL
+素材应继续使用上面的兼容格式。`content` 中的素材必须在 `text` 前出现。
 
 URL 字段兼容以下两种形式，推荐第一种标准写法：
 
@@ -74,14 +87,11 @@ URL 字段兼容以下两种形式，推荐第一种标准写法：
 {"type":"image_url","url":"https://cdn.example.com/role.png"}
 ```
 
-对于本项目的 Axmgc 渠道，公开 API 使用第一种标准写法。适配器也接受本项目
-常用的顶层 `prompt`、`images`、`videos` 和 `audios` 字段，并在转发时转换为标准
-`content` URL 对象。`content` 中的素材必须在 `text` 前出现。
-
 ## 本地文件
 
 Axmgc 渠道不接受 multipart 和本地文件上传。请先将素材上传到可公开访问的存储，
-然后使用 URL `content`；也可以复用已在 Axmgc 账户中创建的 `asset_id`。
+然后使用上面的 URL 数组；也可以通过 `content` 复用已在 Axmgc 账户中创建的
+`asset_id`。
 
 ## 上传资产后复用
 
