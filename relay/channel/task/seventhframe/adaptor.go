@@ -38,7 +38,7 @@ const (
 )
 
 var ModelList = []string{
-	"viraldance900--person-stripe--62ecbdc5--voice-tone--bcf91631",
+	"viraldance900--person-stripe--6c832bb1--voice-tone--a0c4ee78",
 }
 
 type TaskAdaptor struct {

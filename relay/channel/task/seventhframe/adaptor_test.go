@@ -69,10 +69,12 @@ func TestBuildRequestBodyUploadsAssetsAndPreservesFileObjects(t *testing.T) {
 	t.Cleanup(func() { common.CleanupBodyStorage(c) })
 
 	info := &relaycommon.RelayInfo{
+		OriginModelName: "Seedance-2.0-719",
 		ChannelMeta: &relaycommon.ChannelMeta{
 			ApiKey:            "upstream-key",
 			ChannelBaseUrl:    server.URL + "/api/v1",
-			UpstreamModelName: "viraldance900--person-stripe--62ecbdc5--voice-tone--bcf91631",
+			UpstreamModelName: "viraldance900--person-stripe--6c832bb1--voice-tone--a0c4ee78",
+			IsModelMapped:     true,
 		},
 		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
 	}
@@ -88,7 +90,7 @@ func TestBuildRequestBodyUploadsAssetsAndPreservesFileObjects(t *testing.T) {
 	var payload generationRequest
 	require.NoError(t, common.Unmarshal(encoded, &payload))
 	assert.Equal(t, upstreamChannel, payload.Channel)
-	assert.Equal(t, "viraldance900--person-stripe--62ecbdc5--voice-tone--bcf91631", payload.Model)
+	assert.Equal(t, "viraldance900--person-stripe--6c832bb1--voice-tone--a0c4ee78", payload.Model)
 	assert.Equal(t, "animate the references", payload.Prompt)
 	require.NotNil(t, payload.Duration)
 	assert.Equal(t, 4, *payload.Duration)
@@ -141,10 +143,12 @@ func TestBuildRequestBodyUsesASCIIFilenameForUnicodeAssetURL(t *testing.T) {
 	t.Cleanup(func() { common.CleanupBodyStorage(c) })
 
 	info := &relaycommon.RelayInfo{
+		OriginModelName: "Seedance-2.0-719",
 		ChannelMeta: &relaycommon.ChannelMeta{
 			ApiKey:            "upstream-key",
 			ChannelBaseUrl:    server.URL + "/api/v1",
-			UpstreamModelName: "viraldance900--person-stripe--62ecbdc5--voice-tone--bcf91631",
+			UpstreamModelName: "viraldance900--person-stripe--6c832bb1--voice-tone--a0c4ee78",
+			IsModelMapped:     true,
 		},
 		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
 	}
@@ -271,6 +275,7 @@ func TestDoResponseReturnsPublicTaskID(t *testing.T) {
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &video))
 	assert.Equal(t, "task_public", video.ID)
 	assert.Equal(t, "task_public", video.TaskID)
+	assert.Equal(t, "public-model", video.Model)
 	assert.Equal(t, dto.VideoStatusQueued, video.Status)
 }
 

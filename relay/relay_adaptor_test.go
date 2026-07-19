@@ -42,5 +42,5 @@ func TestGetTaskAdaptorSeventhFrame(t *testing.T) {
 
 	require.NotNil(t, adaptor)
 	assert.Equal(t, "seventh-frame", adaptor.GetChannelName())
-	assert.Contains(t, adaptor.GetModelList(), "viraldance900--person-stripe--62ecbdc5--voice-tone--bcf91631")
+	assert.Contains(t, adaptor.GetModelList(), "viraldance900--person-stripe--6c832bb1--voice-tone--a0c4ee78")
 }

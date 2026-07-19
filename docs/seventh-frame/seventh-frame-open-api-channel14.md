@@ -18,7 +18,7 @@
 
 | model | 名称 | 可选时长 | 可选分辨率 | 素材限制 | 全局默认计费 |
 | --- | --- | --- | --- | --- | --- |
-viraldance900--person-stripe--62ecbdc5--voice-tone--bcf91631 | 93全能2.0 720p | 4s, 5s, 6s, 7s, 8s, 9s, 10s, 11s, 12s, 13s, 14s, 15s | 720p | 图片 9 / 音频 3 / 视频 0 | 30/条
+viraldance900--person-stripe--6c832bb1--voice-tone--a0c4ee78 | 93全能2.0 720p（不卡人脸） | 4s, 5s, 6s, 7s, 8s, 9s, 10s, 11s, 12s, 13s, 14s, 15s | 720p | 图片 9 / 音频 3 / 视频 0 | 30/条
 
 ## 计费说明
 
@@ -77,7 +77,7 @@ curl -X POST "https://diqizhen.jytt4.cn/api/v1/video/generations" \
   -H "Content-Type: application/json" \
   -d '{
     "channel": "channel14",
-    "model": "viraldance900--person-stripe--62ecbdc5--voice-tone--bcf91631",
+    "model": "viraldance900--person-stripe--6c832bb1--voice-tone--a0c4ee78",
     "prompt": "生成一段电影感产品展示视频，镜头缓慢推进，光影高级",
     "duration": 4,
     "aspectRatio": "16:9",
@@ -121,7 +121,7 @@ curl -X POST "https://diqizhen.jytt4.cn/api/v1/video/generations" \
     "status": "queued",
     "progress": 0,
     "channel": "channel14",
-    "model": "viraldance900--person-stripe--62ecbdc5--voice-tone--bcf91631",
+    "model": "viraldance900--person-stripe--6c832bb1--voice-tone--a0c4ee78",
     "billing": {
       "chargedPoints": 24
     }
