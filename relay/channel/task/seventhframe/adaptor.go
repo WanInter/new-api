@@ -179,10 +179,10 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", body), "unmarshal_response_body_failed", http.StatusInternalServerError)
 	}
 	if parsed.Error.Message != "" {
-		return "", nil, service.TaskErrorWrapperLocal(fmt.Errorf("Seventh Frame submit failed: %s", parsed.Error.Message), "submit_failed", http.StatusBadRequest)
+		return "", nil, service.TaskErrorWrapperLocal(fmt.Errorf("SeventhFrame submit failed: %s", parsed.Error.Message), "submit_failed", http.StatusBadRequest)
 	}
 	if strings.TrimSpace(parsed.Generation.ID) == "" {
-		return "", nil, service.TaskErrorWrapperLocal(fmt.Errorf("Seventh Frame submit returned an empty generation id"), "submit_failed", http.StatusBadRequest)
+		return "", nil, service.TaskErrorWrapperLocal(fmt.Errorf("SeventhFrame submit returned an empty generation id"), "submit_failed", http.StatusBadRequest)
 	}
 
 	video := dto.NewOpenAIVideo()
@@ -234,7 +234,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 	status := mapGenerationStatus(parsed.Generation.Status)
 	if status == model.TaskStatusUnknown {
-		return nil, fmt.Errorf("unknown Seventh Frame task status %q", parsed.Generation.Status)
+		return nil, fmt.Errorf("unknown SeventhFrame task status %q", parsed.Generation.Status)
 	}
 	result := &relaycommon.TaskInfo{
 		Code:     0,

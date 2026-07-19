@@ -57,7 +57,7 @@ export function getChannelTypeIcon(type: number): string {
     61: 'Video', // AGGC
     62: 'Video', // Yobox
     63: 'Hunyuan', // Tencent VOD
-    65: 'Video', // Seventh Frame
+    65: 'Video', // SeventhFrame
     3: 'Azure', // Azure
 
     // Anthropic

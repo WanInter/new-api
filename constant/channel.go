@@ -198,7 +198,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeYobox:          "Yobox",
 	ChannelTypeTencentVOD:     "Tencent VOD",
 	ChannelTypeAxmgc:          "Axmgc",
-	ChannelTypeSeventhFrame:   "Seventh Frame",
+	ChannelTypeSeventhFrame:   "SeventhFrame",
 }
 
 func GetChannelTypeName(channelType int) string {

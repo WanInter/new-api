@@ -227,7 +227,7 @@ export const CHANNEL_OPTIONS = [
   {
     value: 65,
     color: 'blue',
-    label: '第七帧',
+    label: 'SeventhFrame',
   },
 ];
 

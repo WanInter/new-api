@@ -44,6 +44,7 @@ const BRAND_AND_LITERAL_KEYS = new Set([
   'ChatGPT',
   'ChatGPT Subscription (Codex)',
   'Claude',
+  'SeventhFrame',
   'Client ID',
   'Client Secret',
   'Cloudflare',

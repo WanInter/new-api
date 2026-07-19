@@ -83,7 +83,7 @@ export const CHANNEL_TYPES = {
   62: 'Yobox',
   63: 'Tencent VOD',
   64: 'Axmgc',
-  65: 'Seventh Frame',
+  65: 'SeventhFrame',
 } as const
 
 const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
