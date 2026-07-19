@@ -88,6 +88,7 @@ const ImageRoutingPanel = ({ rootUser }) => {
   const [model, setModel] = useState(DEFAULT_MODEL);
   const [group, setGroup] = useState(DEFAULT_GROUP);
   const [groups, setGroups] = useState([]);
+  const [models, setModels] = useState([]);
   const [config, setConfig] = useState(emptyConfig);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -105,6 +106,26 @@ const ImageRoutingPanel = ({ rootUser }) => {
       showError(errorMessage(error));
     }
   }, []);
+
+  const loadModels = useCallback(async () => {
+    if (!group.trim()) return;
+    try {
+      const response = await API.get('/api/channel/models_enabled', {
+        params: { group },
+      });
+      if (!response.data.success) throw new Error(response.data.message);
+      const nextModels = Array.from(
+        new Set(
+          (response.data.data || [])
+            .map((item) => String(item || '').trim())
+            .filter(Boolean),
+        ),
+      ).sort((left, right) => left.localeCompare(right));
+      setModels(nextModels);
+    } catch (error) {
+      showError(errorMessage(error));
+    }
+  }, [group]);
 
   const loadConfig = useCallback(async () => {
     if (!model.trim() || !group.trim()) return;
@@ -132,6 +153,10 @@ const ImageRoutingPanel = ({ rootUser }) => {
   useEffect(() => {
     loadGroups();
   }, [loadGroups]);
+
+  useEffect(() => {
+    loadModels();
+  }, [loadModels]);
 
   useEffect(() => {
     const timer = window.setTimeout(loadConfig, 250);
@@ -358,7 +383,18 @@ const ImageRoutingPanel = ({ rootUser }) => {
         <div className='flex flex-wrap items-end gap-3 border-y border-semi-color-border py-4'>
           <div className='min-w-[220px] flex-1'>
             <Text type='tertiary'>{t('公开模型')}</Text>
-            <Input className='mt-1' value={model} onChange={setModel} />
+            <Select
+              className='mt-1 w-full'
+              value={model}
+              filter
+              onChange={setModel}
+              placeholder={t('搜索模型...')}
+              emptyContent={t('暂无模型')}
+              optionList={models.map((item) => ({
+                value: item,
+                label: item,
+              }))}
+            />
           </div>
           <div className='min-w-[220px] flex-1'>
             <Text type='tertiary'>{t('分组')}</Text>
@@ -366,7 +402,13 @@ const ImageRoutingPanel = ({ rootUser }) => {
               className='mt-1 w-full'
               value={group}
               filter
-              onChange={setGroup}
+              onChange={(value) => {
+                setGroup(value);
+                setModel('');
+                setConfig(emptyConfig());
+                setSimulation(null);
+                setPendingChannel({});
+              }}
               optionList={Array.from(new Set([group, ...groups])).map(
                 (item) => ({
                   value: item,

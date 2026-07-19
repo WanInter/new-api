@@ -330,9 +330,14 @@ func DashboardListModels(c *gin.Context) {
 }
 
 func EnabledListModels(c *gin.Context) {
+	group := strings.TrimSpace(c.Query("group"))
+	models := model.GetEnabledModels()
+	if group != "" {
+		models = model.GetGroupEnabledModels(group)
+	}
 	c.JSON(200, gin.H{
 		"success": true,
-		"data":    model.GetEnabledModels(),
+		"data":    models,
 	})
 }
 

@@ -643,6 +643,7 @@ const ChannelRouting = () => {
   const [model, setModel] = useState(DEFAULT_MODEL);
   const [group, setGroup] = useState(DEFAULT_GROUP);
   const [groups, setGroups] = useState([]);
+  const [models, setModels] = useState([]);
   const [rules, setRules] = useState(null);
   const [rulesLoading, setRulesLoading] = useState(false);
   const [selectedCandidate, setSelectedCandidate] = useState(null);
@@ -667,6 +668,26 @@ const ChannelRouting = () => {
     }
   }, []);
 
+  const loadModels = useCallback(async () => {
+    if (!group.trim()) return;
+    try {
+      const response = await API.get('/api/channel/models_enabled', {
+        params: { group },
+      });
+      if (!response.data.success) throw new Error(response.data.message);
+      const nextModels = Array.from(
+        new Set(
+          (response.data.data || [])
+            .map((item) => String(item || '').trim())
+            .filter(Boolean),
+        ),
+      ).sort((left, right) => left.localeCompare(right));
+      setModels(nextModels);
+    } catch (error) {
+      showError(error.message);
+    }
+  }, [group]);
+
   const loadRules = useCallback(async () => {
     if (!model.trim() || !group.trim()) return;
     setRulesLoading(true);
@@ -686,6 +707,10 @@ const ChannelRouting = () => {
   useEffect(() => {
     loadGroups();
   }, [loadGroups]);
+
+  useEffect(() => {
+    loadModels();
+  }, [loadModels]);
 
   useEffect(() => {
     setSimulationResult(null);
@@ -874,7 +899,18 @@ const ChannelRouting = () => {
           <div className='flex flex-wrap items-end gap-3 border-y border-semi-color-border py-4'>
             <div className='min-w-[220px] flex-1'>
               <Text type='tertiary'>{t('公开模型')}</Text>
-              <Input className='mt-1' value={model} onChange={setModel} />
+              <Select
+                className='mt-1 w-full'
+                value={model}
+                filter
+                onChange={setModel}
+                placeholder={t('搜索模型...')}
+                emptyContent={t('暂无模型')}
+                optionList={models.map((item) => ({
+                  value: item,
+                  label: item,
+                }))}
+              />
             </div>
             <div className='min-w-[220px] flex-1'>
               <Text type='tertiary'>{t('分组')}</Text>
@@ -882,7 +918,14 @@ const ChannelRouting = () => {
                 className='mt-1 w-full'
                 value={group}
                 filter
-                onChange={setGroup}
+                onChange={(value) => {
+                  setGroup(value);
+                  setModel('');
+                  setRules(null);
+                  setSimulationResult(null);
+                  setSelectedCandidate(null);
+                  setEditingCandidate(null);
+                }}
                 optionList={Array.from(new Set([group, ...groups])).map(
                   (item) => ({
                     value: item,

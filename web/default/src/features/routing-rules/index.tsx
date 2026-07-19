@@ -36,6 +36,7 @@ import { useAuthStore } from '@/stores/auth-store'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
@@ -59,6 +60,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { SectionPageLayout } from '@/components/layout'
+import { getEnabledModels } from '@/features/channels/api'
 import { getChannelTypeLabel } from '@/features/channels/lib/channel-utils'
 import { getGroups } from '@/features/users/api'
 import { USER_ROLE } from '@/features/users/constants'
@@ -413,6 +415,11 @@ export function RoutingRules() {
     queryKey: ['groups', 'routing-rules'],
     queryFn: getGroups,
   })
+  const modelsQuery = useQuery({
+    queryKey: ['enabled-models', 'routing-rules', group],
+    queryFn: () => getEnabledModels(group),
+    enabled: Boolean(group.trim()),
+  })
   const rulesQuery = useQuery({
     queryKey: ['video-routing-rules', model, group],
     queryFn: () => getVideoRoutingRules(model, group),
@@ -430,6 +437,14 @@ export function RoutingRules() {
     },
   })
   const groups = useMemo(() => groupsQuery.data?.data || [], [groupsQuery.data])
+  const models = useMemo(
+    () =>
+      [...new Set(modelsQuery.data?.data || [])]
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .sort((left, right) => left.localeCompare(right)),
+    [modelsQuery.data]
+  )
 
   const runSimulation = () => {
     simulationMutation.mutate({ ...simulation, model, group })
@@ -469,15 +484,23 @@ export function RoutingRules() {
               <div className='flex flex-wrap items-end gap-3 border-y py-3'>
                 <div className='min-w-48 flex-1 space-y-1.5'>
                   <Label htmlFor='routing-model'>{t('Public Model')}</Label>
-                  <Input
+                  <Combobox
                     id='routing-model'
+                    className='w-full'
+                    options={models.map((item) => ({
+                      value: item,
+                      label: item,
+                    }))}
                     value={model}
-                    onChange={(event) => {
-                      setModel(event.target.value)
+                    onValueChange={(value) => {
+                      if (!value) return
+                      setModel(value)
                       simulationMutation.reset()
                       setSelectedCandidate(null)
                       setEditingCandidate(null)
                     }}
+                    placeholder={t('Search models...')}
+                    emptyText={t('No models found')}
                   />
                 </div>
                 <div className='min-w-48 flex-1 space-y-1.5'>
@@ -488,6 +511,7 @@ export function RoutingRules() {
                     value={group}
                     onChange={(event) => {
                       setGroup(event.target.value)
+                      setModel('')
                       simulationMutation.reset()
                       setSelectedCandidate(null)
                       setEditingCandidate(null)

@@ -32,6 +32,7 @@ import { toast } from 'sonner'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Combobox } from '@/components/ui/combobox'
 import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
@@ -54,6 +55,7 @@ import {
   replaceImageRoutingConfig,
   simulateImageRouting,
 } from '../api'
+import { getEnabledModels } from '@/features/channels/api'
 import type {
   ImageRoutingChannel,
   ImageRoutingConfig,
@@ -147,6 +149,19 @@ export function ImageRoutingPanel({ groups, isRoot }: ImageRoutingPanelProps) {
     queryFn: () => getImageRoutingRules(model, group),
     enabled: Boolean(model.trim() && group.trim()),
   })
+  const modelsQuery = useQuery({
+    queryKey: ['enabled-models', 'image-routing-rules', group],
+    queryFn: () => getEnabledModels(group),
+    enabled: Boolean(group.trim()),
+  })
+  const models = useMemo(
+    () =>
+      [...new Set(modelsQuery.data?.data || [])]
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .sort((left, right) => left.localeCompare(right)),
+    [modelsQuery.data]
+  )
 
   const routesByTier = useMemo(
     () =>
@@ -283,10 +298,19 @@ export function ImageRoutingPanel({ groups, isRoot }: ImageRoutingPanelProps) {
           <FieldLabel htmlFor='image-routing-model'>
             {t('Public Model')}
           </FieldLabel>
-          <Input
+          <Combobox
             id='image-routing-model'
+            className='w-full'
+            options={models.map((item) => ({
+              value: item,
+              label: item,
+            }))}
             value={model}
-            onChange={(event) => setModel(event.target.value)}
+            onValueChange={(value) => {
+              if (value) setModel(value)
+            }}
+            placeholder={t('Search models...')}
+            emptyText={t('No models found')}
           />
         </Field>
         <Field>
@@ -294,7 +318,10 @@ export function ImageRoutingPanel({ groups, isRoot }: ImageRoutingPanelProps) {
           <NativeSelect
             id='image-routing-group'
             value={group}
-            onChange={(event) => setGroup(event.target.value)}
+            onChange={(event) => {
+              setGroup(event.target.value)
+              setModel('')
+            }}
           >
             {!groups.includes(group) && (
               <NativeSelectOption value={group}>{group}</NativeSelectOption>
