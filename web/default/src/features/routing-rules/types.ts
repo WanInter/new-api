@@ -138,3 +138,83 @@ export type RoutingApiResponse<T> = {
   message?: string
   data: T
 }
+
+export type ImageRoutingTier = '1k' | '2k' | '4k'
+
+export type ImageRoutingSize = {
+  size: string
+  tier: ImageRoutingTier
+  sort: number
+}
+
+export type ImageRoutingRule = {
+  tier: ImageRoutingTier
+  channel_id: number
+  rank: number
+}
+
+export type ImageRoutingPolicy = {
+  id: number
+  public_model: string
+  strict: boolean
+  default_size: string
+  revision: number
+  updated_by: number
+  created_time: number
+  updated_time: number
+}
+
+export type ImageRoutingChannel = {
+  channel_id: number
+  channel_name?: string
+  channel_type?: number
+  channel_status?: number
+  priority?: number
+  weight?: number
+  group?: string
+  mapping: ModelMappingResolution
+  tier?: ImageRoutingTier
+  rank?: number
+  eligible: boolean
+  selected?: boolean
+  exclusion_reason?: string
+  configuration_error?: string
+}
+
+export type ImageRoutingConfig = {
+  public_model: string
+  group?: string
+  configured: boolean
+  policy?: ImageRoutingPolicy
+  strict: boolean
+  default_size: string
+  revision: number
+  sizes: ImageRoutingSize[]
+  rules: ImageRoutingRule[]
+  candidates: ImageRoutingChannel[]
+}
+
+export type ReplaceImageRoutingConfigRequest = {
+  public_model: string
+  strict: boolean
+  default_size: string
+  revision: number
+  sizes: ImageRoutingSize[]
+  rules: ImageRoutingRule[]
+}
+
+export type ImageRoutingSimulationRequest = {
+  model: string
+  group: string
+  size?: string
+}
+
+export type ImageRoutingSimulationResult = ImageRoutingConfig & {
+  requested_size: string
+  normalized_size?: string
+  resolved_tier?: ImageRoutingTier
+  used_default_size: boolean
+  fallback: boolean
+  reason?: string
+  route: ImageRoutingChannel[]
+}

@@ -54,6 +54,7 @@ import {
 } from 'lucide-react';
 import { API, isRoot, showError, showSuccess } from '../../helpers';
 import { CHANNEL_OPTIONS } from '../../constants';
+import ImageRoutingPanel from './ImageRoutingPanel';
 
 const { Title, Text } = Typography;
 const DEFAULT_MODEL = 'sd-bak-1';
@@ -638,6 +639,7 @@ const ChannelRouting = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const rootUser = isRoot();
+  const [routingMode, setRoutingMode] = useState('video');
   const [model, setModel] = useState(DEFAULT_MODEL);
   const [group, setGroup] = useState(DEFAULT_GROUP);
   const [groups, setGroups] = useState([]);
@@ -832,7 +834,7 @@ const ChannelRouting = () => {
       <div className='flex flex-wrap items-center justify-between gap-3 py-4'>
         <div>
           <Title heading={4}>{t('分流规则')}</Title>
-          {rules && (
+          {routingMode === 'video' && rules && (
             <Space className='mt-2' wrap>
               <Text strong>{t('严格分流')}</Text>
               <Tag color='blue'>
@@ -855,124 +857,142 @@ const ChannelRouting = () => {
         </Button>
       </div>
 
-      <div className='flex flex-wrap items-end gap-3 border-y border-semi-color-border py-4'>
-        <div className='min-w-[220px] flex-1'>
-          <Text type='tertiary'>{t('公开模型')}</Text>
-          <Input className='mt-1' value={model} onChange={setModel} />
-        </div>
-        <div className='min-w-[220px] flex-1'>
-          <Text type='tertiary'>{t('分组')}</Text>
-          <Select
-            className='mt-1 w-full'
-            value={group}
-            filter
-            onChange={setGroup}
-            optionList={Array.from(new Set([group, ...groups])).map((item) => ({
-              value: item,
-              label: item,
-            }))}
-          />
-        </div>
-        <Button
-          icon={<RefreshCw size={16} />}
-          onClick={loadRules}
-          loading={rulesLoading}
-        >
-          {t('刷新')}
-        </Button>
-      </div>
+      <RadioGroup
+        type='button'
+        value={routingMode}
+        onChange={(event) => setRoutingMode(event.target.value)}
+        className='mb-4'
+      >
+        <Radio value='video'>{t('视频路由')}</Radio>
+        <Radio value='image'>{t('图片路由')}</Radio>
+      </RadioGroup>
 
-      <Tabs type='line' className='mt-4'>
-        <Tabs.TabPane
-          tab={
-            <span className='inline-flex items-center gap-2'>
-              <Route size={16} />
-              {t('规则总览')}
-            </span>
-          }
-          itemKey='rules'
-        >
-          {renderCandidateTable(rules?.candidates, rulesLoading)}
-        </Tabs.TabPane>
-        <Tabs.TabPane
-          tab={
-            <span className='inline-flex items-center gap-2'>
-              <FlaskConical size={16} />
-              {t('分流模拟')}
-            </span>
-          }
-          itemKey='simulator'
-        >
-          <div className='grid grid-cols-2 gap-3 border-y border-semi-color-border py-4 md:grid-cols-6'>
-            {['images', 'videos', 'audios', 'duration', 'retry'].map(
-              (field) => (
-                <div key={field}>
-                  <Text type='tertiary'>
-                    {t(
-                      {
-                        images: '图片',
-                        videos: '视频',
-                        audios: '音频',
-                        duration: '时长',
-                        retry: '重试次数',
-                      }[field],
-                    )}
-                  </Text>
-                  <InputNumber
-                    className='mt-1 w-full'
-                    min={field === 'duration' ? 1 : 0}
-                    value={simulation[field]}
-                    onChange={(value) =>
-                      setSimulation((current) => ({
-                        ...current,
-                        [field]: Number(value),
-                      }))
-                    }
-                  />
-                </div>
-              ),
-            )}
-            <div className='flex items-end'>
-              <Button
-                type='primary'
-                block
-                icon={<FlaskConical size={16} />}
-                loading={simulationLoading}
-                onClick={runSimulation}
-              >
-                {t('运行')}
-              </Button>
+      {routingMode === 'image' ? (
+        <ImageRoutingPanel rootUser={rootUser} />
+      ) : (
+        <>
+          <div className='flex flex-wrap items-end gap-3 border-y border-semi-color-border py-4'>
+            <div className='min-w-[220px] flex-1'>
+              <Text type='tertiary'>{t('公开模型')}</Text>
+              <Input className='mt-1' value={model} onChange={setModel} />
             </div>
+            <div className='min-w-[220px] flex-1'>
+              <Text type='tertiary'>{t('分组')}</Text>
+              <Select
+                className='mt-1 w-full'
+                value={group}
+                filter
+                onChange={setGroup}
+                optionList={Array.from(new Set([group, ...groups])).map(
+                  (item) => ({
+                    value: item,
+                    label: item,
+                  }),
+                )}
+              />
+            </div>
+            <Button
+              icon={<RefreshCw size={16} />}
+              onClick={loadRules}
+              loading={rulesLoading}
+            >
+              {t('刷新')}
+            </Button>
           </div>
 
-          {simulationResult && (
-            <Banner
-              className='my-3'
-              type='info'
-              description={`${t('可用渠道')}: ${eligibleCount} · ${t('目标优先级')}: ${simulationResult.target_priority ?? '—'} · ${t('重试次数')}: ${simulationResult.retry}`}
-            />
-          )}
-          {renderCandidateTable(
-            simulationResult?.candidates,
-            simulationLoading,
-          )}
-        </Tabs.TabPane>
-      </Tabs>
+          <Tabs type='line' className='mt-4'>
+            <Tabs.TabPane
+              tab={
+                <span className='inline-flex items-center gap-2'>
+                  <Route size={16} />
+                  {t('规则总览')}
+                </span>
+              }
+              itemKey='rules'
+            >
+              {renderCandidateTable(rules?.candidates, rulesLoading)}
+            </Tabs.TabPane>
+            <Tabs.TabPane
+              tab={
+                <span className='inline-flex items-center gap-2'>
+                  <FlaskConical size={16} />
+                  {t('分流模拟')}
+                </span>
+              }
+              itemKey='simulator'
+            >
+              <div className='grid grid-cols-2 gap-3 border-y border-semi-color-border py-4 md:grid-cols-6'>
+                {['images', 'videos', 'audios', 'duration', 'retry'].map(
+                  (field) => (
+                    <div key={field}>
+                      <Text type='tertiary'>
+                        {t(
+                          {
+                            images: '图片',
+                            videos: '视频',
+                            audios: '音频',
+                            duration: '时长',
+                            retry: '重试次数',
+                          }[field],
+                        )}
+                      </Text>
+                      <InputNumber
+                        className='mt-1 w-full'
+                        min={field === 'duration' ? 1 : 0}
+                        value={simulation[field]}
+                        onChange={(value) =>
+                          setSimulation((current) => ({
+                            ...current,
+                            [field]: Number(value),
+                          }))
+                        }
+                      />
+                    </div>
+                  ),
+                )}
+                <div className='flex items-end'>
+                  <Button
+                    type='primary'
+                    block
+                    icon={<FlaskConical size={16} />}
+                    loading={simulationLoading}
+                    onClick={runSimulation}
+                  >
+                    {t('运行')}
+                  </Button>
+                </div>
+              </div>
 
-      <CandidateDetails
-        candidate={selectedCandidate}
-        onClose={() => setSelectedCandidate(null)}
-        t={t}
-      />
-      <CapabilityRuleEditor
-        candidate={editingCandidate}
-        onClose={() => setEditingCandidate(null)}
-        onSaved={async () => {
-          setSimulationResult(null);
-          await loadRules();
-        }}
-        t={t}
-      />
+              {simulationResult && (
+                <Banner
+                  className='my-3'
+                  type='info'
+                  description={`${t('可用渠道')}: ${eligibleCount} · ${t('目标优先级')}: ${simulationResult.target_priority ?? '—'} · ${t('重试次数')}: ${simulationResult.retry}`}
+                />
+              )}
+              {renderCandidateTable(
+                simulationResult?.candidates,
+                simulationLoading,
+              )}
+            </Tabs.TabPane>
+          </Tabs>
+
+          <CandidateDetails
+            candidate={selectedCandidate}
+            onClose={() => setSelectedCandidate(null)}
+            t={t}
+          />
+          <CapabilityRuleEditor
+            candidate={editingCandidate}
+            onClose={() => setEditingCandidate(null)}
+            onSaved={async () => {
+              setSimulationResult(null);
+              await loadRules();
+            }}
+            t={t}
+          />
+        </>
+      )}
     </div>
   );
 };

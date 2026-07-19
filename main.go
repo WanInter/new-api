@@ -105,6 +105,13 @@ func main() {
 		common.SysLog("video routing rule tables are not available yet; cache will be loaded after migration")
 	}
 	go service.SyncVideoRoutingRuleCache(common.SyncFrequency)
+	if err := service.ReloadImageRoutingRuleCache(); err != nil {
+		if common.IsMasterNode || !errors.Is(err, service.ErrImageRoutingRuleTablesUnavailable) {
+			common.FatalLog("failed to initialize image routing rule cache: " + err.Error())
+		}
+		common.SysLog("image routing rule tables are not available yet; cache will be loaded after migration")
+	}
+	go service.SyncImageRoutingRuleCache(common.SyncFrequency)
 
 	// 热更新配置
 	go model.SyncOptions(common.SyncFrequency)

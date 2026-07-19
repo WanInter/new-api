@@ -66,7 +66,7 @@ func ChannelSupportsRequestConstraints(c *gin.Context, channel *model.Channel, m
 		return false
 	}
 	if nativeGeminiImage {
-		return channelSupportsNativeGeminiImageTask(channel, modelName)
+		return channelSupportsNativeGeminiImageTask(channel, modelName) && channelSupportsImageRouting(c, channel, modelName)
 	}
 	openAIImageReferences, err := hasOpenAIImageTaskReferences(c)
 	if err != nil {
@@ -75,13 +75,13 @@ func ChannelSupportsRequestConstraints(c *gin.Context, channel *model.Channel, m
 	if openAIImageReferences {
 		switch channel.Type {
 		case constant.ChannelTypeGemini:
-			return channelSupportsNativeGeminiImageTask(channel, modelName)
+			return channelSupportsNativeGeminiImageTask(channel, modelName) && channelSupportsImageRouting(c, channel, modelName)
 		case constant.ChannelTypeVertexAi:
 			return false
 		}
 	}
 	if !isVideoGenerationSubmit(c) {
-		return true
+		return channelSupportsImageRouting(c, channel, modelName)
 	}
 	features, err := GetVideoRequestFeatures(c)
 	if err != nil {
@@ -232,7 +232,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 	var err error
 	selectGroup := param.TokenGroup
 	userGroup := common.GetContextKeyString(param.Ctx, constant.ContextKeyUserGroup)
-	channelFilter, err := channelFilterForRequest(param.Ctx, param.ModelName)
+	baseFilter, err := channelFilterForRequest(param.Ctx, param.ModelName)
 	if err != nil {
 		return nil, selectGroup, err
 	}
@@ -266,6 +266,10 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			}
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
+			channelFilter, filterErr := imageRoutingFilterForGroup(param.Ctx, param.ModelName, autoGroup, priorityRetry, baseFilter)
+			if filterErr != nil {
+				return nil, autoGroup, filterErr
+			}
 			channel, _ = model.GetRandomSatisfiedChannelWithFilter(autoGroup, param.ModelName, priorityRetry, param.RequestPath, channelFilter)
 			if channel == nil {
 				// Current group has no available channel for this model, try next group
@@ -304,9 +308,18 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			break
 		}
 	} else {
+		channelFilter, filterErr := imageRoutingFilterForGroup(param.Ctx, param.ModelName, param.TokenGroup, param.GetRetry(), baseFilter)
+		if filterErr != nil {
+			return nil, param.TokenGroup, filterErr
+		}
 		channel, err = model.GetRandomSatisfiedChannelWithFilter(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath, channelFilter)
 		if err != nil {
 			return nil, param.TokenGroup, err
+		}
+	}
+	if channel == nil {
+		if err := imageRoutingNoAvailableChannelError(param.Ctx, param.ModelName, param.TokenGroup); err != nil {
+			return nil, selectGroup, err
 		}
 	}
 	return channel, selectGroup, nil

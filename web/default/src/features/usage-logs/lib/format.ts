@@ -362,6 +362,10 @@ const AUDIT_TEMPLATES: Record<string, string> = {
     'Updated routing capability for channel {{channel_id}} / {{upstream_model}} (revision {{revision}})',
   'channel.routing_capability_delete':
     'Deleted routing capability for channel {{channel_id}} / {{upstream_model}} (revision {{revision}})',
+  'channel.image_routing_config_update':
+    'Updated image routing configuration for {{model}} ({{size_count}} sizes, {{rule_count}} rules, revision {{revision}})',
+  'channel.image_routing_policy_update':
+    'Updated image routing policy for {{model}} (strict: {{strict}}, default size: {{default_size}}, revision {{revision}})',
   // Redemption codes
   'redemption.create':
     'Created {{count}} redemption codes named {{name}} ({{quota}} each)',

@@ -18,6 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
 import type {
+  ImageRoutingConfig,
+  ImageRoutingSimulationRequest,
+  ImageRoutingSimulationResult,
+  ReplaceImageRoutingConfigRequest,
   RoutingApiResponse,
   UpdateVideoRoutingPolicyRequest,
   UpsertVideoRoutingCapabilityRequest,
@@ -27,6 +31,33 @@ import type {
   VideoRoutingSimulationRequest,
   VideoRoutingSimulationResult,
 } from './types'
+
+export async function getImageRoutingRules(model: string, group: string) {
+  const response = await api.get<RoutingApiResponse<ImageRoutingConfig>>(
+    '/api/channel/image_routing_rules',
+    { params: { model, group } }
+  )
+  return response.data
+}
+
+export async function replaceImageRoutingConfig(
+  request: ReplaceImageRoutingConfigRequest
+) {
+  const response = await api.put<RoutingApiResponse<ImageRoutingConfig>>(
+    '/api/channel/image_routing_rules/config',
+    request
+  )
+  return response.data
+}
+
+export async function simulateImageRouting(
+  request: ImageRoutingSimulationRequest
+) {
+  const response = await api.post<
+    RoutingApiResponse<ImageRoutingSimulationResult>
+  >('/api/channel/image_routing_rules/simulate', request)
+  return response.data
+}
 
 export async function getVideoRoutingRules(model: string, group: string) {
   const response = await api.get<RoutingApiResponse<VideoRoutingRuleSet>>(

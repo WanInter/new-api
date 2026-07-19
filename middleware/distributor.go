@@ -105,7 +105,7 @@ func Distribute() func(c *gin.Context) {
 					}
 				}
 
-				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
+				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found && !service.ShouldBypassImageRoutingAffinity(c, modelRequest.Model) {
 					affinityUsable := false
 					preferred, err := model.CacheGetChannel(preferredChannelID)
 					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled &&
@@ -152,6 +152,10 @@ func Distribute() func(c *gin.Context) {
 								statusCode = http.StatusRequestEntityTooLarge
 							}
 							abortWithOpenAiMessage(c, statusCode, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": featuresErr.Error()}))
+							return
+						}
+						if service.IsImageRoutingRequestError(err) {
+							abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 							return
 						}
 						showGroup := usingGroup

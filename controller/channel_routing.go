@@ -130,6 +130,74 @@ func DeleteChannelRoutingCapability(c *gin.Context) {
 	common.ApiSuccess(c, rule)
 }
 
+func GetImageRoutingRules(c *gin.Context) {
+	modelName := strings.TrimSpace(c.Query("model"))
+	if modelName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "model is required"})
+		return
+	}
+	config, err := service.GetImageRoutingConfigView(modelName, c.Query("group"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, config)
+}
+
+func SimulateImageRouting(c *gin.Context) {
+	var request service.ImageRoutingSimulationRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	result, err := service.SimulateImageRouting(request)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
+func ReplaceImageRoutingConfig(c *gin.Context) {
+	var request service.ReplaceImageRoutingConfigRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	config, err := service.ReplaceImageRoutingConfig(request, c.GetInt("id"))
+	if err != nil {
+		respondImageRoutingWriteError(c, err)
+		return
+	}
+	recordManageAudit(c, "channel.image_routing_config_update", map[string]interface{}{
+		"model":      config.PublicModel,
+		"size_count": len(config.Sizes),
+		"rule_count": len(config.Rules),
+		"revision":   config.Revision,
+	})
+	common.ApiSuccess(c, config)
+}
+
+func UpdateImageRoutingPolicy(c *gin.Context) {
+	var request service.UpdateImageRoutingPolicyRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	config, err := service.UpdateImageRoutingPolicy(request, c.GetInt("id"))
+	if err != nil {
+		respondImageRoutingWriteError(c, err)
+		return
+	}
+	recordManageAudit(c, "channel.image_routing_policy_update", map[string]interface{}{
+		"model":        config.PublicModel,
+		"strict":       config.Strict,
+		"default_size": config.DefaultSize,
+		"revision":     config.Revision,
+	})
+	common.ApiSuccess(c, config)
+}
+
 func respondVideoRoutingWriteError(c *gin.Context, err error) {
 	if errors.Is(err, model.ErrVideoRoutingRevisionConflict) {
 		c.JSON(http.StatusConflict, gin.H{
@@ -139,6 +207,17 @@ func respondVideoRoutingWriteError(c *gin.Context, err error) {
 		return
 	}
 	common.ApiError(c, err)
+}
+
+func respondImageRoutingWriteError(c *gin.Context, err error) {
+	if errors.Is(err, model.ErrImageRoutingRevisionConflict) {
+		c.JSON(http.StatusConflict, gin.H{
+			"success": false,
+			"message": "image routing configuration was modified by another administrator; refresh and try again",
+		})
+		return
+	}
+	c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
 }
 
 func validateVideoRoutingSimulationRequest(request service.VideoRoutingSimulationRequest) error {

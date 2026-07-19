@@ -57,6 +57,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { SectionPageLayout } from '@/components/layout'
 import { getChannelTypeLabel } from '@/features/channels/lib/channel-utils'
 import { getGroups } from '@/features/users/api'
@@ -67,6 +68,7 @@ import {
   updateVideoRoutingPolicy,
 } from './api'
 import { CapabilityRuleEditor } from './components/capability-rule-editor'
+import { ImageRoutingPanel } from './components/image-routing-panel'
 import type {
   VideoMediaRange,
   VideoRoutingCandidate,
@@ -391,6 +393,7 @@ export function RoutingRules() {
     useAuthStore((state) => state.auth.user?.role) === USER_ROLE.ROOT
   const [model, setModel] = useState(DEFAULT_MODEL)
   const [group, setGroup] = useState(DEFAULT_GROUP)
+  const [routingMode, setRoutingMode] = useState<'video' | 'image'>('video')
   const [selectedCandidate, setSelectedCandidate] =
     useState<VideoRoutingCandidate | null>(null)
   const [editingCandidate, setEditingCandidate] =
@@ -442,172 +445,208 @@ export function RoutingRules() {
       </SectionPageLayout.Actions>
       <SectionPageLayout.Content>
         <div className='space-y-4 px-3 pb-6 sm:px-4'>
-          <div className='flex flex-wrap items-end gap-3 border-y py-3'>
-            <div className='min-w-48 flex-1 space-y-1.5'>
-              <Label htmlFor='routing-model'>{t('Public Model')}</Label>
-              <Input
-                id='routing-model'
-                value={model}
-                onChange={(event) => {
-                  setModel(event.target.value)
-                  simulationMutation.reset()
-                  setSelectedCandidate(null)
-                  setEditingCandidate(null)
-                }}
-              />
-            </div>
-            <div className='min-w-48 flex-1 space-y-1.5'>
-              <Label htmlFor='routing-group'>{t('Group')}</Label>
-              <NativeSelect
-                id='routing-group'
-                className='w-full'
-                value={group}
-                onChange={(event) => {
-                  setGroup(event.target.value)
-                  simulationMutation.reset()
-                  setSelectedCandidate(null)
-                  setEditingCandidate(null)
-                }}
-              >
-                {!groups.includes(group) && (
-                  <NativeSelectOption value={group}>{group}</NativeSelectOption>
-                )}
-                {groups.map((item) => (
-                  <NativeSelectOption key={item} value={item}>
-                    {item}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </div>
-            <Button
-              variant='outline'
-              size='icon'
-              onClick={() => rulesQuery.refetch()}
-              title={t('Refresh')}
-            >
-              <RefreshCw className='size-4' />
-            </Button>
-          </div>
+          <ToggleGroup
+            value={[routingMode]}
+            onValueChange={(value) => {
+              const next = value.find((item) => item !== routingMode)
+              if (next === 'video' || next === 'image') setRoutingMode(next)
+            }}
+            variant='outline'
+            aria-label={t('Routing Type')}
+          >
+            <ToggleGroupItem value='video'>
+              {t('Video Routing')}
+            </ToggleGroupItem>
+            <ToggleGroupItem value='image'>
+              {t('Image Routing')}
+            </ToggleGroupItem>
+          </ToggleGroup>
 
-          <Tabs defaultValue='rules' className='gap-4'>
-            <TabsList>
-              <TabsTrigger value='rules'>
-                <RouteIcon className='size-4' /> {t('Rules')}
-              </TabsTrigger>
-              <TabsTrigger value='simulator'>
-                <FlaskConical className='size-4' /> {t('Simulator')}
-              </TabsTrigger>
-            </TabsList>
-            <TabsContent value='rules' className='space-y-3'>
-              {rulesQuery.data?.data && (
-                <div className='flex flex-wrap items-center justify-between gap-3 border-y py-3'>
-                  <div className='flex items-center gap-2'>
-                    <Label htmlFor='strict-routing'>
-                      {t('Strict routing')}
-                    </Label>
-                    <Badge variant='outline'>
-                      {rulesQuery.data.data.strict_source === 'database'
-                        ? t('Database policy')
-                        : rulesQuery.data.data.strict_source === 'built_in'
-                          ? t('Built-in policy')
-                          : t('Default policy')}
-                    </Badge>
-                  </div>
-                  <Switch
-                    id='strict-routing'
-                    checked={rulesQuery.data.data.strict}
-                    disabled={!isRoot || policyMutation.isPending}
-                    onCheckedChange={(strict) =>
-                      policyMutation.mutate({
-                        public_model: model,
-                        strict,
-                        revision: rulesQuery.data?.data.policy?.revision || 0,
-                      })
-                    }
+          {routingMode === 'image' ? (
+            <ImageRoutingPanel groups={groups} isRoot={isRoot} />
+          ) : (
+            <>
+              <div className='flex flex-wrap items-end gap-3 border-y py-3'>
+                <div className='min-w-48 flex-1 space-y-1.5'>
+                  <Label htmlFor='routing-model'>{t('Public Model')}</Label>
+                  <Input
+                    id='routing-model'
+                    value={model}
+                    onChange={(event) => {
+                      setModel(event.target.value)
+                      simulationMutation.reset()
+                      setSelectedCandidate(null)
+                      setEditingCandidate(null)
+                    }}
                   />
                 </div>
-              )}
-              {rulesQuery.isError && (
-                <Alert variant='destructive'>
-                  <AlertDescription>
-                    {t('Failed to load routing rules')}
-                  </AlertDescription>
-                </Alert>
-              )}
-              <CandidateTable
-                candidates={rulesQuery.data?.data.candidates || []}
-                loading={rulesQuery.isLoading}
-                onInspect={setSelectedCandidate}
-                onEdit={isRoot ? setEditingCandidate : undefined}
-              />
-            </TabsContent>
-            <TabsContent value='simulator' className='space-y-4'>
-              <div className='grid gap-3 border-y py-4 sm:grid-cols-3 lg:grid-cols-6'>
-                {(
-                  ['images', 'videos', 'audios', 'duration', 'retry'] as const
-                ).map((field) => (
-                  <div key={field} className='space-y-1.5'>
-                    <Label htmlFor={`simulation-${field}`}>
-                      {t(field.charAt(0).toUpperCase() + field.slice(1))}
-                    </Label>
-                    <Input
-                      id={`simulation-${field}`}
-                      type='number'
-                      min={field === 'duration' ? 1 : 0}
-                      value={simulation[field] ?? ''}
-                      onChange={(event) =>
-                        setSimulation((current) => ({
-                          ...current,
-                          [field]:
-                            event.target.value === ''
-                              ? undefined
-                              : Number(event.target.value),
-                        }))
-                      }
-                    />
-                  </div>
-                ))}
-                <div className='flex items-end'>
-                  <Button
+                <div className='min-w-48 flex-1 space-y-1.5'>
+                  <Label htmlFor='routing-group'>{t('Group')}</Label>
+                  <NativeSelect
+                    id='routing-group'
                     className='w-full'
-                    onClick={runSimulation}
-                    disabled={simulationMutation.isPending}
+                    value={group}
+                    onChange={(event) => {
+                      setGroup(event.target.value)
+                      simulationMutation.reset()
+                      setSelectedCandidate(null)
+                      setEditingCandidate(null)
+                    }}
                   >
-                    <FlaskConical className='size-4' /> {t('Run')}
-                  </Button>
+                    {!groups.includes(group) && (
+                      <NativeSelectOption value={group}>
+                        {group}
+                      </NativeSelectOption>
+                    )}
+                    {groups.map((item) => (
+                      <NativeSelectOption key={item} value={item}>
+                        {item}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
                 </div>
+                <Button
+                  variant='outline'
+                  size='icon'
+                  onClick={() => rulesQuery.refetch()}
+                  title={t('Refresh')}
+                >
+                  <RefreshCw className='size-4' />
+                </Button>
               </div>
-              {simulationMutation.isError && (
-                <Alert variant='destructive'>
-                  <AlertDescription>
-                    {t('Routing simulation failed')}
-                  </AlertDescription>
-                </Alert>
-              )}
-              {simulationMutation.data && (
-                <SimulationSummary result={simulationMutation.data.data} />
-              )}
-              <CandidateTable
-                candidates={simulationMutation.data?.data.candidates || []}
-                loading={simulationMutation.isPending}
-                onInspect={setSelectedCandidate}
-                onEdit={isRoot ? setEditingCandidate : undefined}
-              />
-            </TabsContent>
-          </Tabs>
+
+              <Tabs defaultValue='rules' className='gap-4'>
+                <TabsList>
+                  <TabsTrigger value='rules'>
+                    <RouteIcon className='size-4' /> {t('Rules')}
+                  </TabsTrigger>
+                  <TabsTrigger value='simulator'>
+                    <FlaskConical className='size-4' /> {t('Simulator')}
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value='rules' className='space-y-3'>
+                  {rulesQuery.data?.data && (
+                    <div className='flex flex-wrap items-center justify-between gap-3 border-y py-3'>
+                      <div className='flex items-center gap-2'>
+                        <Label htmlFor='strict-routing'>
+                          {t('Strict routing')}
+                        </Label>
+                        <Badge variant='outline'>
+                          {rulesQuery.data.data.strict_source === 'database'
+                            ? t('Database policy')
+                            : rulesQuery.data.data.strict_source === 'built_in'
+                              ? t('Built-in policy')
+                              : t('Default policy')}
+                        </Badge>
+                      </div>
+                      <Switch
+                        id='strict-routing'
+                        checked={rulesQuery.data.data.strict}
+                        disabled={!isRoot || policyMutation.isPending}
+                        onCheckedChange={(strict) =>
+                          policyMutation.mutate({
+                            public_model: model,
+                            strict,
+                            revision:
+                              rulesQuery.data?.data.policy?.revision || 0,
+                          })
+                        }
+                      />
+                    </div>
+                  )}
+                  {rulesQuery.isError && (
+                    <Alert variant='destructive'>
+                      <AlertDescription>
+                        {t('Failed to load routing rules')}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  <CandidateTable
+                    candidates={rulesQuery.data?.data.candidates || []}
+                    loading={rulesQuery.isLoading}
+                    onInspect={setSelectedCandidate}
+                    onEdit={isRoot ? setEditingCandidate : undefined}
+                  />
+                </TabsContent>
+                <TabsContent value='simulator' className='space-y-4'>
+                  <div className='grid gap-3 border-y py-4 sm:grid-cols-3 lg:grid-cols-6'>
+                    {(
+                      [
+                        'images',
+                        'videos',
+                        'audios',
+                        'duration',
+                        'retry',
+                      ] as const
+                    ).map((field) => (
+                      <div key={field} className='space-y-1.5'>
+                        <Label htmlFor={`simulation-${field}`}>
+                          {t(field.charAt(0).toUpperCase() + field.slice(1))}
+                        </Label>
+                        <Input
+                          id={`simulation-${field}`}
+                          type='number'
+                          min={field === 'duration' ? 1 : 0}
+                          value={simulation[field] ?? ''}
+                          onChange={(event) =>
+                            setSimulation((current) => ({
+                              ...current,
+                              [field]:
+                                event.target.value === ''
+                                  ? undefined
+                                  : Number(event.target.value),
+                            }))
+                          }
+                        />
+                      </div>
+                    ))}
+                    <div className='flex items-end'>
+                      <Button
+                        className='w-full'
+                        onClick={runSimulation}
+                        disabled={simulationMutation.isPending}
+                      >
+                        <FlaskConical className='size-4' /> {t('Run')}
+                      </Button>
+                    </div>
+                  </div>
+                  {simulationMutation.isError && (
+                    <Alert variant='destructive'>
+                      <AlertDescription>
+                        {t('Routing simulation failed')}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  {simulationMutation.data && (
+                    <SimulationSummary result={simulationMutation.data.data} />
+                  )}
+                  <CandidateTable
+                    candidates={simulationMutation.data?.data.candidates || []}
+                    loading={simulationMutation.isPending}
+                    onInspect={setSelectedCandidate}
+                    onEdit={isRoot ? setEditingCandidate : undefined}
+                  />
+                </TabsContent>
+              </Tabs>
+            </>
+          )}
         </div>
-        <CandidateDetails
-          candidate={selectedCandidate}
-          onClose={() => setSelectedCandidate(null)}
-        />
-        <CapabilityRuleEditor
-          candidate={editingCandidate}
-          onClose={() => setEditingCandidate(null)}
-          onSaved={async () => {
-            simulationMutation.reset()
-            await rulesQuery.refetch()
-          }}
-        />
+        {routingMode === 'video' && (
+          <>
+            <CandidateDetails
+              candidate={selectedCandidate}
+              onClose={() => setSelectedCandidate(null)}
+            />
+            <CapabilityRuleEditor
+              candidate={editingCandidate}
+              onClose={() => setEditingCandidate(null)}
+              onSaved={async () => {
+                simulationMutation.reset()
+                await rulesQuery.refetch()
+              }}
+            />
+          </>
+        )}
       </SectionPageLayout.Content>
     </SectionPageLayout>
   )
