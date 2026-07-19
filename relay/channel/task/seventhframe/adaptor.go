@@ -308,10 +308,10 @@ func (a *TaskAdaptor) uploadAsset(ctx context.Context, asset assetReference) (js
 	var form bytes.Buffer
 	writer := multipart.NewWriter(&form)
 	header := make(textproto.MIMEHeader)
-	header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{
-		"name":     "file",
-		"filename": filename,
-	}))
+	header.Set("Content-Disposition", fmt.Sprintf(
+		`form-data; name="file"; filename="%s"`,
+		uploadFilename(filename, contentType),
+	))
 	header.Set("Content-Type", contentType)
 	part, err := writer.CreatePart(header)
 	if err != nil {
@@ -345,7 +345,7 @@ func (a *TaskAdaptor) uploadAsset(ctx context.Context, asset assetReference) (js
 		return nil, fmt.Errorf("read upload response failed: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("upload asset failed with status %d", resp.StatusCode)
+		return nil, fmt.Errorf("upload asset failed with status %d: %s", resp.StatusCode, truncateUploadError(responseBody))
 	}
 
 	var response struct {
@@ -565,6 +565,68 @@ func sanitizeFilename(filename string) string {
 		return ""
 	}
 	return filename
+}
+
+func uploadFilename(filename, contentType string) string {
+	if isSafeUploadFilename(filename) {
+		return filename
+	}
+	extension := strings.ToLower(path.Ext(filename))
+	if !isSafeFileExtension(extension) {
+		extension = ""
+		if extensions, err := mime.ExtensionsByType(contentType); err == nil {
+			for _, candidate := range extensions {
+				candidate = strings.ToLower(candidate)
+				if isSafeFileExtension(candidate) {
+					extension = candidate
+					break
+				}
+			}
+		}
+	}
+	if extension == "" {
+		extension = ".bin"
+	}
+	return "asset" + extension
+}
+
+func isSafeUploadFilename(filename string) bool {
+	if filename == "" || filename == "." || filename == ".." || len(filename) > 128 {
+		return false
+	}
+	for _, character := range filename {
+		if (character < 'a' || character > 'z') &&
+			(character < 'A' || character > 'Z') &&
+			(character < '0' || character > '9') &&
+			character != '.' && character != '-' && character != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+func isSafeFileExtension(extension string) bool {
+	if len(extension) < 2 || len(extension) > 16 || extension[0] != '.' {
+		return false
+	}
+	for _, character := range extension[1:] {
+		if (character < 'a' || character > 'z') && (character < '0' || character > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func truncateUploadError(body []byte) string {
+	const maxLength = 512
+	message := strings.TrimSpace(string(body))
+	if message == "" {
+		return "empty response body"
+	}
+	if len(message) > maxLength {
+		return message[:maxLength] + "..."
+	}
+	return message
 }
 
 func firstNonEmpty(values ...string) string {

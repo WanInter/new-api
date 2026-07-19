@@ -106,6 +106,62 @@ func TestBuildRequestBodyUploadsAssetsAndPreservesFileObjects(t *testing.T) {
 	}
 }
 
+func TestBuildRequestBodyUsesASCIIFilenameForUnicodeAssetURL(t *testing.T) {
+	disableSSRFProtection(t)
+	gin.SetMode(gin.TestMode)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/source/示例人脸.png":
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write([]byte("image-one"))
+		case "/api/v1/files":
+			reader, err := r.MultipartReader()
+			require.NoError(t, err)
+			part, err := reader.NextPart()
+			require.NoError(t, err)
+			defer part.Close()
+			assert.Equal(t, `form-data; name="file"; filename="asset.png"`, part.Header.Get("Content-Disposition"))
+			assert.Equal(t, "image/png", part.Header.Get("Content-Type"))
+			contents, err := io.ReadAll(part)
+			require.NoError(t, err)
+			assert.Equal(t, "image-one", string(contents))
+			_, _ = w.Write([]byte(`{"file":{"object":"file","id":"file-1","url":"https://files.example/asset.png"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	body := `{"model":"public-video-model","prompt":"animate the reference","images":["` + server.URL + `/source/%E7%A4%BA%E4%BE%8B%E4%BA%BA%E8%84%B8.png"]}`
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ApiKey:            "upstream-key",
+			ChannelBaseUrl:    server.URL + "/api/v1",
+			UpstreamModelName: "viraldance900--person-stripe--62ecbdc5--voice-tone--bcf91631",
+		},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+
+	requestBody, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	encoded, err := io.ReadAll(requestBody)
+	require.NoError(t, err)
+
+	var payload generationRequest
+	require.NoError(t, common.Unmarshal(encoded, &payload))
+	require.Len(t, payload.Assets, 1)
+}
+
 func TestValidateRequestRejectsUnsupportedAssetsAndOptions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	testCases := []struct {
