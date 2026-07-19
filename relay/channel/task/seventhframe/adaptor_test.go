@@ -206,6 +206,21 @@ func TestValidateRequestRejectsUnsupportedAssetsAndOptions(t *testing.T) {
 	}
 }
 
+func TestValidateRequestNormalizesSecondsToDuration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"video","prompt":"test","seconds":"15"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	info := &relaycommon.RelayInfo{OriginModelName: "video", TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
+	req, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, 15, req.Duration)
+}
+
 func TestParseTaskResultMapsUpstreamStatuses(t *testing.T) {
 	testCases := []struct {
 		name         string

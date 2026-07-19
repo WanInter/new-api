@@ -101,6 +101,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		return service.TaskErrorWrapper(err, "get_task_request_failed", http.StatusBadRequest)
 	}
 	mergeRequestOptions(c, &req)
+	normalizeSeventhFrameDuration(&req)
 	if strings.TrimSpace(req.Model) == "" {
 		req.Model = info.OriginModelName
 	}
@@ -467,6 +468,24 @@ func requestSeed(metadata map[string]any) any {
 		return nil
 	}
 	return metadata["seed"]
+}
+
+func normalizeSeventhFrameDuration(req *relaycommon.TaskSubmitReq) {
+	if req == nil || req.Duration > 0 {
+		return
+	}
+	seconds := strings.TrimSpace(strings.ToLower(req.Seconds))
+	for _, suffix := range []string{"seconds", "second", "secs", "sec", "s"} {
+		seconds = strings.TrimSuffix(seconds, suffix)
+	}
+	seconds = strings.TrimSpace(seconds)
+	if seconds == "" {
+		return
+	}
+	value, err := strconv.ParseFloat(seconds, 64)
+	if err == nil && value > 0 {
+		req.Duration = int(value)
+	}
 }
 
 func countAssetsByType(assets []assetReference, assetType string) int {
