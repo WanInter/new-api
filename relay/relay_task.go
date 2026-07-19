@@ -266,7 +266,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if err != nil {
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
-	if resp != nil && resp.StatusCode != http.StatusOK {
+	if resp != nil && (resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices) {
 		responseBody, _ := io.ReadAll(resp.Body)
 		message := sanitizeTaskUpstreamErrorResponse(responseBody, info, adaptor)
 		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", message), "fail_to_fetch_task", resp.StatusCode)

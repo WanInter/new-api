@@ -35,3 +35,12 @@ func TestGetTaskAdaptorAxmgc(t *testing.T) {
 	require.NotNil(t, privateData)
 	assert.Equal(t, "hm_selected_key", privateData.Key)
 }
+
+func TestGetTaskAdaptorSeventhFrame(t *testing.T) {
+	platform := constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeSeventhFrame))
+	adaptor := GetTaskAdaptor(platform)
+
+	require.NotNil(t, adaptor)
+	assert.Equal(t, "seventh-frame", adaptor.GetChannelName())
+	assert.Contains(t, adaptor.GetModelList(), "viraldance900--person-stripe--62ecbdc5--voice-tone--bcf91631")
+}

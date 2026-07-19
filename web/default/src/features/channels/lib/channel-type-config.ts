@@ -220,6 +220,22 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
     defaultBaseUrl: 'https://axmgc.com',
     supportedModels: ['seedance-2-720p-933'],
   },
+  65: {
+    id: 65,
+    name: CHANNEL_TYPES[65],
+    icon: 'video',
+    defaultBaseUrl: 'https://diqizhen.jytt4.cn/api/v1',
+    supportedModels: ['viraldance900--person-stripe--62ecbdc5--voice-tone--bcf91631'],
+    hints: {
+      baseUrl:
+        'Default: https://diqizhen.jytt4.cn/api/v1. Keep the /api/v1 suffix; the adaptor adds the files and video generation paths.',
+      key: 'Use the channel14 API key. Requests are authenticated with the Bearer Authorization header.',
+      models:
+        'Expose viraldance900--person-stripe--62ecbdc5--voice-tone--bcf91631, or map a public model name to it.',
+      other:
+        'Video task channel. Reference image, audio, and video URLs are securely downloaded and uploaded to /files before creating the task. Supports 4-15 second, 720p generation with up to 9 images and 3 audio assets.',
+    },
+  },
 }
 
 /**

@@ -68,6 +68,11 @@ var strictVideoRoutingModels = map[string]struct{}{
 
 var defaultVideoCapabilitiesByChannelType = map[int]dto.VideoModelCapability{
 	constant.ChannelTypeYobox: capabilityWithLimits(nil, common.GetPointer(4), common.GetPointer(0), common.GetPointer(0), nil, nil),
+	constant.ChannelTypeSeventhFrame: withDurationRange(
+		capabilityWithLimits(nil, common.GetPointer(9), common.GetPointer(0), common.GetPointer(3), nil, common.GetPointer(true)),
+		4,
+		15,
+	),
 	// AGGC accepts image, video, and audio arrays. Upstream-specific limits can
 	// be narrowed with a channel override once they are known.
 	constant.ChannelTypeAGGC: {},
