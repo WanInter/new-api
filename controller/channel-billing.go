@@ -146,6 +146,12 @@ type ByteforBalanceResponse struct {
 	} `json:"data"`
 }
 
+type SeventhFrameUsageResponse struct {
+	Key *struct {
+		PointsBalance *flexibleFloat64 `json:"pointsBalance"`
+	} `json:"key"`
+}
+
 type flexibleFloat64 float64
 
 func (f *flexibleFloat64) UnmarshalJSON(data []byte) error {
@@ -460,6 +466,24 @@ func updateChannelByteforBalance(channel *model.Channel) (float64, error) {
 	return available, nil
 }
 
+func updateChannelSeventhFrameBalance(channel *model.Channel) (float64, error) {
+	url := fmt.Sprintf("%s/usage?channel=channel14", strings.TrimRight(channel.GetBaseURL(), "/"))
+	body, err := GetResponseBody(http.MethodGet, url, channel, GetAuthHeader(channel.Key))
+	if err != nil {
+		return 0, err
+	}
+	response := SeventhFrameUsageResponse{}
+	if err := common.Unmarshal(body, &response); err != nil {
+		return 0, err
+	}
+	if response.Key == nil || response.Key.PointsBalance == nil {
+		return 0, errors.New("SeventhFrame 余额响应缺少 key.pointsBalance 字段")
+	}
+	balance := response.Key.PointsBalance.Float64()
+	channel.UpdateBalance(balance)
+	return balance, nil
+}
+
 func isByteforChannel(channel *model.Channel) bool {
 	if parsedURL, err := neturl.Parse(channel.GetBaseURL()); err == nil {
 		hostname := strings.ToLower(parsedURL.Hostname())
@@ -514,6 +538,8 @@ func updateChannelBalance(channel *model.Channel) (float64, error) {
 		return 0, errors.New("尚未实现")
 	case constant.ChannelTypeYobox:
 		return 0, errors.New("尚未实现")
+	case constant.ChannelTypeSeventhFrame:
+		return updateChannelSeventhFrameBalance(channel)
 	default:
 		return 0, errors.New("尚未实现")
 	}
