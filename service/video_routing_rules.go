@@ -19,27 +19,30 @@ var supportedVideoRoutingRequestPaths = []string{
 }
 
 type VideoRoutingRuleCandidate struct {
-	Group              string                        `json:"group"`
-	ChannelID          int                           `json:"channel_id"`
-	ChannelName        string                        `json:"channel_name"`
-	ChannelType        int                           `json:"channel_type"`
-	ChannelStatus      int                           `json:"channel_status"`
-	Priority           int64                         `json:"priority"`
-	Weight             int                           `json:"weight"`
-	Mapping            common.ModelMappingResolution `json:"mapping"`
-	Capability         *dto.VideoModelCapability     `json:"capability,omitempty"`
-	Sources            []string                      `json:"sources,omitempty"`
-	ConfigurationError string                        `json:"configuration_error,omitempty"`
-	Eligible           *bool                         `json:"eligible,omitempty"`
-	SelectedPriority   bool                          `json:"selected_priority,omitempty"`
-	Violations         []VideoConstraintViolation    `json:"violations,omitempty"`
+	Group              string                          `json:"group"`
+	ChannelID          int                             `json:"channel_id"`
+	ChannelName        string                          `json:"channel_name"`
+	ChannelType        int                             `json:"channel_type"`
+	ChannelStatus      int                             `json:"channel_status"`
+	Priority           int64                           `json:"priority"`
+	Weight             int                             `json:"weight"`
+	Mapping            common.ModelMappingResolution   `json:"mapping"`
+	Capability         *dto.VideoModelCapability       `json:"capability,omitempty"`
+	Sources            []string                        `json:"sources,omitempty"`
+	ConfigurationError string                          `json:"configuration_error,omitempty"`
+	Eligible           *bool                           `json:"eligible,omitempty"`
+	SelectedPriority   bool                            `json:"selected_priority,omitempty"`
+	Violations         []VideoConstraintViolation      `json:"violations,omitempty"`
+	EditableRule       *VideoRoutingCapabilityRuleView `json:"editable_rule,omitempty"`
 }
 
 type VideoRoutingRuleSet struct {
-	PublicModel string                      `json:"public_model"`
-	Group       string                      `json:"group,omitempty"`
-	Strict      bool                        `json:"strict"`
-	Candidates  []VideoRoutingRuleCandidate `json:"candidates"`
+	PublicModel  string                      `json:"public_model"`
+	Group        string                      `json:"group,omitempty"`
+	Strict       bool                        `json:"strict"`
+	StrictSource string                      `json:"strict_source"`
+	Policy       *VideoRoutingPolicyView     `json:"policy,omitempty"`
+	Candidates   []VideoRoutingRuleCandidate `json:"candidates"`
 }
 
 type VideoRoutingSimulationRequest struct {
@@ -72,11 +75,14 @@ func GetVideoRoutingRuleSetForPath(publicModel, group, requestPath string) (Vide
 func getVideoRoutingRuleSetForPath(publicModel, group, requestPath string) (VideoRoutingRuleSet, error) {
 	publicModel = strings.TrimSpace(publicModel)
 	group = strings.TrimSpace(group)
+	strict, strictSource, policy := ResolveVideoRoutingStrict(publicModel)
 	result := VideoRoutingRuleSet{
-		PublicModel: publicModel,
-		Group:       group,
-		Strict:      IsStrictVideoRoutingModel(publicModel),
-		Candidates:  make([]VideoRoutingRuleCandidate, 0),
+		PublicModel:  publicModel,
+		Group:        group,
+		Strict:       strict,
+		StrictSource: strictSource,
+		Policy:       policy,
+		Candidates:   make([]VideoRoutingRuleCandidate, 0),
 	}
 	candidates, err := model.GetEnabledChannelAbilityCandidates(group, publicModel)
 	if err != nil {
@@ -125,6 +131,7 @@ func describeVideoRoutingCandidate(candidate model.ChannelAbilityCandidate, publ
 	} else if IsStrictVideoRoutingModel(publicModel) {
 		result.Violations = []VideoConstraintViolation{{Code: "missing_capability"}}
 	}
+	result.EditableRule = getChannelVideoRoutingCapabilityRuleView(candidate.Channel.Id, mapping.Model)
 	if !channelSupportsVideoRoutingRequestPath(candidate.Channel, requestPath) {
 		result.ConfigurationError = "request_path_not_supported"
 	}

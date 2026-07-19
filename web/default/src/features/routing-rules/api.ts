@@ -19,6 +19,10 @@ For commercial licensing, please contact support@quantumnous.com
 import { api } from '@/lib/api'
 import type {
   RoutingApiResponse,
+  UpdateVideoRoutingPolicyRequest,
+  UpsertVideoRoutingCapabilityRequest,
+  VideoRoutingCapabilityRule,
+  VideoRoutingPolicy,
   VideoRoutingRuleSet,
   VideoRoutingSimulationRequest,
   VideoRoutingSimulationResult,
@@ -38,5 +42,36 @@ export async function simulateVideoRouting(
   const response = await api.post<
     RoutingApiResponse<VideoRoutingSimulationResult>
   >('/api/channel/routing_rules/simulate', request)
+  return response.data
+}
+
+export async function updateVideoRoutingPolicy(
+  request: UpdateVideoRoutingPolicyRequest
+) {
+  const response = await api.put<RoutingApiResponse<VideoRoutingPolicy>>(
+    '/api/channel/routing_rules/policy',
+    request
+  )
+  return response.data
+}
+
+export async function upsertVideoRoutingCapability(
+  request: UpsertVideoRoutingCapabilityRequest
+) {
+  const response = await api.put<
+    RoutingApiResponse<VideoRoutingCapabilityRule>
+  >('/api/channel/routing_rules/capability', request)
+  return response.data
+}
+
+export async function deleteVideoRoutingCapability(
+  id: number,
+  revision: number
+) {
+  const response = await api.delete<
+    RoutingApiResponse<VideoRoutingCapabilityRule>
+  >(`/api/channel/routing_rules/capability/${id}`, {
+    params: { revision },
+  })
   return response.data
 }

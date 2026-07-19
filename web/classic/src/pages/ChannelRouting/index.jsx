@@ -24,12 +24,17 @@ import {
   Banner,
   Button,
   Descriptions,
+  Divider,
   Input,
   InputNumber,
+  Modal,
+  Radio,
+  RadioGroup,
   Select,
   SideSheet,
   Space,
   Spin,
+  Switch,
   Table,
   Tabs,
   Tag,
@@ -40,16 +45,34 @@ import {
   CheckCircle2,
   Eye,
   FlaskConical,
+  Pencil,
   RefreshCw,
   Route,
+  Save,
+  Trash2,
   XCircle,
 } from 'lucide-react';
-import { API, showError } from '../../helpers';
+import { API, isRoot, showError, showSuccess } from '../../helpers';
 import { CHANNEL_OPTIONS } from '../../constants';
 
 const { Title, Text } = Typography;
 const DEFAULT_MODEL = 'sd-bak-1';
 const DEFAULT_GROUP = 'creative-video';
+
+const EMPTY_CAPABILITY_FORM = {
+  images_min: '',
+  images_max: '',
+  videos_min: '',
+  videos_max: '',
+  audios_min: '',
+  audios_max: '',
+  duration_min: '',
+  duration_max: '',
+  fixed_duration: '',
+  require_json: 'inherit',
+  require_text: 'inherit',
+  content_precedence: 'inherit',
+};
 
 const channelTypeNames = Object.fromEntries(
   CHANNEL_OPTIONS.map((option) => [option.value, option.label]),
@@ -73,6 +96,117 @@ const formatDurationCapability = (capability) => {
   }
   const range = formatRange(capability?.duration);
   return range === '—' ? range : `${range}s`;
+};
+
+const numberToDraft = (value) =>
+  value === undefined || value === null ? '' : String(value);
+
+const booleanToDraft = (value) => {
+  if (value === undefined || value === null) return 'inherit';
+  return value ? 'true' : 'false';
+};
+
+const capabilityToForm = (capability) => ({
+  images_min: numberToDraft(capability?.images?.min),
+  images_max: numberToDraft(capability?.images?.max),
+  videos_min: numberToDraft(capability?.videos?.min),
+  videos_max: numberToDraft(capability?.videos?.max),
+  audios_min: numberToDraft(capability?.audios?.min),
+  audios_max: numberToDraft(capability?.audios?.max),
+  duration_min: numberToDraft(capability?.duration?.min),
+  duration_max: numberToDraft(capability?.duration?.max),
+  fixed_duration: numberToDraft(capability?.fixed_duration),
+  require_json: booleanToDraft(capability?.require_json),
+  require_text: booleanToDraft(capability?.require_text),
+  content_precedence: booleanToDraft(capability?.content_precedence),
+});
+
+const draftToNumber = (value) => (value === '' ? undefined : Number(value));
+
+const draftToBoolean = (value) => {
+  if (value === 'inherit') return undefined;
+  return value === 'true';
+};
+
+const rangeFromDraft = (minDraft, maxDraft) => {
+  const min = draftToNumber(minDraft);
+  const max = draftToNumber(maxDraft);
+  if (min === undefined && max === undefined) return undefined;
+  const range = {};
+  if (min !== undefined) range.min = min;
+  if (max !== undefined) range.max = max;
+  return range;
+};
+
+const formToCapability = (form) => ({
+  images: rangeFromDraft(form.images_min, form.images_max),
+  videos: rangeFromDraft(form.videos_min, form.videos_max),
+  audios: rangeFromDraft(form.audios_min, form.audios_max),
+  duration: rangeFromDraft(form.duration_min, form.duration_max),
+  fixed_duration: draftToNumber(form.fixed_duration),
+  require_json: draftToBoolean(form.require_json),
+  require_text: draftToBoolean(form.require_text),
+  content_precedence: draftToBoolean(form.content_precedence),
+});
+
+const validateCapabilityForm = (form, t) => {
+  const nonNegativeFields = [
+    'images_min',
+    'images_max',
+    'videos_min',
+    'videos_max',
+    'audios_min',
+    'audios_max',
+  ];
+  const positiveFields = ['duration_min', 'duration_max', 'fixed_duration'];
+  if (
+    nonNegativeFields.some(
+      (field) => form[field] !== '' && !/^\d+$/.test(form[field]),
+    )
+  ) {
+    return t('请输入非负整数');
+  }
+  if (
+    positiveFields.some(
+      (field) => form[field] !== '' && !/^[1-9]\d*$/.test(form[field]),
+    )
+  ) {
+    return t('请输入正整数');
+  }
+  const ranges = [
+    ['images_min', 'images_max'],
+    ['videos_min', 'videos_max'],
+    ['audios_min', 'audios_max'],
+    ['duration_min', 'duration_max'],
+  ];
+  if (
+    ranges.some(
+      ([min, max]) =>
+        form[min] !== '' &&
+        form[max] !== '' &&
+        Number(form[min]) > Number(form[max]),
+    )
+  ) {
+    return t('最大值必须大于或等于最小值');
+  }
+  if (
+    form.fixed_duration !== '' &&
+    (form.duration_min !== '' || form.duration_max !== '')
+  ) {
+    return t('固定时长不能与范围时长同时设置');
+  }
+  if (
+    Object.values(form).every((value) => value === '' || value === 'inherit')
+  ) {
+    return t('至少添加一项覆盖');
+  }
+  return null;
+};
+
+const strictSourceLabel = (source, t) => {
+  if (source === 'database') return t('数据库策略');
+  if (source === 'built_in') return t('内置策略');
+  return t('默认策略');
 };
 
 const violationText = (violation, t) => {
@@ -223,15 +357,295 @@ const CandidateDetails = ({ candidate, onClose, t }) => (
   </SideSheet>
 );
 
+const RangeOverrideFields = ({
+  label,
+  prefix,
+  form,
+  onChange,
+  effective,
+  t,
+}) => (
+  <section>
+    <Text strong>{label}</Text>
+    <div className='mt-2 grid grid-cols-2 gap-3'>
+      <div>
+        <Text type='tertiary' size='small'>
+          {t('最小值')}
+        </Text>
+        <Input
+          className='mt-1'
+          type='number'
+          min={0}
+          value={form[`${prefix}_min`]}
+          placeholder={numberToDraft(effective?.min)}
+          onChange={(value) => onChange(`${prefix}_min`, value)}
+        />
+      </div>
+      <div>
+        <Text type='tertiary' size='small'>
+          {t('最大值')}
+        </Text>
+        <Input
+          className='mt-1'
+          type='number'
+          min={0}
+          value={form[`${prefix}_max`]}
+          placeholder={numberToDraft(effective?.max)}
+          onChange={(value) => onChange(`${prefix}_max`, value)}
+        />
+      </div>
+    </div>
+  </section>
+);
+
+const BooleanOverrideField = ({ label, value, onChange, t }) => (
+  <div>
+    <Text strong>{label}</Text>
+    <RadioGroup
+      className='mt-2'
+      direction='horizontal'
+      type='button'
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    >
+      <Radio value='inherit'>{t('继承')}</Radio>
+      <Radio value='true'>{t('必填')}</Radio>
+      <Radio value='false'>{t('非必填')}</Radio>
+    </RadioGroup>
+  </div>
+);
+
+const CapabilityRuleEditor = ({ candidate, onClose, onSaved, t }) => {
+  const [form, setForm] = useState(EMPTY_CAPABILITY_FORM);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setForm(capabilityToForm(candidate?.editable_rule?.capability));
+  }, [candidate]);
+
+  const updateField = (field, value) => {
+    setForm((current) => ({ ...current, [field]: value ?? '' }));
+  };
+
+  const saveOverride = async () => {
+    if (!candidate) return;
+    const validationError = validateCapabilityForm(form, t);
+    if (validationError) {
+      showError(validationError);
+      return;
+    }
+    setSaving(true);
+    try {
+      const response = await API.put('/api/channel/routing_rules/capability', {
+        channel_id: candidate.channel_id,
+        upstream_model: candidate.mapping?.model,
+        capability: formToCapability(form),
+        revision: candidate.editable_rule?.revision || 0,
+      });
+      if (!response.data.success) throw new Error(response.data.message);
+      showSuccess(t('分流覆盖已保存'));
+      await onSaved();
+      onClose();
+    } catch (error) {
+      showError(
+        error.response?.data?.message || error.message || t('保存分流覆盖失败'),
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resetOverride = () => {
+    if (!candidate?.editable_rule) return;
+    Modal.confirm({
+      title: t('重置分流覆盖？'),
+      content: t('该渠道将恢复继承的分流能力。'),
+      okType: 'danger',
+      okText: t('重置分流覆盖'),
+      cancelText: t('取消'),
+      onOk: async () => {
+        setSaving(true);
+        try {
+          const response = await API.delete(
+            `/api/channel/routing_rules/capability/${candidate.editable_rule.id}`,
+            { params: { revision: candidate.editable_rule.revision } },
+          );
+          if (!response.data.success) throw new Error(response.data.message);
+          showSuccess(t('分流覆盖已重置'));
+          await onSaved();
+          onClose();
+        } catch (error) {
+          showError(
+            error.response?.data?.message ||
+              error.message ||
+              t('重置分流覆盖失败'),
+          );
+        } finally {
+          setSaving(false);
+        }
+      },
+    });
+  };
+
+  return (
+    <SideSheet
+      placement='right'
+      title={
+        <Space>
+          <Title heading={4}>{t('编辑分流覆盖')}</Title>
+          <Tag color={candidate?.editable_rule ? 'blue' : 'grey'}>
+            {candidate?.editable_rule ? t('数据库覆盖') : t('继承配置')}
+          </Tag>
+        </Space>
+      }
+      visible={Boolean(candidate)}
+      width='min(640px, 100vw)'
+      onCancel={() => !saving && onClose()}
+      footer={
+        <div className='flex items-center justify-between gap-2'>
+          <div>
+            {candidate?.editable_rule && (
+              <Button
+                type='danger'
+                theme='borderless'
+                icon={<Trash2 size={16} />}
+                loading={saving}
+                onClick={resetOverride}
+              >
+                {t('重置分流覆盖')}
+              </Button>
+            )}
+          </div>
+          <Space>
+            <Button disabled={saving} onClick={onClose}>
+              {t('取消')}
+            </Button>
+            <Button
+              type='primary'
+              icon={<Save size={16} />}
+              loading={saving}
+              onClick={saveOverride}
+            >
+              {t('保存分流覆盖')}
+            </Button>
+          </Space>
+        </div>
+      }
+    >
+      {candidate && (
+        <div className='space-y-5'>
+          <Descriptions
+            data={[
+              { key: t('渠道 ID'), value: candidate.channel_id },
+              { key: t('上游模型'), value: candidate.mapping?.model || '—' },
+            ]}
+          />
+
+          <RangeOverrideFields
+            label={t('图片')}
+            prefix='images'
+            form={form}
+            onChange={updateField}
+            effective={candidate.capability?.images}
+            t={t}
+          />
+          <RangeOverrideFields
+            label={t('视频')}
+            prefix='videos'
+            form={form}
+            onChange={updateField}
+            effective={candidate.capability?.videos}
+            t={t}
+          />
+          <RangeOverrideFields
+            label={t('音频')}
+            prefix='audios'
+            form={form}
+            onChange={updateField}
+            effective={candidate.capability?.audios}
+            t={t}
+          />
+
+          <Divider margin='16px' />
+
+          <section>
+            <Text strong>{t('时长')}</Text>
+            <div className='mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3'>
+              {[
+                [
+                  'duration_min',
+                  t('最小值'),
+                  candidate.capability?.duration?.min,
+                ],
+                [
+                  'duration_max',
+                  t('最大值'),
+                  candidate.capability?.duration?.max,
+                ],
+                [
+                  'fixed_duration',
+                  t('固定时长'),
+                  candidate.capability?.fixed_duration,
+                ],
+              ].map(([field, label, placeholder]) => (
+                <div key={field}>
+                  <Text type='tertiary' size='small'>
+                    {label}
+                  </Text>
+                  <Input
+                    className='mt-1'
+                    type='number'
+                    min={1}
+                    value={form[field]}
+                    placeholder={numberToDraft(placeholder)}
+                    onChange={(value) => updateField(field, value)}
+                  />
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <Divider margin='16px' />
+
+          <section className='space-y-4'>
+            <Text strong>{t('请求语义')}</Text>
+            <BooleanOverrideField
+              label={t('JSON 请求')}
+              value={form.require_json}
+              onChange={(value) => updateField('require_json', value)}
+              t={t}
+            />
+            <BooleanOverrideField
+              label={t('文本内容')}
+              value={form.require_text}
+              onChange={(value) => updateField('require_text', value)}
+              t={t}
+            />
+            <BooleanOverrideField
+              label={t('显式内容优先级')}
+              value={form.content_precedence}
+              onChange={(value) => updateField('content_precedence', value)}
+              t={t}
+            />
+          </section>
+        </div>
+      )}
+    </SideSheet>
+  );
+};
+
 const ChannelRouting = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const rootUser = isRoot();
   const [model, setModel] = useState(DEFAULT_MODEL);
   const [group, setGroup] = useState(DEFAULT_GROUP);
   const [groups, setGroups] = useState([]);
   const [rules, setRules] = useState(null);
   const [rulesLoading, setRulesLoading] = useState(false);
   const [selectedCandidate, setSelectedCandidate] = useState(null);
+  const [editingCandidate, setEditingCandidate] = useState(null);
+  const [policySaving, setPolicySaving] = useState(false);
   const [simulationResult, setSimulationResult] = useState(null);
   const [simulationLoading, setSimulationLoading] = useState(false);
   const [simulation, setSimulation] = useState({
@@ -274,6 +688,7 @@ const ChannelRouting = () => {
   useEffect(() => {
     setSimulationResult(null);
     setSelectedCandidate(null);
+    setEditingCandidate(null);
     const timer = window.setTimeout(loadRules, 250);
     return () => window.clearTimeout(timer);
   }, [loadRules]);
@@ -296,6 +711,27 @@ const ChannelRouting = () => {
     }
   };
 
+  const updateStrictPolicy = async (strict) => {
+    if (!rootUser || !rules) return;
+    setPolicySaving(true);
+    try {
+      const response = await API.put('/api/channel/routing_rules/policy', {
+        public_model: model,
+        strict,
+        revision: rules.policy?.revision || 0,
+      });
+      if (!response.data.success) throw new Error(response.data.message);
+      showSuccess(t('分流策略已保存'));
+      await loadRules();
+    } catch (error) {
+      showError(
+        error.response?.data?.message || error.message || t('保存分流策略失败'),
+      );
+    } finally {
+      setPolicySaving(false);
+    }
+  };
+
   const columns = useMemo(
     () => [
       {
@@ -313,6 +749,11 @@ const ChannelRouting = () => {
               #{record.channel_id} ·{' '}
               {channelTypeNames[record.channel_type] || record.channel_type}
             </Text>
+            {record.editable_rule && (
+              <Tag className='mt-1' color='green' size='small'>
+                {t('数据库覆盖')}
+              </Tag>
+            )}
           </button>
         ),
       },
@@ -345,18 +786,28 @@ const ChannelRouting = () => {
       },
       {
         title: '',
-        width: 52,
+        width: rootUser ? 96 : 52,
         render: (_, record) => (
-          <Button
-            theme='borderless'
-            icon={<Eye size={16} />}
-            aria-label={t('查看详情')}
-            onClick={() => setSelectedCandidate(record)}
-          />
+          <Space spacing={2}>
+            <Button
+              theme='borderless'
+              icon={<Eye size={16} />}
+              aria-label={t('查看详情')}
+              onClick={() => setSelectedCandidate(record)}
+            />
+            {rootUser && (
+              <Button
+                theme='borderless'
+                icon={<Pencil size={16} />}
+                aria-label={t('编辑分流覆盖')}
+                onClick={() => setEditingCandidate(record)}
+              />
+            )}
+          </Space>
         ),
       },
     ],
-    [t],
+    [rootUser, t],
   );
 
   const renderCandidateTable = (candidates, loading) => (
@@ -381,7 +832,20 @@ const ChannelRouting = () => {
       <div className='flex flex-wrap items-center justify-between gap-3 py-4'>
         <div>
           <Title heading={4}>{t('分流规则')}</Title>
-          {rules?.strict && <Tag color='blue'>{t('严格分流')}</Tag>}
+          {rules && (
+            <Space className='mt-2' wrap>
+              <Text strong>{t('严格分流')}</Text>
+              <Tag color='blue'>
+                {strictSourceLabel(rules.strict_source, t)}
+              </Tag>
+              <Switch
+                checked={rules.strict}
+                disabled={!rootUser || policySaving}
+                loading={policySaving}
+                onChange={updateStrictPolicy}
+              />
+            </Space>
+          )}
         </div>
         <Button
           icon={<ArrowLeft size={16} />}
@@ -498,6 +962,15 @@ const ChannelRouting = () => {
       <CandidateDetails
         candidate={selectedCandidate}
         onClose={() => setSelectedCandidate(null)}
+        t={t}
+      />
+      <CapabilityRuleEditor
+        candidate={editingCandidate}
+        onClose={() => setEditingCandidate(null)}
+        onSaved={async () => {
+          setSimulationResult(null);
+          await loadRules();
+        }}
         t={t}
       />
     </div>

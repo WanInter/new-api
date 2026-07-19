@@ -42,6 +42,8 @@ func TestMain(m *testing.M) {
 		&model.Token{},
 		&model.Log{},
 		&model.Channel{},
+		&model.VideoRoutingPolicy{},
+		&model.VideoRoutingCapabilityRule{},
 		&model.Ability{},
 		&model.TopUp{},
 		&model.UserSubscription{},
@@ -64,9 +66,12 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM tokens")
 		model.DB.Exec("DELETE FROM logs")
 		model.DB.Exec("DELETE FROM channels")
+		model.DB.Exec("DELETE FROM video_routing_policies")
+		model.DB.Exec("DELETE FROM video_routing_capability_rules")
 		model.DB.Exec("DELETE FROM abilities")
 		model.DB.Exec("DELETE FROM top_ups")
 		model.DB.Exec("DELETE FROM user_subscriptions")
+		require.NoError(t, ReloadVideoRoutingRuleCache())
 	})
 }
 

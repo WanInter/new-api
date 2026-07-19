@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"embed"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -97,6 +98,13 @@ func main() {
 
 		go model.SyncChannelCache(common.SyncFrequency)
 	}
+	if err := service.ReloadVideoRoutingRuleCache(); err != nil {
+		if common.IsMasterNode || !errors.Is(err, service.ErrVideoRoutingRuleTablesUnavailable) {
+			common.FatalLog("failed to initialize video routing rule cache: " + err.Error())
+		}
+		common.SysLog("video routing rule tables are not available yet; cache will be loaded after migration")
+	}
+	go service.SyncVideoRoutingRuleCache(common.SyncFrequency)
 
 	// 热更新配置
 	go model.SyncOptions(common.SyncFrequency)

@@ -257,6 +257,8 @@ func migrateDB() error {
 
 	err := DB.AutoMigrate(
 		&Channel{},
+		&VideoRoutingPolicy{},
+		&VideoRoutingCapabilityRule{},
 		&Token{},
 		&User{},
 		&PasskeyCredential{},
@@ -306,6 +308,8 @@ func migrateDBFast() error {
 		name  string
 	}{
 		{&Channel{}, "Channel"},
+		{&VideoRoutingPolicy{}, "VideoRoutingPolicy"},
+		{&VideoRoutingCapabilityRule{}, "VideoRoutingCapabilityRule"},
 		{&Token{}, "Token"},
 		{&User{}, "User"},
 		{&PasskeyCredential{}, "PasskeyCredential"},

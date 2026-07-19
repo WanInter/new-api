@@ -32,6 +32,29 @@ export type VideoModelCapability = {
   content_precedence?: boolean
 }
 
+export type VideoRoutingPolicy = {
+  id: number
+  public_model: string
+  strict: boolean
+  revision: number
+  updated_by: number
+  created_time: number
+  updated_time: number
+}
+
+export type VideoRoutingCapabilityRule = {
+  id: number
+  scope: string
+  channel_type: number
+  channel_id: number
+  upstream_model: string
+  capability: VideoModelCapability
+  revision: number
+  updated_by: number
+  created_time: number
+  updated_time: number
+}
+
 export type ModelMappingResolution = {
   origin: string
   model: string
@@ -61,13 +84,29 @@ export type VideoRoutingCandidate = {
   eligible?: boolean
   selected_priority?: boolean
   violations?: VideoConstraintViolation[]
+  editable_rule?: VideoRoutingCapabilityRule
 }
 
 export type VideoRoutingRuleSet = {
   public_model: string
   group?: string
   strict: boolean
+  strict_source: string
+  policy?: VideoRoutingPolicy
   candidates: VideoRoutingCandidate[]
+}
+
+export type UpdateVideoRoutingPolicyRequest = {
+  public_model: string
+  strict: boolean
+  revision: number
+}
+
+export type UpsertVideoRoutingCapabilityRequest = {
+  channel_id: number
+  upstream_model: string
+  capability: VideoModelCapability
+  revision: number
 }
 
 export type VideoRoutingSimulationRequest = {

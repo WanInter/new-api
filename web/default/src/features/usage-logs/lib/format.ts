@@ -356,6 +356,12 @@ const AUDIT_TEMPLATES: Record<string, string> = {
     'Applied upstream model changes to channel (ID: {{id}})',
   'channel.upstream_apply_all':
     'Applied upstream model changes to {{count}} channels',
+  'channel.routing_policy_update':
+    'Updated routing policy for {{model}} (strict: {{strict}}, revision {{revision}})',
+  'channel.routing_capability_update':
+    'Updated routing capability for channel {{channel_id}} / {{upstream_model}} (revision {{revision}})',
+  'channel.routing_capability_delete':
+    'Deleted routing capability for channel {{channel_id}} / {{upstream_model}} (revision {{revision}})',
   // Redemption codes
   'redemption.create':
     'Created {{count}} redemption codes named {{name}} ({{quota}} each)',

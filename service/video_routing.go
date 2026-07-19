@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"mime"
 	"strings"
 
@@ -111,8 +112,8 @@ func withDurationRange(capability dto.VideoModelCapability, minDuration, maxDura
 }
 
 func IsStrictVideoRoutingModel(modelName string) bool {
-	_, ok := strictVideoRoutingModels[strings.TrimSpace(modelName)]
-	return ok
+	strict, _, _ := ResolveVideoRoutingStrict(modelName)
+	return strict
 }
 
 func GetBuiltInVideoModelCapability(modelName string) (dto.VideoModelCapability, bool) {
@@ -137,14 +138,29 @@ func ResolveEffectiveVideoCapability(channel *model.Channel, upstreamModel strin
 		sources = append(sources, "channel_type")
 		found = true
 	}
+	if cached, ok := getCachedVideoRoutingCapabilityRule(model.VideoRoutingScopeChannelType, channel.Type, 0, ""); ok {
+		effective = mergeVideoCapability(effective, cached.Capability)
+		sources = append(sources, fmt.Sprintf("database:channel_type#%d", cached.Rule.Id))
+		found = true
+	}
 	if capability, ok := videoCapabilitiesByModel[upstreamModel]; ok {
 		effective = mergeVideoCapability(effective, capability)
 		sources = append(sources, "model")
 		found = true
 	}
+	if cached, ok := getCachedVideoRoutingCapabilityRule(model.VideoRoutingScopeUpstreamModel, 0, 0, upstreamModel); ok {
+		effective = mergeVideoCapability(effective, cached.Capability)
+		sources = append(sources, fmt.Sprintf("database:upstream_model#%d", cached.Rule.Id))
+		found = true
+	}
 	if capability, ok := videoCapabilitiesByChannelModel[channelModelCapabilityKey{ChannelType: channel.Type, Model: upstreamModel}]; ok {
 		effective = mergeVideoCapability(effective, capability)
 		sources = append(sources, "channel_model")
+		found = true
+	}
+	if cached, ok := getCachedVideoRoutingCapabilityRule(model.VideoRoutingScopeChannelTypeModel, channel.Type, 0, upstreamModel); ok {
+		effective = mergeVideoCapability(effective, cached.Capability)
+		sources = append(sources, fmt.Sprintf("database:channel_type_model#%d", cached.Rule.Id))
 		found = true
 	}
 
@@ -160,6 +176,16 @@ func ResolveEffectiveVideoCapability(channel *model.Channel, upstreamModel strin
 			sources = append(sources, "channel_override:"+upstreamModel)
 			found = true
 		}
+	}
+	if cached, ok := getCachedVideoRoutingCapabilityRule(model.VideoRoutingScopeChannel, 0, channel.Id, ""); ok {
+		effective = mergeVideoCapability(effective, cached.Capability)
+		sources = append(sources, fmt.Sprintf("database:channel#%d", cached.Rule.Id))
+		found = true
+	}
+	if cached, ok := getCachedVideoRoutingCapabilityRule(model.VideoRoutingScopeChannelModel, 0, channel.Id, upstreamModel); ok {
+		effective = mergeVideoCapability(effective, cached.Capability)
+		sources = append(sources, fmt.Sprintf("database:channel_model#%d", cached.Rule.Id))
+		found = true
 	}
 
 	if !found {

@@ -18,7 +18,13 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { lazy, Suspense, useContext, useMemo } from 'react';
-import { Route, Routes, useLocation, useParams } from 'react-router-dom';
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useParams,
+} from 'react-router-dom';
 import Loading from './components/common/ui/Loading';
 import User from './pages/User';
 import { AuthRedirect, PrivateRoute, AdminRoute } from './helpers';
@@ -147,6 +153,10 @@ function App() {
               <ChannelRouting />
             </AdminRoute>
           }
+        />
+        <Route
+          path='/channels/routing'
+          element={<Navigate to='/console/channel/routing' replace />}
         />
         <Route
           path='/console/token'

@@ -25,11 +25,14 @@ import {
   CheckCircle2,
   Eye,
   FlaskConical,
+  Pencil,
   RefreshCw,
   Route as RouteIcon,
   XCircle,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
+import { useAuthStore } from '@/stores/auth-store'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -44,6 +47,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Switch } from '@/components/ui/switch'
 import {
   Table,
   TableBody,
@@ -56,7 +60,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SectionPageLayout } from '@/components/layout'
 import { getChannelTypeLabel } from '@/features/channels/lib/channel-utils'
 import { getGroups } from '@/features/users/api'
-import { getVideoRoutingRules, simulateVideoRouting } from './api'
+import { USER_ROLE } from '@/features/users/constants'
+import {
+  getVideoRoutingRules,
+  simulateVideoRouting,
+  updateVideoRoutingPolicy,
+} from './api'
+import { CapabilityRuleEditor } from './components/capability-rule-editor'
 import type {
   VideoMediaRange,
   VideoRoutingCandidate,
@@ -157,10 +167,12 @@ function CandidateTable({
   candidates,
   loading,
   onInspect,
+  onEdit,
 }: {
   candidates: VideoRoutingCandidate[]
   loading?: boolean
   onInspect: (candidate: VideoRoutingCandidate) => void
+  onEdit?: (candidate: VideoRoutingCandidate) => void
 }) {
   const { t } = useTranslation()
   if (loading) {
@@ -180,7 +192,7 @@ function CandidateTable({
             <TableHead>{t('Priority')}</TableHead>
             <TableHead>{t('Weight')}</TableHead>
             <TableHead className='min-w-32'>{t('Status')}</TableHead>
-            <TableHead className='w-12' />
+            <TableHead className='w-24' />
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -208,6 +220,11 @@ function CandidateTable({
                       #{candidate.channel_id} ·{' '}
                       {getChannelTypeLabel(candidate.channel_type)}
                     </span>
+                    {candidate.editable_rule && (
+                      <Badge variant='secondary' className='mt-1'>
+                        {t('Database override')}
+                      </Badge>
+                    )}
                   </button>
                 </TableCell>
                 <TableCell className='font-mono text-xs'>
@@ -231,14 +248,26 @@ function CandidateTable({
                   <CandidateStatus candidate={candidate} />
                 </TableCell>
                 <TableCell>
-                  <Button
-                    variant='ghost'
-                    size='icon-sm'
-                    onClick={() => onInspect(candidate)}
-                    title={t('View details')}
-                  >
-                    <Eye className='size-4' />
-                  </Button>
+                  <div className='flex items-center justify-end gap-1'>
+                    <Button
+                      variant='ghost'
+                      size='icon-sm'
+                      onClick={() => onInspect(candidate)}
+                      title={t('View details')}
+                    >
+                      <Eye className='size-4' />
+                    </Button>
+                    {onEdit && (
+                      <Button
+                        variant='ghost'
+                        size='icon-sm'
+                        onClick={() => onEdit(candidate)}
+                        title={t('Edit routing override')}
+                      >
+                        <Pencil />
+                      </Button>
+                    )}
+                  </div>
                 </TableCell>
               </TableRow>
             ))
@@ -358,9 +387,13 @@ function CandidateDetails({
 
 export function RoutingRules() {
   const { t } = useTranslation()
+  const isRoot =
+    useAuthStore((state) => state.auth.user?.role) === USER_ROLE.ROOT
   const [model, setModel] = useState(DEFAULT_MODEL)
   const [group, setGroup] = useState(DEFAULT_GROUP)
   const [selectedCandidate, setSelectedCandidate] =
+    useState<VideoRoutingCandidate | null>(null)
+  const [editingCandidate, setEditingCandidate] =
     useState<VideoRoutingCandidate | null>(null)
   const [simulation, setSimulation] = useState<VideoRoutingSimulationRequest>({
     model: DEFAULT_MODEL,
@@ -383,6 +416,16 @@ export function RoutingRules() {
     enabled: Boolean(model.trim() && group.trim()),
   })
   const simulationMutation = useMutation({ mutationFn: simulateVideoRouting })
+  const policyMutation = useMutation({
+    mutationFn: updateVideoRoutingPolicy,
+    onSuccess: async () => {
+      toast.success(t('Routing policy saved'))
+      await rulesQuery.refetch()
+    },
+    onError: () => {
+      toast.error(t('Failed to save routing policy'))
+    },
+  })
   const groups = useMemo(() => groupsQuery.data?.data || [], [groupsQuery.data])
 
   const runSimulation = () => {
@@ -409,6 +452,7 @@ export function RoutingRules() {
                   setModel(event.target.value)
                   simulationMutation.reset()
                   setSelectedCandidate(null)
+                  setEditingCandidate(null)
                 }}
               />
             </div>
@@ -422,6 +466,7 @@ export function RoutingRules() {
                   setGroup(event.target.value)
                   simulationMutation.reset()
                   setSelectedCandidate(null)
+                  setEditingCandidate(null)
                 }}
               >
                 {!groups.includes(group) && (
@@ -454,8 +499,33 @@ export function RoutingRules() {
               </TabsTrigger>
             </TabsList>
             <TabsContent value='rules' className='space-y-3'>
-              {rulesQuery.data?.data.strict && (
-                <Badge variant='outline'>{t('Strict routing')}</Badge>
+              {rulesQuery.data?.data && (
+                <div className='flex flex-wrap items-center justify-between gap-3 border-y py-3'>
+                  <div className='flex items-center gap-2'>
+                    <Label htmlFor='strict-routing'>
+                      {t('Strict routing')}
+                    </Label>
+                    <Badge variant='outline'>
+                      {rulesQuery.data.data.strict_source === 'database'
+                        ? t('Database policy')
+                        : rulesQuery.data.data.strict_source === 'built_in'
+                          ? t('Built-in policy')
+                          : t('Default policy')}
+                    </Badge>
+                  </div>
+                  <Switch
+                    id='strict-routing'
+                    checked={rulesQuery.data.data.strict}
+                    disabled={!isRoot || policyMutation.isPending}
+                    onCheckedChange={(strict) =>
+                      policyMutation.mutate({
+                        public_model: model,
+                        strict,
+                        revision: rulesQuery.data?.data.policy?.revision || 0,
+                      })
+                    }
+                  />
+                </div>
               )}
               {rulesQuery.isError && (
                 <Alert variant='destructive'>
@@ -468,6 +538,7 @@ export function RoutingRules() {
                 candidates={rulesQuery.data?.data.candidates || []}
                 loading={rulesQuery.isLoading}
                 onInspect={setSelectedCandidate}
+                onEdit={isRoot ? setEditingCandidate : undefined}
               />
             </TabsContent>
             <TabsContent value='simulator' className='space-y-4'>
@@ -520,6 +591,7 @@ export function RoutingRules() {
                 candidates={simulationMutation.data?.data.candidates || []}
                 loading={simulationMutation.isPending}
                 onInspect={setSelectedCandidate}
+                onEdit={isRoot ? setEditingCandidate : undefined}
               />
             </TabsContent>
           </Tabs>
@@ -527,6 +599,14 @@ export function RoutingRules() {
         <CandidateDetails
           candidate={selectedCandidate}
           onClose={() => setSelectedCandidate(null)}
+        />
+        <CapabilityRuleEditor
+          candidate={editingCandidate}
+          onClose={() => setEditingCandidate(null)}
+          onSaved={async () => {
+            simulationMutation.reset()
+            await rulesQuery.refetch()
+          }}
         />
       </SectionPageLayout.Content>
     </SectionPageLayout>

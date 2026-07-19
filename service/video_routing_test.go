@@ -2,9 +2,11 @@ package service
 
 import (
 	"bytes"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -89,6 +91,64 @@ func TestEvaluateChannelVideoRoutingUsesChannelOverride(t *testing.T) {
 
 	assert.True(t, result.Eligible)
 	assert.Contains(t, result.Sources, "channel_override:*")
+}
+
+func TestDatabaseVideoRoutingOverridePreservesExplicitZeroAndFalse(t *testing.T) {
+	truncate(t)
+	channel := channelWithVideoModelMapping(t, constant.ChannelTypeSora, "ax2.0-9tu")
+	channel.Id = 301
+	channel.Name = "Database override"
+	channel.Key = "key"
+	channel.Status = common.ChannelStatusEnabled
+	require.NoError(t, model.DB.Create(channel).Error)
+
+	rule, err := UpsertChannelVideoRoutingCapabilityRule(channel.Id, "ax2.0-9tu", dto.VideoModelCapability{
+		Images:      &dto.VideoMediaRange{Max: common.GetPointer(0)},
+		RequireJSON: common.GetPointer(false),
+	}, 0, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 1, rule.Revision)
+
+	result := EvaluateChannelVideoRouting(channel, StrictVideoRoutingModelSDBak1, VideoRequestFeatures{
+		Images:      0,
+		ContentType: "text/plain",
+	})
+
+	require.NotNil(t, result.Capability)
+	require.NotNil(t, result.Capability.Images)
+	assert.Equal(t, common.GetPointer(0), result.Capability.Images.Max)
+	assert.Equal(t, common.GetPointer(false), result.Capability.RequireJSON)
+	assert.True(t, result.Eligible)
+	assert.Contains(t, result.Sources, "database:channel_model#"+fmt.Sprint(rule.Id))
+}
+
+func TestDatabaseVideoRoutingPolicyOverridesBuiltInStrictMode(t *testing.T) {
+	truncate(t)
+
+	policy, err := UpsertVideoRoutingPolicy(StrictVideoRoutingModelSDBak1, false, 0, 1)
+	require.NoError(t, err)
+	assert.False(t, policy.Strict)
+	assert.False(t, IsStrictVideoRoutingModel(StrictVideoRoutingModelSDBak1))
+
+	rules, err := GetVideoRoutingRuleSet(StrictVideoRoutingModelSDBak1, "creative-video")
+	require.NoError(t, err)
+	assert.False(t, rules.Strict)
+	assert.Equal(t, "database", rules.StrictSource)
+	require.NotNil(t, rules.Policy)
+	assert.Equal(t, policy.Revision, rules.Policy.Revision)
+}
+
+func TestVideoRoutingWritesRejectOverlongModelNames(t *testing.T) {
+	truncate(t)
+	overlongModel := strings.Repeat("m", 256)
+
+	_, err := UpsertVideoRoutingPolicy(overlongModel, true, 0, 1)
+	assert.EqualError(t, err, "public model must not exceed 255 characters")
+
+	_, err = UpsertChannelVideoRoutingCapabilityRule(1, overlongModel, dto.VideoModelCapability{
+		RequireJSON: common.GetPointer(false),
+	}, 0, 1)
+	assert.EqualError(t, err, "upstream model must not exceed 255 characters")
 }
 
 func TestEvaluateChannelVideoRoutingStrictModelRejectsUnknownCapability(t *testing.T) {
