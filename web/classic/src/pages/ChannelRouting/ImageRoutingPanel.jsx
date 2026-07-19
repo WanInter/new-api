@@ -47,7 +47,7 @@ import { API, showError, showSuccess } from '../../helpers';
 const { Text } = Typography;
 const TIERS = ['1k', '2k', '4k'];
 const DEFAULT_MODEL = 'image2';
-const DEFAULT_GROUP = 'default';
+const DEFAULT_GROUP = 'creative-image';
 const DEFAULT_SIZES = {
   '1k': ['1024x1024', '1536x1024', '1024x1536', '960x1280', '1280x960'],
   '2k': ['2048x2048', '2560x1440', '1440x2560', '1920x2560', '2560x1920'],

@@ -131,7 +131,7 @@ type ImageRoutingPanelProps = {
 export function ImageRoutingPanel({ groups, isRoot }: ImageRoutingPanelProps) {
   const { t } = useTranslation()
   const [model, setModel] = useState('image2')
-  const [group, setGroup] = useState('default')
+  const [group, setGroup] = useState('creative-image')
   const [draft, setDraft] = useState<ImageRoutingConfig>(createEmptyConfig)
   const [sizes, setSizes] = useState<Record<ImageRoutingTier, string>>(() =>
     sizeDrafts(createEmptyConfig())
