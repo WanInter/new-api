@@ -57,7 +57,6 @@ import { CHANNEL_OPTIONS } from '../../constants';
 import ImageRoutingPanel from './ImageRoutingPanel';
 
 const { Title, Text } = Typography;
-const DEFAULT_MODEL = 'sd-bak-1';
 const DEFAULT_GROUP = 'creative-video';
 
 const EMPTY_CAPABILITY_FORM = {
@@ -640,7 +639,7 @@ const ChannelRouting = () => {
   const navigate = useNavigate();
   const rootUser = isRoot();
   const [routingMode, setRoutingMode] = useState('video');
-  const [model, setModel] = useState(DEFAULT_MODEL);
+  const [model, setModel] = useState('');
   const [group, setGroup] = useState(DEFAULT_GROUP);
   const [groups, setGroups] = useState([]);
   const [models, setModels] = useState([]);
@@ -683,6 +682,9 @@ const ChannelRouting = () => {
         ),
       ).sort((left, right) => left.localeCompare(right));
       setModels(nextModels);
+      setModel((current) =>
+        nextModels.includes(current) ? current : nextModels[0] || '',
+      );
     } catch (error) {
       showError(error.message);
     }

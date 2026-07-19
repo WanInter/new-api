@@ -78,7 +78,6 @@ import type {
   VideoRoutingSimulationResult,
 } from './types'
 
-const DEFAULT_MODEL = 'sd-bak-1'
 const DEFAULT_GROUP = 'creative-video'
 
 function formatRange(range?: VideoMediaRange) {
@@ -393,7 +392,7 @@ export function RoutingRules() {
   const { t } = useTranslation()
   const isRoot =
     useAuthStore((state) => state.auth.user?.role) === USER_ROLE.ROOT
-  const [model, setModel] = useState(DEFAULT_MODEL)
+  const [model, setModel] = useState('')
   const [group, setGroup] = useState(DEFAULT_GROUP)
   const [routingMode, setRoutingMode] = useState<'video' | 'image'>('video')
   const [selectedCandidate, setSelectedCandidate] =
@@ -401,7 +400,7 @@ export function RoutingRules() {
   const [editingCandidate, setEditingCandidate] =
     useState<VideoRoutingCandidate | null>(null)
   const [simulation, setSimulation] = useState<VideoRoutingSimulationRequest>({
-    model: DEFAULT_MODEL,
+    model: '',
     group: DEFAULT_GROUP,
     images: 4,
     videos: 0,
@@ -420,10 +419,19 @@ export function RoutingRules() {
     queryFn: () => getEnabledModels(group),
     enabled: Boolean(group.trim()),
   })
+  const models = useMemo(
+    () =>
+      [...new Set(modelsQuery.data?.data || [])]
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .sort((left, right) => left.localeCompare(right)),
+    [modelsQuery.data]
+  )
+  const selectedModel = models.includes(model) ? model : (models[0] ?? '')
   const rulesQuery = useQuery({
-    queryKey: ['video-routing-rules', model, group],
-    queryFn: () => getVideoRoutingRules(model, group),
-    enabled: Boolean(model.trim() && group.trim()),
+    queryKey: ['video-routing-rules', selectedModel, group],
+    queryFn: () => getVideoRoutingRules(selectedModel, group),
+    enabled: Boolean(selectedModel.trim() && group.trim()),
   })
   const simulationMutation = useMutation({ mutationFn: simulateVideoRouting })
   const policyMutation = useMutation({
@@ -437,17 +445,9 @@ export function RoutingRules() {
     },
   })
   const groups = useMemo(() => groupsQuery.data?.data || [], [groupsQuery.data])
-  const models = useMemo(
-    () =>
-      [...new Set(modelsQuery.data?.data || [])]
-        .map((item) => item.trim())
-        .filter(Boolean)
-        .sort((left, right) => left.localeCompare(right)),
-    [modelsQuery.data]
-  )
 
   const runSimulation = () => {
-    simulationMutation.mutate({ ...simulation, model, group })
+    simulationMutation.mutate({ ...simulation, model: selectedModel, group })
   }
 
   return (
@@ -491,7 +491,7 @@ export function RoutingRules() {
                       value: item,
                       label: item,
                     }))}
-                    value={model}
+                    value={selectedModel}
                     onValueChange={(value) => {
                       if (!value) return
                       setModel(value)
@@ -569,7 +569,7 @@ export function RoutingRules() {
                         disabled={!isRoot || policyMutation.isPending}
                         onCheckedChange={(strict) =>
                           policyMutation.mutate({
-                            public_model: model,
+                            public_model: selectedModel,
                             strict,
                             revision:
                               rulesQuery.data?.data.policy?.revision || 0,
