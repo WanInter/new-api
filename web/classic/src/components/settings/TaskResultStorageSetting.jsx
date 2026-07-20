@@ -181,8 +181,12 @@ const TaskResultStorageSetting = () => {
     try {
       const response =
         kind === 'test'
-          ? await API.post('/api/option/task-result-rehost/test', payload())
-          : await API.put('/api/option/task-result-rehost', payload());
+          ? await API.post('/api/option/task-result-rehost/test', payload(), {
+              skipErrorHandler: true,
+            })
+          : await API.put('/api/option/task-result-rehost', payload(), {
+              skipErrorHandler: true,
+            });
       if (!response.data.success) {
         showError(response.data.message);
         return;
@@ -195,6 +199,8 @@ const TaskResultStorageSetting = () => {
         setDraft(fromSettings(response.data.data));
         showSuccess(t('任务结果存储设置已保存'));
       }
+    } catch (error) {
+      showError(error?.response?.data?.message || error);
     } finally {
       setAction('');
     }

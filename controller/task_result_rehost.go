@@ -59,6 +59,7 @@ func TestTaskResultRehostSettings(c *gin.Context) {
 	}
 	result, err := service.TestTaskResultRehostSettings(c.Request.Context(), update)
 	if err != nil {
+		common.SysError("task result storage connection test failed: " + err.Error())
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"message": err.Error(),
