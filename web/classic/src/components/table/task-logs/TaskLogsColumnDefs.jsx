@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Progress, Tag, Tooltip, Typography } from '@douyinfe/semi-ui';
+import { Popover, Progress, Tag, Tooltip, Typography } from '@douyinfe/semi-ui';
 import {
   Music,
   FileText,
@@ -34,6 +34,7 @@ import {
   Video,
   Sparkles,
   Image,
+  Route,
 } from 'lucide-react';
 import {
   TASK_ACTION_FIRST_TAIL_GENERATE,
@@ -44,7 +45,7 @@ import {
   TASK_ACTION_IMAGE_GENERATE,
 } from '../../../constants/common.constant';
 import { CHANNEL_OPTIONS } from '../../../constants/channel.constants';
-import { stringToColor } from '../../../helpers/render';
+import { renderModelTag, stringToColor } from '../../../helpers/render';
 import { Avatar, Space } from '@douyinfe/semi-ui';
 
 const colors = [
@@ -152,6 +153,54 @@ const renderType = (type, t) => {
 };
 
 const getTaskModelName = (record) => record?.model_name || '';
+
+function renderTaskModelName(record, copyText, t, isAdminUser) {
+  const modelName = getTaskModelName(record);
+  if (!modelName) return t('无');
+
+  const upstreamModelName = record?.upstream_model_name || '';
+  const isMapped =
+    isAdminUser && upstreamModelName !== '' && upstreamModelName !== modelName;
+  const renderTag = (name, suffixIcon) =>
+    renderModelTag(name, {
+      onClick: () => {
+        copyText(name).then(() => {});
+      },
+      suffixIcon,
+    });
+
+  if (!isMapped) {
+    return renderTag(modelName);
+  }
+
+  return (
+    <Popover
+      content={
+        <div style={{ padding: 10 }}>
+          <Space vertical align='start'>
+            <div className='flex items-center'>
+              <Typography.Text strong style={{ marginRight: 8 }}>
+                {t('请求并计费模型')}:
+              </Typography.Text>
+              {renderTag(modelName)}
+            </div>
+            <div className='flex items-center'>
+              <Typography.Text strong style={{ marginRight: 8 }}>
+                {t('实际模型')}:
+              </Typography.Text>
+              {renderTag(upstreamModelName)}
+            </div>
+          </Space>
+        </div>
+      }
+    >
+      {renderTag(
+        modelName,
+        <Route style={{ width: '0.9em', height: '0.9em', opacity: 0.75 }} />,
+      )}
+    </Popover>
+  );
+}
 
 const renderPlatform = (platform, t) => {
   let option = CHANNEL_OPTIONS.find(
@@ -400,40 +449,9 @@ export const getTaskLogsColumns = ({
       title: t('模型'),
       dataIndex: 'properties',
       render: (text, record, index) => {
-        const modelName = getTaskModelName(record);
-        if (!modelName) return t('无');
-        return (
-          <Typography.Text
-            ellipsis={{ showTooltip: true }}
-            style={{ maxWidth: 180 }}
-            copyable={{ content: modelName }}
-          >
-            {modelName}
-          </Typography.Text>
-        );
+        return renderTaskModelName(record, copyText, t, isAdminUser);
       },
     },
-    ...(isAdminUser
-      ? [
-          {
-            key: COLUMN_KEYS.UPSTREAM_MODEL,
-            title: t('上游模型'),
-            dataIndex: 'upstream_model_name',
-            render: (text) => {
-              if (!text) return t('无');
-              return (
-                <Typography.Text
-                  ellipsis={{ showTooltip: true }}
-                  style={{ maxWidth: 180 }}
-                  copyable={{ content: text }}
-                >
-                  {text}
-                </Typography.Text>
-              );
-            },
-          },
-        ]
-      : []),
     {
       key: COLUMN_KEYS.TYPE,
       title: t('类型'),

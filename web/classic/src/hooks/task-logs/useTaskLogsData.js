@@ -43,7 +43,6 @@ export const useTaskLogsData = () => {
     USERNAME: 'username',
     PLATFORM: 'platform',
     MODEL: 'model',
-    UPSTREAM_MODEL: 'upstream_model',
     TYPE: 'type',
     TASK_ID: 'task_id',
     TASK_STATUS: 'task_status',
@@ -115,13 +114,13 @@ export const useTaskLogsData = () => {
         const parsed = JSON.parse(savedColumns);
         const defaults = getDefaultColumnVisibility();
         const merged = { ...defaults, ...parsed };
+        delete merged.upstream_model;
 
         // For non-admin users, force-hide admin-only columns (does not touch admin settings)
         if (!isAdminUser) {
           merged[COLUMN_KEYS.CHANNEL] = false;
           merged[COLUMN_KEYS.USERNAME] = false;
           merged[COLUMN_KEYS.PLATFORM] = false;
-          merged[COLUMN_KEYS.UPSTREAM_MODEL] = false;
         }
         setVisibleColumns(merged);
       } catch (e) {
@@ -143,7 +142,6 @@ export const useTaskLogsData = () => {
       [COLUMN_KEYS.USERNAME]: isAdminUser,
       [COLUMN_KEYS.PLATFORM]: isAdminUser,
       [COLUMN_KEYS.MODEL]: true,
-      [COLUMN_KEYS.UPSTREAM_MODEL]: isAdminUser,
       [COLUMN_KEYS.TYPE]: true,
       [COLUMN_KEYS.TASK_ID]: true,
       [COLUMN_KEYS.TASK_STATUS]: true,
@@ -175,8 +173,7 @@ export const useTaskLogsData = () => {
       if (
         (key === COLUMN_KEYS.CHANNEL ||
           key === COLUMN_KEYS.USERNAME ||
-          key === COLUMN_KEYS.PLATFORM ||
-          key === COLUMN_KEYS.UPSTREAM_MODEL) &&
+          key === COLUMN_KEYS.PLATFORM) &&
         !isAdminUser
       ) {
         updatedColumns[key] = false;

@@ -39,6 +39,7 @@ import {
 } from '../dialogs/audio-preview-dialog'
 import { FailReasonDialog } from '../dialogs/fail-reason-dialog'
 import { ImageDialog } from '../dialogs/image-dialog'
+import { ModelBadge } from '../model-badge'
 import { useUsageLogsContext } from '../usage-logs-provider'
 import {
   createDurationColumn,
@@ -282,42 +283,18 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
         if (!modelName) {
           return <span className='text-muted-foreground/60 text-xs'>-</span>
         }
+        const actualModel = isAdmin
+          ? row.original.upstream_model_name
+          : undefined
         return (
-          <StatusBadge
-            label={modelName}
-            autoColor={modelName}
-            size='sm'
-            className='border-border/60 bg-muted/30 max-w-[180px] truncate rounded-md border px-1.5 py-0.5 font-mono'
+          <ModelBadge
+            modelName={modelName}
+            actualModel={actualModel}
+            showActualModel={Boolean(actualModel && actualModel !== modelName)}
           />
         )
       },
     },
-    ...(isAdmin
-      ? [
-          {
-            accessorKey: 'upstream_model_name',
-            header: t('Upstream Model'),
-            cell: ({ row }) => {
-              const upstreamModel = row.getValue(
-                'upstream_model_name'
-              ) as string
-              if (!upstreamModel) {
-                return (
-                  <span className='text-muted-foreground/60 text-xs'>-</span>
-                )
-              }
-              return (
-                <StatusBadge
-                  label={upstreamModel}
-                  autoColor={upstreamModel}
-                  size='sm'
-                  className='border-border/60 bg-muted/30 max-w-[180px] truncate rounded-md border px-1.5 py-0.5 font-mono'
-                />
-              )
-            },
-          } satisfies ColumnDef<TaskLog>,
-        ]
-      : []),
     {
       accessorKey: 'task_id',
       header: t('Task ID'),
