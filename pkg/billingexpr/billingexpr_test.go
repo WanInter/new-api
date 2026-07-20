@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -245,6 +247,20 @@ func TestRequestProbeMultipleRulesMultiply(t *testing.T) {
 	if math.Abs(cost-5) > 1e-6 {
 		t.Errorf("cost = %f, want 5", cost)
 	}
+}
+
+func TestTierAcceptsIntegerRequestConditionalCost(t *testing.T) {
+	exprStr := `tier("per_second", (param("duration") == 4 ? 4 : 15) * (param("resolution") == "4K" ? 1800000 : param("resolution") == "1080p" ? 900000 : param("resolution") == "720p" ? 500000 : param("resolution") == "480p" ? 300000 : 500000))`
+
+	cost, trace, err := billingexpr.RunExprWithRequest(
+		exprStr,
+		billingexpr.TokenParams{},
+		billingexpr.RequestInput{Body: []byte(`{"duration":4,"resolution":"720p"}`)},
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, 2_000_000.0, cost)
+	assert.Equal(t, "per_second", trace.MatchedTier)
 }
 
 func TestCeilFloor(t *testing.T) {
