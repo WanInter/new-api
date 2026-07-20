@@ -199,6 +199,31 @@ func TestBuildRequestBodyAppliesRegisteredJSONTransforms(t *testing.T) {
 				assert.Equal(t, "5", got["seconds"])
 			},
 		},
+		{
+			name:  "veo video edit reference images",
+			model: veoOmniFlashVideoEditModel,
+			body: `{
+				"model":"veo-omni-flash-video-edit",
+				"prompt":"edit the reference video",
+				"duration":10,
+				"images":[
+					"https://example.com/1.png",
+					"https://example.com/2.png",
+					"https://example.com/3.png"
+				],
+				"videos":["https://example.com/reference.mp4"]
+			}`,
+			assertBody: func(t *testing.T, got map[string]any) {
+				assert.NotContains(t, got, "images")
+				assert.Equal(t, []any{
+					"https://example.com/1.png",
+					"https://example.com/2.png",
+					"https://example.com/3.png",
+				}, got["Ingredients_images"])
+				assert.Equal(t, []any{"https://example.com/reference.mp4"}, got["videos"])
+				assert.Equal(t, "10", got["seconds"])
+			},
+		},
 	}
 
 	for _, tt := range tests {

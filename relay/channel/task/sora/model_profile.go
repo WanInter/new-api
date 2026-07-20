@@ -21,6 +21,7 @@ const (
 	sdquanImageVideoModel          = "sdquan-2"
 	otoySeedanceMiniReferenceModel = "otoy-image-to-video-seedance-2-0-mini-reference-to-video"
 	veoOmniFlashModel              = "veo-omni-flash"
+	veoOmniFlashVideoEditModel     = "veo-omni-flash-video-edit"
 	seedanceGatewayModel           = "seedance-gateway"
 	canvasStandardSeedanceModel    = "navos-local-seedance-154-36-180-7"
 	canvasStandardMaxVideoSeconds  = 14
@@ -94,6 +95,9 @@ var soraModelProfiles = map[string]soraModelProfile{
 		SkipGenericDurationNormalization: true,
 	},
 	veoOmniFlashModel: {
+		JSONTransform: requestTransformVeoReferenceImages,
+	},
+	veoOmniFlashVideoEditModel: {
 		JSONTransform: requestTransformVeoReferenceImages,
 	},
 	seedanceGatewayModel: {
