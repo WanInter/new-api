@@ -578,6 +578,42 @@ func (channel *Channel) Update() error {
 	return err
 }
 
+// UpdatePriorityAndWeight updates a channel's routing fields and the derived
+// ability records together. Pointers preserve explicit zero values.
+func UpdatePriorityAndWeight(channelID int, priority *int64, weight *uint) (*Channel, error) {
+	if channelID <= 0 {
+		return nil, errors.New("channel id is 0")
+	}
+	if priority == nil && weight == nil {
+		return nil, errors.New("priority or weight is required")
+	}
+
+	var channel Channel
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(&channel, channelID).Error; err != nil {
+			return err
+		}
+
+		updates := make(map[string]any, 2)
+		if priority != nil {
+			updates["priority"] = *priority
+			channel.Priority = priority
+		}
+		if weight != nil {
+			updates["weight"] = *weight
+			channel.Weight = weight
+		}
+		if err := tx.Model(&Channel{}).Where("id = ?", channelID).Updates(updates).Error; err != nil {
+			return err
+		}
+		return channel.UpdateAbilities(tx)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &channel, nil
+}
+
 func (channel *Channel) UpdateResponseTime(responseTime int64) {
 	err := DB.Model(channel).Select("response_time", "test_time").Updates(Channel{
 		TestTime:     common.GetTimestamp(),

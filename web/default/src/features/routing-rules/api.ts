@@ -24,7 +24,9 @@ import type {
   ReplaceImageRoutingConfigRequest,
   RoutingApiResponse,
   UpdateVideoRoutingPolicyRequest,
+  UpdateVideoRoutingChannelSettingsRequest,
   UpsertVideoRoutingCapabilityRequest,
+  VideoRoutingChannelSettings,
   VideoRoutingCapabilityRule,
   VideoRoutingPolicy,
   VideoRoutingRuleSet,
@@ -83,6 +85,15 @@ export async function updateVideoRoutingPolicy(
     '/api/channel/routing_rules/policy',
     request
   )
+  return response.data
+}
+
+export async function updateVideoRoutingChannelSettings(
+  request: UpdateVideoRoutingChannelSettingsRequest
+) {
+  const response = await api.put<
+    RoutingApiResponse<VideoRoutingChannelSettings>
+  >('/api/channel/routing_rules/channel_settings', request)
   return response.data
 }
 

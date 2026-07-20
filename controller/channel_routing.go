@@ -27,6 +27,12 @@ type upsertVideoRoutingCapabilityRequest struct {
 	Revision      int                      `json:"revision"`
 }
 
+type updateVideoRoutingChannelSettingsRequest struct {
+	ChannelId int    `json:"channel_id"`
+	Priority  *int64 `json:"priority"`
+	Weight    *uint  `json:"weight"`
+}
+
 func GetChannelRoutingRules(c *gin.Context) {
 	modelName := strings.TrimSpace(c.Query("model"))
 	if modelName == "" {
@@ -128,6 +134,30 @@ func DeleteChannelRoutingCapability(c *gin.Context) {
 		"revision":       rule.Revision,
 	})
 	common.ApiSuccess(c, rule)
+}
+
+func UpdateVideoRoutingChannelSettings(c *gin.Context) {
+	var request updateVideoRoutingChannelSettingsRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	channel, err := model.UpdatePriorityAndWeight(request.ChannelId, request.Priority, request.Weight)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.InitChannelCache()
+	recordManageAudit(c, "channel.routing_channel_settings_update", map[string]interface{}{
+		"channel_id": channel.Id,
+		"priority":   channel.GetPriority(),
+		"weight":     channel.GetWeight(),
+	})
+	common.ApiSuccess(c, gin.H{
+		"channel_id": channel.Id,
+		"priority":   channel.GetPriority(),
+		"weight":     channel.GetWeight(),
+	})
 }
 
 func GetImageRoutingRules(c *gin.Context) {

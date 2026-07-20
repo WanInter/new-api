@@ -4520,6 +4520,7 @@
     "Updated channel {{name}} (ID: {{id}})": "Обновлён канал {{name}} (ID: {{id}})",
     "Updated daily": "Обновляется ежедневно",
     "Updated routing capability for channel {{channel_id}} / {{upstream_model}} (revision {{revision}})": "Обновлена возможность маршрутизации для канала {{channel_id}} / {{upstream_model}} (ревизия {{revision}})",
+    "Updated routing channel settings for channel {{channel_id}} (priority: {{priority}}, weight: {{weight}})": "Обновлены настройки маршрутизации канала {{channel_id}} (приоритет: {{priority}}, вес: {{weight}})",
     "Updated routing policy for {{model}} (strict: {{strict}}, revision {{revision}})": "Обновлена политика маршрутизации для {{model}} (строгая: {{strict}}, ревизия {{revision}})",
     "Updated successfully": "Обновлено успешно",
     "Updated system setting {{key}}": "Обновлён системный параметр {{key}}",

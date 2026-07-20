@@ -28,6 +28,7 @@ import {
   Pencil,
   RefreshCw,
   Route as RouteIcon,
+  Save,
   XCircle,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -67,6 +68,7 @@ import { USER_ROLE } from '@/features/users/constants'
 import {
   getVideoRoutingRules,
   simulateVideoRouting,
+  updateVideoRoutingChannelSettings,
   updateVideoRoutingPolicy,
 } from './api'
 import { CapabilityRuleEditor } from './components/capability-rule-editor'
@@ -74,11 +76,17 @@ import { ImageRoutingPanel } from './components/image-routing-panel'
 import type {
   VideoMediaRange,
   VideoRoutingCandidate,
+  UpdateVideoRoutingChannelSettingsRequest,
   VideoRoutingSimulationRequest,
   VideoRoutingSimulationResult,
 } from './types'
 
 const DEFAULT_GROUP = 'creative-video'
+
+type ChannelSettingsDraft = {
+  priority: string
+  weight: string
+}
 
 function formatRange(range?: VideoMediaRange) {
   if (!range || (range.min === undefined && range.max === undefined)) return '—'
@@ -171,11 +179,27 @@ function CandidateTable({
   loading,
   onInspect,
   onEdit,
+  editableChannelSettings,
+  getChannelSettingsDraft,
+  onChannelSettingsChange,
+  onSaveChannelSettings,
+  savingChannelId,
 }: {
   candidates: VideoRoutingCandidate[]
   loading?: boolean
   onInspect: (candidate: VideoRoutingCandidate) => void
   onEdit?: (candidate: VideoRoutingCandidate) => void
+  editableChannelSettings?: boolean
+  getChannelSettingsDraft?: (
+    candidate: VideoRoutingCandidate
+  ) => ChannelSettingsDraft
+  onChannelSettingsChange?: (
+    candidate: VideoRoutingCandidate,
+    field: keyof ChannelSettingsDraft,
+    value: string
+  ) => void
+  onSaveChannelSettings?: (candidate: VideoRoutingCandidate) => void
+  savingChannelId?: number
 }) {
   const { t } = useTranslation()
   if (loading) {
@@ -183,7 +207,7 @@ function CandidateTable({
   }
   return (
     <div className='overflow-x-auto rounded-md border'>
-      <Table className='min-w-[1428px] table-fixed'>
+      <Table className='min-w-[1492px] table-fixed'>
         <TableHeader>
           <TableRow>
             <TableHead className='w-[520px]'>{t('Channel')}</TableHead>
@@ -200,16 +224,16 @@ function CandidateTable({
             <TableHead className='w-[84px] text-center'>
               {t('Duration')}
             </TableHead>
-            <TableHead className='w-[72px] text-center'>
+            <TableHead className='w-[104px] text-center'>
               {t('Priority')}
             </TableHead>
-            <TableHead className='w-[72px] text-center'>
+            <TableHead className='w-[104px] text-center'>
               {t('Weight')}
             </TableHead>
             <TableHead className='w-[108px] text-center'>
               {t('Status')}
             </TableHead>
-            <TableHead className='w-24' />
+            <TableHead className='w-28' />
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -266,16 +290,74 @@ function CandidateTable({
                   {formatDurationCapability(candidate.capability)}
                 </TableCell>
                 <TableCell className='text-center'>
-                  {candidate.priority}
+                  {editableChannelSettings && getChannelSettingsDraft ? (
+                    <Input
+                      aria-label={t('Priority')}
+                      className='h-8 text-right'
+                      inputMode='numeric'
+                      type='number'
+                      step={1}
+                      value={getChannelSettingsDraft(candidate).priority}
+                      onChange={(event) =>
+                        onChannelSettingsChange?.(
+                          candidate,
+                          'priority',
+                          event.target.value
+                        )
+                      }
+                      disabled={savingChannelId !== undefined}
+                    />
+                  ) : (
+                    candidate.priority
+                  )}
                 </TableCell>
                 <TableCell className='text-center'>
-                  {candidate.weight}
+                  {editableChannelSettings && getChannelSettingsDraft ? (
+                    <Input
+                      aria-label={t('Weight')}
+                      className='h-8 text-right'
+                      inputMode='numeric'
+                      min={0}
+                      type='number'
+                      step={1}
+                      value={getChannelSettingsDraft(candidate).weight}
+                      onChange={(event) =>
+                        onChannelSettingsChange?.(
+                          candidate,
+                          'weight',
+                          event.target.value
+                        )
+                      }
+                      disabled={savingChannelId !== undefined}
+                    />
+                  ) : (
+                    candidate.weight
+                  )}
                 </TableCell>
                 <TableCell className='text-center'>
                   <CandidateStatus candidate={candidate} />
                 </TableCell>
                 <TableCell>
                   <div className='flex items-center justify-end gap-1'>
+                    {editableChannelSettings &&
+                      onSaveChannelSettings &&
+                      getChannelSettingsDraft && (
+                        <Button
+                          variant='ghost'
+                          size='icon-sm'
+                          onClick={() => onSaveChannelSettings(candidate)}
+                          title={t('Save')}
+                          disabled={
+                            savingChannelId !== undefined ||
+                            (getChannelSettingsDraft(candidate).priority ===
+                              String(candidate.priority) &&
+                              getChannelSettingsDraft(candidate).weight ===
+                                String(candidate.weight))
+                          }
+                        >
+                          <Save className='size-4' />
+                        </Button>
+                      )}
                     <Button
                       variant='ghost'
                       size='icon-sm'
@@ -423,6 +505,9 @@ export function RoutingRules() {
     useState<VideoRoutingCandidate | null>(null)
   const [editingCandidate, setEditingCandidate] =
     useState<VideoRoutingCandidate | null>(null)
+  const [channelSettingsDrafts, setChannelSettingsDrafts] = useState<
+    Record<number, ChannelSettingsDraft>
+  >({})
   const [simulation, setSimulation] = useState<VideoRoutingSimulationRequest>({
     model: '',
     group: DEFAULT_GROUP,
@@ -468,7 +553,62 @@ export function RoutingRules() {
       toast.error(t('Failed to save routing policy'))
     },
   })
+  const channelSettingsMutation = useMutation({
+    mutationFn: async (request: UpdateVideoRoutingChannelSettingsRequest) => {
+      const response = await updateVideoRoutingChannelSettings(request)
+      if (!response.success) throw new Error(response.message)
+      return response
+    },
+    onSuccess: async (_response, request) => {
+      setChannelSettingsDrafts((current) => {
+        const next = { ...current }
+        delete next[request.channel_id]
+        return next
+      })
+      toast.success(t('Channel updated successfully'))
+      await rulesQuery.refetch()
+    },
+    onError: () => {
+      toast.error(t('Update failed'))
+    },
+  })
   const groups = useMemo(() => groupsQuery.data?.data || [], [groupsQuery.data])
+
+  const getChannelSettingsDraft = (candidate: VideoRoutingCandidate) =>
+    channelSettingsDrafts[candidate.channel_id] || {
+      priority: String(candidate.priority),
+      weight: String(candidate.weight),
+    }
+
+  const updateChannelSettingsDraft = (
+    candidate: VideoRoutingCandidate,
+    field: keyof ChannelSettingsDraft,
+    value: string
+  ) => {
+    setChannelSettingsDrafts((current) => ({
+      ...current,
+      [candidate.channel_id]: {
+        ...(current[candidate.channel_id] || {
+          priority: String(candidate.priority),
+          weight: String(candidate.weight),
+        }),
+        [field]: value,
+      },
+    }))
+  }
+
+  const saveChannelSettings = (candidate: VideoRoutingCandidate) => {
+    const draft = getChannelSettingsDraft(candidate)
+    if (!/^-?\d+$/.test(draft.priority) || !/^\d+$/.test(draft.weight)) {
+      toast.error(t('Update failed'))
+      return
+    }
+    channelSettingsMutation.mutate({
+      channel_id: candidate.channel_id,
+      priority: Number(draft.priority),
+      weight: Number(draft.weight),
+    })
+  }
 
   const runSimulation = () => {
     simulationMutation.mutate({ ...simulation, model: selectedModel, group })
@@ -614,6 +754,15 @@ export function RoutingRules() {
                     loading={rulesQuery.isLoading}
                     onInspect={setSelectedCandidate}
                     onEdit={isRoot ? setEditingCandidate : undefined}
+                    editableChannelSettings={isRoot}
+                    getChannelSettingsDraft={getChannelSettingsDraft}
+                    onChannelSettingsChange={updateChannelSettingsDraft}
+                    onSaveChannelSettings={saveChannelSettings}
+                    savingChannelId={
+                      channelSettingsMutation.isPending
+                        ? channelSettingsMutation.variables?.channel_id
+                        : undefined
+                    }
                   />
                 </TabsContent>
                 <TabsContent value='simulator' className='space-y-4'>

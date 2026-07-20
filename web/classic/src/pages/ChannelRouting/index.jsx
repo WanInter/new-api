@@ -648,6 +648,8 @@ const ChannelRouting = () => {
   const [selectedCandidate, setSelectedCandidate] = useState(null);
   const [editingCandidate, setEditingCandidate] = useState(null);
   const [policySaving, setPolicySaving] = useState(false);
+  const [channelSettingsDrafts, setChannelSettingsDrafts] = useState({});
+  const [savingChannelSettings, setSavingChannelSettings] = useState(null);
   const [simulationResult, setSimulationResult] = useState(null);
   const [simulationLoading, setSimulationLoading] = useState(false);
   const [simulation, setSimulation] = useState({
@@ -761,6 +763,58 @@ const ChannelRouting = () => {
     }
   };
 
+  const getChannelSettingsDraft = (candidate) =>
+    channelSettingsDrafts[candidate.channel_id] || {
+      priority: String(candidate.priority),
+      weight: String(candidate.weight),
+    };
+
+  const updateChannelSettingsDraft = (candidate, field, value) => {
+    setChannelSettingsDrafts((current) => ({
+      ...current,
+      [candidate.channel_id]: {
+        ...(current[candidate.channel_id] || {
+          priority: String(candidate.priority),
+          weight: String(candidate.weight),
+        }),
+        [field]: value,
+      },
+    }));
+  };
+
+  const saveChannelSettings = async (candidate) => {
+    const draft = getChannelSettingsDraft(candidate);
+    if (!/^-?\d+$/.test(draft.priority) || !/^\d+$/.test(draft.weight)) {
+      showError(t('操作失败'));
+      return;
+    }
+    setSavingChannelSettings(candidate.channel_id);
+    try {
+      const response = await API.put(
+        '/api/channel/routing_rules/channel_settings',
+        {
+          channel_id: candidate.channel_id,
+          priority: Number(draft.priority),
+          weight: Number(draft.weight),
+        },
+      );
+      if (!response.data.success) throw new Error(response.data.message);
+      setChannelSettingsDrafts((current) => {
+        const next = { ...current };
+        delete next[candidate.channel_id];
+        return next;
+      });
+      showSuccess(t('操作成功完成！'));
+      await loadRules();
+    } catch (error) {
+      showError(
+        error.response?.data?.message || error.message || t('操作失败'),
+      );
+    } finally {
+      setSavingChannelSettings(null);
+    }
+  };
+
   const columns = useMemo(
     () => [
       {
@@ -828,8 +882,47 @@ const ChannelRouting = () => {
         align: 'center',
         render: (_, record) => formatDurationCapability(record.capability),
       },
-      { title: t('优先级'), dataIndex: 'priority', width: 72, align: 'center' },
-      { title: t('权重'), dataIndex: 'weight', width: 72, align: 'center' },
+      {
+        title: t('优先级'),
+        width: 104,
+        align: 'center',
+        render: (_, record) => {
+          const draft = getChannelSettingsDraft(record);
+          return rootUser ? (
+            <Input
+              type='number'
+              value={draft.priority}
+              disabled={savingChannelSettings !== null}
+              onChange={(value) =>
+                updateChannelSettingsDraft(record, 'priority', value)
+              }
+            />
+          ) : (
+            record.priority
+          );
+        },
+      },
+      {
+        title: t('权重'),
+        width: 104,
+        align: 'center',
+        render: (_, record) => {
+          const draft = getChannelSettingsDraft(record);
+          return rootUser ? (
+            <Input
+              type='number'
+              min={0}
+              value={draft.weight}
+              disabled={savingChannelSettings !== null}
+              onChange={(value) =>
+                updateChannelSettingsDraft(record, 'weight', value)
+              }
+            />
+          ) : (
+            record.weight
+          );
+        },
+      },
       {
         title: t('状态'),
         width: 108,
@@ -838,9 +931,24 @@ const ChannelRouting = () => {
       },
       {
         title: '',
-        width: rootUser ? 96 : 52,
+        width: rootUser ? 132 : 52,
         render: (_, record) => (
           <Space spacing={2}>
+            {rootUser && (
+              <Button
+                theme='borderless'
+                icon={<Save size={16} />}
+                aria-label={t('保存')}
+                disabled={
+                  savingChannelSettings !== null ||
+                  (getChannelSettingsDraft(record).priority ===
+                    String(record.priority) &&
+                    getChannelSettingsDraft(record).weight ===
+                      String(record.weight))
+                }
+                onClick={() => saveChannelSettings(record)}
+              />
+            )}
             <Button
               theme='borderless'
               icon={<Eye size={16} />}
@@ -859,7 +967,7 @@ const ChannelRouting = () => {
         ),
       },
     ],
-    [rootUser, t],
+    [channelSettingsDrafts, rootUser, savingChannelSettings, t],
   );
 
   const renderCandidateTable = (candidates, loading) => (
@@ -870,7 +978,7 @@ const ChannelRouting = () => {
         rowKey={(record) => `${record.group}-${record.channel_id}`}
         pagination={false}
         tableLayout='fixed'
-        scroll={{ x: 1428 }}
+        scroll={{ x: 1492 }}
         empty={t('未找到分流候选渠道')}
       />
     </Spin>

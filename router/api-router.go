@@ -250,6 +250,7 @@ func SetApiRouter(router *gin.Engine) {
 			channelRoute.PUT("/routing_rules/policy", middleware.RootAuth(), controller.UpdateChannelRoutingPolicy)
 			channelRoute.PUT("/routing_rules/capability", middleware.RootAuth(), controller.UpsertChannelRoutingCapability)
 			channelRoute.DELETE("/routing_rules/capability/:id", middleware.RootAuth(), controller.DeleteChannelRoutingCapability)
+			channelRoute.PUT("/routing_rules/channel_settings", middleware.RootAuth(), controller.UpdateVideoRoutingChannelSettings)
 			channelRoute.GET("/image_routing_rules", controller.GetImageRoutingRules)
 			channelRoute.POST("/image_routing_rules/simulate", controller.SimulateImageRouting)
 			channelRoute.PUT("/image_routing_rules/policy", middleware.RootAuth(), controller.UpdateImageRoutingPolicy)

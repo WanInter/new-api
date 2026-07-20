@@ -4520,6 +4520,7 @@
     "Updated channel {{name}} (ID: {{id}})": "Đã cập nhật kênh {{name}} (ID: {{id}})",
     "Updated daily": "Cập nhật hàng ngày",
     "Updated routing capability for channel {{channel_id}} / {{upstream_model}} (revision {{revision}})": "Đã cập nhật khả năng định tuyến cho kênh {{channel_id}} / {{upstream_model}} (bản sửa đổi {{revision}})",
+    "Updated routing channel settings for channel {{channel_id}} (priority: {{priority}}, weight: {{weight}})": "Đã cập nhật cài đặt định tuyến cho kênh {{channel_id}} (ưu tiên: {{priority}}, trọng số: {{weight}})",
     "Updated routing policy for {{model}} (strict: {{strict}}, revision {{revision}})": "Đã cập nhật chính sách định tuyến cho {{model}} (nghiêm ngặt: {{strict}}, bản sửa đổi {{revision}})",
     "Updated successfully": "Cập nhật thành công",
     "Updated system setting {{key}}": "Đã cập nhật cài đặt hệ thống {{key}}",

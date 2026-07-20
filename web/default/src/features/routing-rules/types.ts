@@ -109,6 +109,18 @@ export type UpsertVideoRoutingCapabilityRequest = {
   revision: number
 }
 
+export type UpdateVideoRoutingChannelSettingsRequest = {
+  channel_id: number
+  priority: number
+  weight: number
+}
+
+export type VideoRoutingChannelSettings = {
+  channel_id: number
+  priority: number
+  weight: number
+}
+
 export type VideoRoutingSimulationRequest = {
   model: string
   group: string

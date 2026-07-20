@@ -4520,6 +4520,7 @@
     "Updated channel {{name}} (ID: {{id}})": "更新渠道 {{name}}（ID: {{id}}）",
     "Updated daily": "每日更新",
     "Updated routing capability for channel {{channel_id}} / {{upstream_model}} (revision {{revision}})": "更新渠道 {{channel_id}} / {{upstream_model}} 的分流能力（修订版 {{revision}}）",
+    "Updated routing channel settings for channel {{channel_id}} (priority: {{priority}}, weight: {{weight}})": "更新渠道 {{channel_id}} 的分流设置（优先级：{{priority}}，权重：{{weight}}）",
     "Updated routing policy for {{model}} (strict: {{strict}}, revision {{revision}})": "更新 {{model}} 的分流策略（严格：{{strict}}，修订版 {{revision}}）",
     "Updated successfully": "更新成功",
     "Updated system setting {{key}}": "修改系统设置 {{key}}",

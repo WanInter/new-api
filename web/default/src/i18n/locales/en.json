@@ -4520,6 +4520,7 @@
     "Updated channel {{name}} (ID: {{id}})": "Updated channel {{name}} (ID: {{id}})",
     "Updated daily": "Updated daily",
     "Updated routing capability for channel {{channel_id}} / {{upstream_model}} (revision {{revision}})": "Updated routing capability for channel {{channel_id}} / {{upstream_model}} (revision {{revision}})",
+    "Updated routing channel settings for channel {{channel_id}} (priority: {{priority}}, weight: {{weight}})": "Updated routing channel settings for channel {{channel_id}} (priority: {{priority}}, weight: {{weight}})",
     "Updated routing policy for {{model}} (strict: {{strict}}, revision {{revision}})": "Updated routing policy for {{model}} (strict: {{strict}}, revision {{revision}})",
     "Updated successfully": "Updated successfully",
     "Updated system setting {{key}}": "Updated system setting {{key}}",

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,7 +20,12 @@ func setupVideoRoutingModelTestDB(t *testing.T) {
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&VideoRoutingPolicy{}, &VideoRoutingCapabilityRule{}))
+	require.NoError(t, db.AutoMigrate(
+		&Channel{},
+		&Ability{},
+		&VideoRoutingPolicy{},
+		&VideoRoutingCapabilityRule{},
+	))
 	DB = db
 	LOG_DB = db
 	t.Cleanup(func() {
@@ -77,4 +83,38 @@ func TestVideoRoutingCapabilityRuleRevisionProtectsUpdateAndDelete(t *testing.T)
 	err = DeleteVideoRoutingCapabilityRule(updated.Id, created.Revision)
 	assert.True(t, errors.Is(err, ErrVideoRoutingRevisionConflict))
 	require.NoError(t, DeleteVideoRoutingCapabilityRule(updated.Id, updated.Revision))
+}
+
+func TestUpdatePriorityAndWeightSynchronizesAbilitiesAndPreservesZero(t *testing.T) {
+	setupVideoRoutingModelTestDB(t)
+
+	priority := int64(12)
+	weight := uint(20)
+	channel := Channel{
+		Id:       42,
+		Name:     "routing channel",
+		Key:      "key",
+		Status:   common.ChannelStatusEnabled,
+		Group:    "creative-video",
+		Models:   "seedance2.0",
+		Priority: &priority,
+		Weight:   &weight,
+	}
+	require.NoError(t, DB.Create(&channel).Error)
+	require.NoError(t, channel.AddAbilities(nil))
+
+	zeroPriority := int64(0)
+	zeroWeight := uint(0)
+	updated, err := UpdatePriorityAndWeight(channel.Id, &zeroPriority, &zeroWeight)
+	require.NoError(t, err)
+	require.NotNil(t, updated.Priority)
+	assert.Equal(t, int64(0), *updated.Priority)
+	require.NotNil(t, updated.Weight)
+	assert.Equal(t, uint(0), *updated.Weight)
+
+	var ability Ability
+	require.NoError(t, DB.First(&ability, "channel_id = ?", channel.Id).Error)
+	require.NotNil(t, ability.Priority)
+	assert.Equal(t, int64(0), *ability.Priority)
+	assert.Equal(t, uint(0), ability.Weight)
 }

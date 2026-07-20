@@ -4520,6 +4520,7 @@
     "Updated channel {{name}} (ID: {{id}})": "チャネル {{name}} を更新しました（ID: {{id}}）",
     "Updated daily": "毎日更新",
     "Updated routing capability for channel {{channel_id}} / {{upstream_model}} (revision {{revision}})": "チャネル {{channel_id}} / {{upstream_model}} のルーティング機能を更新しました（リビジョン {{revision}}）",
+    "Updated routing channel settings for channel {{channel_id}} (priority: {{priority}}, weight: {{weight}})": "チャネル {{channel_id}} のルーティング設定を更新しました（優先度：{{priority}}、重み：{{weight}}）",
     "Updated routing policy for {{model}} (strict: {{strict}}, revision {{revision}})": "{{model}} のルーティングポリシーを更新しました（厳格: {{strict}}、リビジョン {{revision}}）",
     "Updated successfully": "正常に更新されました",
     "Updated system setting {{key}}": "システム設定 {{key}} を更新しました",

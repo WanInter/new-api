@@ -362,6 +362,8 @@ const AUDIT_TEMPLATES: Record<string, string> = {
     'Updated routing capability for channel {{channel_id}} / {{upstream_model}} (revision {{revision}})',
   'channel.routing_capability_delete':
     'Deleted routing capability for channel {{channel_id}} / {{upstream_model}} (revision {{revision}})',
+  'channel.routing_channel_settings_update':
+    'Updated routing channel settings for channel {{channel_id}} (priority: {{priority}}, weight: {{weight}})',
   'channel.image_routing_config_update':
     'Updated image routing configuration for {{model}} ({{size_count}} sizes, {{rule_count}} rules, revision {{revision}})',
   'channel.image_routing_policy_update':
