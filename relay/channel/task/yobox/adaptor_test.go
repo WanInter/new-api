@@ -90,6 +90,33 @@ func TestConvertToRequestPayloadSeedance20AlwaysUsesImageReferences(t *testing.T
 	}
 }
 
+func TestConvertToRequestPayloadSeedance20ForwardsVideoAndAudioReferences(t *testing.T) {
+	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Model:     "seedance-2.0",
+		Prompt:    "animate the cat",
+		Duration:  5,
+		Videos:    []string{"https://example.com/reference.mp4"},
+		VideoURLs: []string{"https://example.com/legacy-reference.mp4"},
+		Audios:    []string{"https://example.com/reference.mp3"},
+		AudioURLs: []string{"https://example.com/legacy-reference.mp3"},
+	}, &relaycommon.RelayInfo{})
+	require.NoError(t, err)
+
+	body, ok := payload.(map[string]any)
+	require.True(t, ok)
+	input, ok := body["input"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, []map[string]any{
+		{"url": "https://example.com/reference.mp4", "strength": "MID"},
+		{"url": "https://example.com/legacy-reference.mp4", "strength": "MID"},
+	}, input["video_references"])
+	assert.Equal(t, []map[string]any{
+		{"url": "https://example.com/reference.mp3", "strength": "MID"},
+		{"url": "https://example.com/legacy-reference.mp3", "strength": "MID"},
+	}, input["audio_references"])
+	assert.Equal(t, true, input["audio"])
+}
+
 func TestConvertToRequestPayloadDefaultsSeedance20Resolution(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	payload, err := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{

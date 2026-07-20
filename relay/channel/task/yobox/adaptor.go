@@ -348,6 +348,12 @@ func convertSeedance20Payload(req *relaycommon.TaskSubmitReq, modelName string) 
 	if len(req.Images) > 0 {
 		input["image_references"] = buildYoboxImageReferences(req.Images)
 	}
+	if references := buildYoboxMediaReferences(req.Videos, req.VideoURLs); len(references) > 0 {
+		input["video_references"] = references
+	}
+	if references := buildYoboxMediaReferences(req.Audios, req.AudioURLs); len(references) > 0 {
+		input["audio_references"] = references
+	}
 	if v, ok := req.Metadata["audio"]; ok {
 		if b, ok := v.(bool); ok {
 			input["audio"] = b
@@ -381,6 +387,23 @@ func buildYoboxImageReferences(images []string) []map[string]any {
 			"url":      imageURL,
 			"strength": "MID",
 		})
+	}
+	return refs
+}
+
+func buildYoboxMediaReferences(groups ...[]string) []map[string]any {
+	refs := make([]map[string]any, 0)
+	for _, group := range groups {
+		for _, mediaURL := range group {
+			mediaURL = strings.TrimSpace(mediaURL)
+			if mediaURL == "" {
+				continue
+			}
+			refs = append(refs, map[string]any{
+				"url":      mediaURL,
+				"strength": "MID",
+			})
+		}
 	}
 	return refs
 }
