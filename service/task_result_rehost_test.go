@@ -101,6 +101,42 @@ func TestTencentCOSUploadUsesVirtualHostedSignedRequest(t *testing.T) {
 	require.True(t, strings.HasPrefix(captured.Header.Get("Authorization"), "AWS4-HMAC-SHA256 Credential=secret-id/"))
 }
 
+func TestS3UploadUsesPathStyleSignedRequest(t *testing.T) {
+	var captured *http.Request
+	httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		captured = req.Clone(req.Context())
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("")),
+			Request:    req,
+		}, nil
+	})}
+	cfg := taskResultRehostConfig{
+		Backend:         taskResultRehostBackendS3,
+		UploadEndpoint:  "https://s3.ap-northeast-1.idrivee2.com",
+		Bucket:          "waypeak-work",
+		Region:          "ap-northeast-1",
+		UsePathStyle:    true,
+		AccessKeyID:     "secret-id",
+		AccessKeySecret: "secret-key",
+	}
+	client := cfg.newObjectStorageClient(httpClient)
+
+	_, err := client.PutObject(context.Background(), &s3.PutObjectInput{
+		Bucket:      ptr.String(cfg.Bucket),
+		Key:         ptr.String("generated/newapi/videos/result.mp4"),
+		Body:        bytes.NewReader([]byte("video")),
+		ContentType: ptr.String("video/mp4"),
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, captured)
+	require.Equal(t, "s3.ap-northeast-1.idrivee2.com", captured.URL.Host)
+	require.Equal(t, "/waypeak-work/generated/newapi/videos/result.mp4", captured.URL.Path)
+	require.True(t, strings.HasPrefix(captured.Header.Get("Authorization"), "AWS4-HMAC-SHA256 Credential=secret-id/"))
+}
+
 func TestTaskResultRehostConfigRejectsUnsupportedBackend(t *testing.T) {
 	cfg := taskResultRehostConfig{Backend: "unknown"}
 	err := cfg.validate()
@@ -127,6 +163,7 @@ func TestTaskResultRehostSettingsDatabaseOverridesEnvironment(t *testing.T) {
 		taskResultRehostOptionBucket:          "database-bucket-1250000000",
 		taskResultRehostOptionRegion:          "ap-guangzhou",
 		taskResultRehostOptionPublicBaseURL:   "https://database-bucket-1250000000.cos.ap-guangzhou.myqcloud.com",
+		taskResultRehostOptionUsePathStyle:    "true",
 		taskResultRehostOptionPrefixPath:      "generated/results",
 		taskResultRehostOptionMaxMB:           "256",
 		taskResultRehostOptionTimeoutSeconds:  "90",
@@ -138,6 +175,7 @@ func TestTaskResultRehostSettingsDatabaseOverridesEnvironment(t *testing.T) {
 	cfg := loadTaskResultRehostConfig()
 	require.NoError(t, cfg.validate())
 	require.Equal(t, "database-bucket-1250000000", cfg.Bucket)
+	require.True(t, cfg.UsePathStyle)
 	require.Equal(t, "database-id", cfg.AccessKeyID)
 	require.Equal(t, "database-secret", cfg.AccessKeySecret)
 
@@ -145,6 +183,7 @@ func TestTaskResultRehostSettingsDatabaseOverridesEnvironment(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "database", settings.ConfigSource)
 	require.Equal(t, "database", settings.CredentialSource)
+	require.True(t, settings.UsePathStyle)
 }
 
 func TestSaveTaskResultRehostSettingsMigratesEnvironmentCredentialsEncrypted(t *testing.T) {

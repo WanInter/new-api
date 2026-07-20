@@ -45,6 +45,7 @@ type taskResultRehostConfig struct {
 	Bucket          string
 	Region          string
 	PublicBaseURL   string
+	UsePathStyle    bool
 	Prefix          string
 	AccessKeyID     string
 	AccessKeySecret string
@@ -155,6 +156,7 @@ func loadTaskResultRehostConfig() taskResultRehostConfig {
 		Bucket:          bucket,
 		Region:          region,
 		PublicBaseURL:   publicBaseURL,
+		UsePathStyle:    common.GetEnvOrDefaultBool("TASK_RESULT_REHOST_S3_PATH_STYLE", false),
 		Prefix:          strings.Trim(strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_PREFIX", defaultTaskResultRehostPrefix)), "/"),
 		AccessKeyID:     strings.TrimSpace(os.Getenv("TASK_RESULT_REHOST_ACCESS_KEY_ID")),
 		AccessKeySecret: strings.TrimSpace(os.Getenv("TASK_RESULT_REHOST_ACCESS_KEY_SECRET")),
@@ -402,7 +404,7 @@ func (c taskResultRehostConfig) newObjectStorageClient(httpClient s3.HTTPClient)
 		Region:                     c.Region,
 		Credentials:                credentials.NewStaticCredentialsProvider(c.AccessKeyID, c.AccessKeySecret, ""),
 		EndpointResolver:           resolver,
-		UsePathStyle:               false,
+		UsePathStyle:               c.UsePathStyle,
 		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
 		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 		HTTPClient:                 httpClient,

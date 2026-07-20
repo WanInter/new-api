@@ -2641,6 +2641,8 @@
     "按照如下格式输入：SecretId|SecretKey|SubAppId": "按照如下格式输入：SecretId|SecretKey|SubAppId",
     "未查询": "未查询",
     "余额不可用": "余额不可用",
-    "上游未提供真实余额": "上游未提供真实余额"
+    "上游未提供真实余额": "上游未提供真实余额",
+    "使用路径式 S3 寻址": "使用路径式 S3 寻址",
+    "不支持虚拟主机寻址的存储服务，请使用 endpoint/bucket/object 形式请求": "不支持虚拟主机寻址的存储服务，请使用 endpoint/bucket/object 形式请求"
   }
 }

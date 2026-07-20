@@ -29,6 +29,7 @@ const (
 	taskResultRehostOptionBucket          = taskResultRehostOptionPrefix + "bucket"
 	taskResultRehostOptionRegion          = taskResultRehostOptionPrefix + "region"
 	taskResultRehostOptionPublicBaseURL   = taskResultRehostOptionPrefix + "public_base_url"
+	taskResultRehostOptionUsePathStyle    = taskResultRehostOptionPrefix + "use_path_style"
 	taskResultRehostOptionPrefixPath      = taskResultRehostOptionPrefix + "prefix"
 	taskResultRehostOptionMaxMB           = taskResultRehostOptionPrefix + "max_mb"
 	taskResultRehostOptionTimeoutSeconds  = taskResultRehostOptionPrefix + "timeout_seconds"
@@ -49,6 +50,7 @@ type TaskResultRehostSettings struct {
 	Bucket                string `json:"bucket"`
 	Region                string `json:"region"`
 	PublicBaseURL         string `json:"public_base_url"`
+	UsePathStyle          bool   `json:"use_path_style"`
 	Prefix                string `json:"prefix"`
 	MaxMB                 int    `json:"max_mb"`
 	TimeoutSeconds        int    `json:"timeout_seconds"`
@@ -67,6 +69,7 @@ type TaskResultRehostSettingsUpdate struct {
 	Bucket           string  `json:"bucket"`
 	Region           string  `json:"region"`
 	PublicBaseURL    string  `json:"public_base_url"`
+	UsePathStyle     bool    `json:"use_path_style"`
 	Prefix           string  `json:"prefix"`
 	MaxMB            int     `json:"max_mb"`
 	TimeoutSeconds   int     `json:"timeout_seconds"`
@@ -153,6 +156,7 @@ func taskResultRehostConfigFromUpdate(update TaskResultRehostSettingsUpdate) (ta
 	cfg.Bucket = strings.TrimSpace(update.Bucket)
 	cfg.Region = strings.TrimSpace(update.Region)
 	cfg.PublicBaseURL = strings.TrimSpace(update.PublicBaseURL)
+	cfg.UsePathStyle = update.UsePathStyle
 	cfg.Prefix = strings.Trim(strings.TrimSpace(update.Prefix), "/")
 	cfg.MaxBytes = int64(update.MaxMB) * 1024 * 1024
 	cfg.Timeout = time.Duration(update.TimeoutSeconds) * time.Second
@@ -245,6 +249,7 @@ func taskResultRehostOptionsForStorage(cfg taskResultRehostConfig) (map[string]s
 		taskResultRehostOptionBucket:          cfg.Bucket,
 		taskResultRehostOptionRegion:          cfg.Region,
 		taskResultRehostOptionPublicBaseURL:   cfg.PublicBaseURL,
+		taskResultRehostOptionUsePathStyle:    strconv.FormatBool(cfg.UsePathStyle),
 		taskResultRehostOptionPrefixPath:      cfg.Prefix,
 		taskResultRehostOptionMaxMB:           strconv.FormatInt(cfg.MaxBytes/(1024*1024), 10),
 		taskResultRehostOptionTimeoutSeconds:  strconv.FormatInt(int64(cfg.Timeout/time.Second), 10),
@@ -282,6 +287,9 @@ func applyStoredTaskResultRehostConfig(cfg taskResultRehostConfig) taskResultReh
 	}
 	if value, ok := options[taskResultRehostOptionPublicBaseURL]; ok {
 		cfg.PublicBaseURL = strings.TrimSpace(value)
+	}
+	if value, ok := options[taskResultRehostOptionUsePathStyle]; ok {
+		cfg.UsePathStyle, _ = strconv.ParseBool(value)
 	}
 	if value, ok := options[taskResultRehostOptionPrefixPath]; ok {
 		cfg.Prefix = strings.Trim(strings.TrimSpace(value), "/")
@@ -355,6 +363,7 @@ func taskResultRehostSettingsView(cfg taskResultRehostConfig, options map[string
 		Bucket:                cfg.Bucket,
 		Region:                cfg.Region,
 		PublicBaseURL:         cfg.PublicBaseURL,
+		UsePathStyle:          cfg.UsePathStyle,
 		Prefix:                cfg.Prefix,
 		MaxMB:                 int(cfg.MaxBytes / (1024 * 1024)),
 		TimeoutSeconds:        int(cfg.Timeout / time.Second),
@@ -416,6 +425,7 @@ func hasTaskResultRehostEnvironmentConfig() bool {
 		"TASK_RESULT_REHOST_BUCKET",
 		"TASK_RESULT_REHOST_REGION",
 		"TASK_RESULT_REHOST_PUBLIC_BASE_URL",
+		"TASK_RESULT_REHOST_S3_PATH_STYLE",
 		"TASK_RESULT_REHOST_PREFIX",
 		"TASK_RESULT_REHOST_ACCESS_KEY_ID",
 		"TASK_RESULT_REHOST_ACCESS_KEY_SECRET",

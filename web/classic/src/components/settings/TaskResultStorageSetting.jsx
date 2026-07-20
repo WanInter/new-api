@@ -48,6 +48,7 @@ const emptyDraft = {
   bucket: '',
   region: '',
   public_base_url: '',
+  use_path_style: false,
   prefix: 'generated/newapi/videos',
   max_mb: 512,
   timeout_seconds: 180,
@@ -67,6 +68,7 @@ const fromSettings = (settings) => ({
   bucket: settings.bucket,
   region: settings.region,
   public_base_url: settings.public_base_url,
+  use_path_style: settings.use_path_style,
   prefix: settings.prefix,
   max_mb: settings.max_mb,
   timeout_seconds: settings.timeout_seconds,
@@ -332,6 +334,24 @@ const TaskResultStorageSetting = () => {
                 />
               </Field>
             </Col>
+            {draft.backend === 's3' ? (
+              <Col span={24}>
+                <Checkbox
+                  checked={draft.use_path_style}
+                  onChange={(event) =>
+                    update('use_path_style', event.target.checked)
+                  }
+                  disabled={!!action}
+                >
+                  {t('使用路径式 S3 寻址')}
+                </Checkbox>
+                <Text type='tertiary' size='small'>
+                  {t(
+                    '不支持虚拟主机寻址的存储服务，请使用 endpoint/bucket/object 形式请求',
+                  )}
+                </Text>
+              </Col>
+            ) : null}
             {draft.backend === 'tencent_cos' ? (
               <Col span={24}>
                 <Button

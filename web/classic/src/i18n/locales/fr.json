@@ -3785,6 +3785,8 @@
     "使用默认尺寸": "Taille par defaut utilisee",
     "回退静态优先级": "Repli sur la priorite statique",
     "没有匹配的图片路由": "Aucune route d'image correspondante",
-    "首选": "Principal"
+    "首选": "Principal",
+    "使用路径式 S3 寻址": "Utiliser l'adressage S3 de type chemin",
+    "不支持虚拟主机寻址的存储服务，请使用 endpoint/bucket/object 形式请求": "Pour les services de stockage qui ne prennent pas en charge l'adressage par hôte virtuel, utilisez des requêtes endpoint/bucket/object"
   }
 }

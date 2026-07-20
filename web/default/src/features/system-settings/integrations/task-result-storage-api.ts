@@ -32,6 +32,7 @@ export type TaskResultStorageSettings = {
   bucket: string
   region: string
   public_base_url: string
+  use_path_style: boolean
   prefix: string
   max_mb: number
   timeout_seconds: number
@@ -50,6 +51,7 @@ export type TaskResultStorageUpdate = {
   bucket: string
   region: string
   public_base_url: string
+  use_path_style: boolean
   prefix: string
   max_mb: number
   timeout_seconds: number

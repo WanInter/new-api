@@ -80,6 +80,7 @@ const createSchema = (t: (key: string) => string) =>
       bucket: z.string(),
       region: z.string(),
       publicBaseURL: z.string(),
+      usePathStyle: z.boolean(),
       prefix: z.string().trim().min(1, t('Object prefix is required')),
       maxMB: z.number().int().min(1).max(10240),
       timeoutSeconds: z.number().int().min(1).max(1800),
@@ -125,6 +126,7 @@ const EMPTY_VALUES: FormValues = {
   bucket: '',
   region: '',
   publicBaseURL: '',
+  usePathStyle: false,
   prefix: 'generated/newapi/videos',
   maxMB: 512,
   timeoutSeconds: 180,
@@ -144,6 +146,7 @@ function settingsToValues(settings: TaskResultStorageSettings): FormValues {
     bucket: settings.bucket,
     region: settings.region,
     publicBaseURL: settings.public_base_url,
+    usePathStyle: settings.use_path_style,
     prefix: settings.prefix,
     maxMB: settings.max_mb,
     timeoutSeconds: settings.timeout_seconds,
@@ -164,6 +167,7 @@ function valuesToUpdate(values: FormValues): TaskResultStorageUpdate {
     bucket: values.bucket.trim(),
     region: values.region.trim(),
     public_base_url: values.publicBaseURL.trim(),
+    use_path_style: values.usePathStyle,
     prefix: values.prefix.trim(),
     max_mb: values.maxMB,
     timeout_seconds: values.timeoutSeconds,
@@ -461,6 +465,32 @@ export function TaskResultStorageSettingsSection() {
               </FormItem>
             )}
           />
+
+          {backend === 's3' ? (
+            <FormField
+              control={form.control}
+              name='usePathStyle'
+              render={({ field }) => (
+                <SettingsSwitchItem>
+                  <SettingsSwitchContent>
+                    <FormLabel>{t('Use path-style addressing')}</FormLabel>
+                    <FormDescription>
+                      {t(
+                        'Send requests as endpoint/bucket/object for storage providers that do not support virtual-hosted buckets'
+                      )}
+                    </FormDescription>
+                  </SettingsSwitchContent>
+                  <FormControl>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                      disabled={busy}
+                    />
+                  </FormControl>
+                </SettingsSwitchItem>
+              )}
+            />
+          ) : null}
 
           {backend === 'tencent_cos' ? (
             <div data-settings-form-span='full'>
