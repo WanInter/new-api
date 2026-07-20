@@ -32,8 +32,12 @@ const (
 	imageTaskResultRehostPrefix   = "generated/newapi/images"
 
 	taskResultRehostBackendAliyunOSS  = "aliyun_oss"
+	taskResultRehostBackendIDrive     = "idrive"
 	taskResultRehostBackendS3         = "s3"
 	taskResultRehostBackendTencentCOS = "tencent_cos"
+
+	defaultTaskResultRehostSignedURLExpiry = 7 * 24 * time.Hour
+	maxTaskResultRehostSignedURLExpiry     = 7 * 24 * time.Hour
 )
 
 type taskResultRehostConfig struct {
@@ -46,6 +50,7 @@ type taskResultRehostConfig struct {
 	Region          string
 	PublicBaseURL   string
 	UsePathStyle    bool
+	SignedURLExpiry time.Duration
 	Prefix          string
 	AccessKeyID     string
 	AccessKeySecret string
@@ -94,9 +99,15 @@ func RehostTaskResultURL(ctx context.Context, task *model.Task, rawURL string, p
 	if err := cfg.upload(ctx, objectKey, body, contentType); err != nil {
 		return "", err
 	}
-	publicURL := strings.TrimRight(cfg.PublicBaseURL, "/") + "/" + strings.TrimLeft(objectKey, "/")
+	objectURL, err := cfg.objectURL(ctx, objectKey)
+	if err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		_ = cfg.deleteObject(cleanupCtx, objectKey)
+		return "", fmt.Errorf("generate task result URL: %w", err)
+	}
 	logger.LogInfo(ctx, fmt.Sprintf("task result rehosted: task=%s source_host=%s object=%s", task.TaskID, sourceHost(rawURL), objectKey))
-	return publicURL, nil
+	return objectURL, nil
 }
 
 func RehostTaskResultDataURL(ctx context.Context, task *model.Task, dataURL string) (string, error) {
@@ -124,9 +135,15 @@ func RehostTaskResultDataURL(ctx context.Context, task *model.Task, dataURL stri
 	if err := cfg.upload(ctx, objectKey, bytes.NewReader(body), contentType); err != nil {
 		return "", err
 	}
-	publicURL := strings.TrimRight(cfg.PublicBaseURL, "/") + "/" + strings.TrimLeft(objectKey, "/")
+	objectURL, err := cfg.objectURL(ctx, objectKey)
+	if err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		_ = cfg.deleteObject(cleanupCtx, objectKey)
+		return "", fmt.Errorf("generate task result URL: %w", err)
+	}
 	logger.LogInfo(ctx, fmt.Sprintf("task data URL result rehosted: task=%s object=%s", task.TaskID, objectKey))
-	return publicURL, nil
+	return objectURL, nil
 }
 
 func loadTaskResultRehostConfig() taskResultRehostConfig {
@@ -137,6 +154,10 @@ func loadTaskResultRehostConfig() taskResultRehostConfig {
 	timeoutSeconds := common.GetEnvOrDefault("TASK_RESULT_REHOST_TIMEOUT_SECONDS", 180)
 	if timeoutSeconds <= 0 {
 		timeoutSeconds = 180
+	}
+	signedURLExpiryHours := common.GetEnvOrDefault("TASK_RESULT_REHOST_SIGNED_URL_EXPIRY_HOURS", int(defaultTaskResultRehostSignedURLExpiry/time.Hour))
+	if signedURLExpiryHours <= 0 {
+		signedURLExpiryHours = int(defaultTaskResultRehostSignedURLExpiry / time.Hour)
 	}
 	backend := strings.ToLower(strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_BACKEND", taskResultRehostBackendAliyunOSS)))
 	if backend == "" {
@@ -157,6 +178,7 @@ func loadTaskResultRehostConfig() taskResultRehostConfig {
 		Region:          region,
 		PublicBaseURL:   publicBaseURL,
 		UsePathStyle:    common.GetEnvOrDefaultBool("TASK_RESULT_REHOST_S3_PATH_STYLE", false),
+		SignedURLExpiry: time.Duration(signedURLExpiryHours) * time.Hour,
 		Prefix:          strings.Trim(strings.TrimSpace(common.GetEnvOrDefaultString("TASK_RESULT_REHOST_PREFIX", defaultTaskResultRehostPrefix)), "/"),
 		AccessKeyID:     strings.TrimSpace(os.Getenv("TASK_RESULT_REHOST_ACCESS_KEY_ID")),
 		AccessKeySecret: strings.TrimSpace(os.Getenv("TASK_RESULT_REHOST_ACCESS_KEY_SECRET")),
@@ -173,6 +195,10 @@ func tencentCOSServiceEndpoint(region string) string {
 
 func tencentCOSBucketURL(bucket, region string) string {
 	return "https://" + strings.TrimSpace(bucket) + ".cos." + strings.TrimSpace(region) + ".myqcloud.com"
+}
+
+func iDriveE2ServiceEndpoint(region string) string {
+	return "https://s3." + strings.TrimSpace(region) + ".idrivee2.com"
 }
 
 func parseRehostDomains(value string) map[string]bool {
@@ -225,7 +251,7 @@ func (c taskResultRehostConfig) validate() error {
 		return c.LoadError
 	}
 	switch c.Backend {
-	case taskResultRehostBackendAliyunOSS, taskResultRehostBackendS3, taskResultRehostBackendTencentCOS:
+	case taskResultRehostBackendAliyunOSS, taskResultRehostBackendIDrive, taskResultRehostBackendS3, taskResultRehostBackendTencentCOS:
 	default:
 		return fmt.Errorf("unsupported task result rehost backend: %s", c.Backend)
 	}
@@ -240,8 +266,11 @@ func (c taskResultRehostConfig) validate() error {
 	if c.Region == "" {
 		missing = append(missing, "TASK_RESULT_REHOST_REGION")
 	}
-	if c.PublicBaseURL == "" {
+	if !c.usesPresignedObjectURLs() && c.PublicBaseURL == "" {
 		missing = append(missing, "TASK_RESULT_REHOST_PUBLIC_BASE_URL")
+	}
+	if c.usesPresignedObjectURLs() && (c.SignedURLExpiry <= 0 || c.SignedURLExpiry > maxTaskResultRehostSignedURLExpiry) {
+		return fmt.Errorf("task result rehost signed URL expiry must be between 1 hour and %d hours", int(maxTaskResultRehostSignedURLExpiry/time.Hour))
 	}
 	if c.AccessKeyID == "" {
 		missing = append(missing, "TASK_RESULT_REHOST_ACCESS_KEY_ID")
@@ -394,6 +423,26 @@ func (c taskResultRehostConfig) deleteObject(ctx context.Context, objectKey stri
 		Key:    ptr.String(objectKey),
 	})
 	return err
+}
+
+func (c taskResultRehostConfig) usesPresignedObjectURLs() bool {
+	return c.Backend == taskResultRehostBackendIDrive
+}
+
+func (c taskResultRehostConfig) objectURL(ctx context.Context, objectKey string) (string, error) {
+	if !c.usesPresignedObjectURLs() {
+		return strings.TrimRight(c.PublicBaseURL, "/") + "/" + strings.TrimLeft(objectKey, "/"), nil
+	}
+	presigned, err := s3.NewPresignClient(c.newObjectStorageClient(nil)).PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: ptr.String(c.Bucket),
+		Key:    ptr.String(objectKey),
+	}, func(options *s3.PresignOptions) {
+		options.Expires = c.SignedURLExpiry
+	})
+	if err != nil {
+		return "", err
+	}
+	return presigned.URL, nil
 }
 
 func (c taskResultRehostConfig) newObjectStorageClient(httpClient s3.HTTPClient) *s3.Client {

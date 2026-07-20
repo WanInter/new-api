@@ -30,6 +30,7 @@ const (
 	taskResultRehostOptionRegion          = taskResultRehostOptionPrefix + "region"
 	taskResultRehostOptionPublicBaseURL   = taskResultRehostOptionPrefix + "public_base_url"
 	taskResultRehostOptionUsePathStyle    = taskResultRehostOptionPrefix + "use_path_style"
+	taskResultRehostOptionSignedURLExpiry = taskResultRehostOptionPrefix + "signed_url_expiry_hours"
 	taskResultRehostOptionPrefixPath      = taskResultRehostOptionPrefix + "prefix"
 	taskResultRehostOptionMaxMB           = taskResultRehostOptionPrefix + "max_mb"
 	taskResultRehostOptionTimeoutSeconds  = taskResultRehostOptionPrefix + "timeout_seconds"
@@ -51,6 +52,7 @@ type TaskResultRehostSettings struct {
 	Region                string `json:"region"`
 	PublicBaseURL         string `json:"public_base_url"`
 	UsePathStyle          bool   `json:"use_path_style"`
+	SignedURLExpiryHours  int    `json:"signed_url_expiry_hours"`
 	Prefix                string `json:"prefix"`
 	MaxMB                 int    `json:"max_mb"`
 	TimeoutSeconds        int    `json:"timeout_seconds"`
@@ -62,22 +64,23 @@ type TaskResultRehostSettings struct {
 }
 
 type TaskResultRehostSettingsUpdate struct {
-	Enabled          bool    `json:"enabled"`
-	Domains          string  `json:"domains"`
-	Backend          string  `json:"backend"`
-	UploadEndpoint   string  `json:"upload_endpoint"`
-	Bucket           string  `json:"bucket"`
-	Region           string  `json:"region"`
-	PublicBaseURL    string  `json:"public_base_url"`
-	UsePathStyle     bool    `json:"use_path_style"`
-	Prefix           string  `json:"prefix"`
-	MaxMB            int     `json:"max_mb"`
-	TimeoutSeconds   int     `json:"timeout_seconds"`
-	AccessKeyID      *string `json:"access_key_id,omitempty"`
-	AccessKeySecret  *string `json:"access_key_secret,omitempty"`
-	Proxy            *string `json:"proxy,omitempty"`
-	ClearCredentials bool    `json:"clear_credentials,omitempty"`
-	ClearProxy       bool    `json:"clear_proxy,omitempty"`
+	Enabled              bool    `json:"enabled"`
+	Domains              string  `json:"domains"`
+	Backend              string  `json:"backend"`
+	UploadEndpoint       string  `json:"upload_endpoint"`
+	Bucket               string  `json:"bucket"`
+	Region               string  `json:"region"`
+	PublicBaseURL        string  `json:"public_base_url"`
+	UsePathStyle         bool    `json:"use_path_style"`
+	SignedURLExpiryHours int     `json:"signed_url_expiry_hours"`
+	Prefix               string  `json:"prefix"`
+	MaxMB                int     `json:"max_mb"`
+	TimeoutSeconds       int     `json:"timeout_seconds"`
+	AccessKeyID          *string `json:"access_key_id,omitempty"`
+	AccessKeySecret      *string `json:"access_key_secret,omitempty"`
+	Proxy                *string `json:"proxy,omitempty"`
+	ClearCredentials     bool    `json:"clear_credentials,omitempty"`
+	ClearProxy           bool    `json:"clear_proxy,omitempty"`
 }
 
 type TaskResultRehostConnectionResult struct {
@@ -157,6 +160,9 @@ func taskResultRehostConfigFromUpdate(update TaskResultRehostSettingsUpdate) (ta
 	cfg.Region = strings.TrimSpace(update.Region)
 	cfg.PublicBaseURL = strings.TrimSpace(update.PublicBaseURL)
 	cfg.UsePathStyle = update.UsePathStyle
+	if update.SignedURLExpiryHours > 0 {
+		cfg.SignedURLExpiry = time.Duration(update.SignedURLExpiryHours) * time.Hour
+	}
 	cfg.Prefix = strings.Trim(strings.TrimSpace(update.Prefix), "/")
 	cfg.MaxBytes = int64(update.MaxMB) * 1024 * 1024
 	cfg.Timeout = time.Duration(update.TimeoutSeconds) * time.Second
@@ -184,7 +190,7 @@ func taskResultRehostConfigFromUpdate(update TaskResultRehostSettingsUpdate) (ta
 
 func validateTaskResultRehostSettings(cfg taskResultRehostConfig, requireComplete bool) error {
 	switch cfg.Backend {
-	case taskResultRehostBackendAliyunOSS, taskResultRehostBackendS3, taskResultRehostBackendTencentCOS:
+	case taskResultRehostBackendAliyunOSS, taskResultRehostBackendIDrive, taskResultRehostBackendS3, taskResultRehostBackendTencentCOS:
 	default:
 		return fmt.Errorf("unsupported task result rehost backend: %s", cfg.Backend)
 	}
@@ -200,13 +206,17 @@ func validateTaskResultRehostSettings(cfg taskResultRehostConfig, requireComplet
 	if cfg.Timeout > 30*time.Minute {
 		return fmt.Errorf("timeout cannot exceed 1800 seconds")
 	}
+	if cfg.usesPresignedObjectURLs() && (cfg.SignedURLExpiry <= 0 || cfg.SignedURLExpiry > maxTaskResultRehostSignedURLExpiry) {
+		return fmt.Errorf("signed URL expiry must be between 1 and %d hours", int(maxTaskResultRehostSignedURLExpiry/time.Hour))
+	}
 	if cfg.Prefix == "" || path.Clean(cfg.Prefix) == "." || strings.HasPrefix(path.Clean(cfg.Prefix), "../") {
 		return fmt.Errorf("object prefix is invalid")
 	}
-	for name, rawURL := range map[string]string{
-		"upload endpoint": cfg.UploadEndpoint,
-		"public base URL": cfg.PublicBaseURL,
-	} {
+	urls := map[string]string{"upload endpoint": cfg.UploadEndpoint}
+	if !cfg.usesPresignedObjectURLs() {
+		urls["public base URL"] = cfg.PublicBaseURL
+	}
+	for name, rawURL := range urls {
 		if rawURL == "" {
 			continue
 		}
@@ -250,6 +260,7 @@ func taskResultRehostOptionsForStorage(cfg taskResultRehostConfig) (map[string]s
 		taskResultRehostOptionRegion:          cfg.Region,
 		taskResultRehostOptionPublicBaseURL:   cfg.PublicBaseURL,
 		taskResultRehostOptionUsePathStyle:    strconv.FormatBool(cfg.UsePathStyle),
+		taskResultRehostOptionSignedURLExpiry: strconv.FormatInt(int64(cfg.SignedURLExpiry/time.Hour), 10),
 		taskResultRehostOptionPrefixPath:      cfg.Prefix,
 		taskResultRehostOptionMaxMB:           strconv.FormatInt(cfg.MaxBytes/(1024*1024), 10),
 		taskResultRehostOptionTimeoutSeconds:  strconv.FormatInt(int64(cfg.Timeout/time.Second), 10),
@@ -290,6 +301,11 @@ func applyStoredTaskResultRehostConfig(cfg taskResultRehostConfig) taskResultReh
 	}
 	if value, ok := options[taskResultRehostOptionUsePathStyle]; ok {
 		cfg.UsePathStyle, _ = strconv.ParseBool(value)
+	}
+	if value, ok := options[taskResultRehostOptionSignedURLExpiry]; ok {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			cfg.SignedURLExpiry = time.Duration(parsed) * time.Hour
+		}
 	}
 	if value, ok := options[taskResultRehostOptionPrefixPath]; ok {
 		cfg.Prefix = strings.Trim(strings.TrimSpace(value), "/")
@@ -346,6 +362,16 @@ func normalizeTaskResultRehostConfig(cfg *taskResultRehostConfig) {
 			cfg.PublicBaseURL = tencentCOSBucketURL(cfg.Bucket, cfg.Region)
 		}
 	}
+	if cfg.Backend == taskResultRehostBackendIDrive {
+		cfg.UsePathStyle = true
+		cfg.PublicBaseURL = ""
+		if cfg.UploadEndpoint == "" && cfg.Region != "" {
+			cfg.UploadEndpoint = iDriveE2ServiceEndpoint(cfg.Region)
+		}
+		if cfg.Endpoint == "" {
+			cfg.Endpoint = cfg.UploadEndpoint
+		}
+	}
 }
 
 func taskResultRehostSettingsView(cfg taskResultRehostConfig, options map[string]string) TaskResultRehostSettings {
@@ -364,6 +390,7 @@ func taskResultRehostSettingsView(cfg taskResultRehostConfig, options map[string
 		Region:                cfg.Region,
 		PublicBaseURL:         cfg.PublicBaseURL,
 		UsePathStyle:          cfg.UsePathStyle,
+		SignedURLExpiryHours:  int(cfg.SignedURLExpiry / time.Hour),
 		Prefix:                cfg.Prefix,
 		MaxMB:                 int(cfg.MaxBytes / (1024 * 1024)),
 		TimeoutSeconds:        int(cfg.Timeout / time.Second),
@@ -426,6 +453,7 @@ func hasTaskResultRehostEnvironmentConfig() bool {
 		"TASK_RESULT_REHOST_REGION",
 		"TASK_RESULT_REHOST_PUBLIC_BASE_URL",
 		"TASK_RESULT_REHOST_S3_PATH_STYLE",
+		"TASK_RESULT_REHOST_SIGNED_URL_EXPIRY_HOURS",
 		"TASK_RESULT_REHOST_PREFIX",
 		"TASK_RESULT_REHOST_ACCESS_KEY_ID",
 		"TASK_RESULT_REHOST_ACCESS_KEY_SECRET",
@@ -466,10 +494,13 @@ func verifyTaskResultRehostStorage(ctx context.Context, cfg taskResultRehostConf
 		}
 	}()
 
-	result.ObjectURL = strings.TrimRight(cfg.PublicBaseURL, "/") + "/" + strings.TrimLeft(objectKey, "/")
+	result.ObjectURL, err = cfg.objectURL(ctx, objectKey)
+	if err != nil {
+		return result, fmt.Errorf("generate test object URL: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, result.ObjectURL, nil)
 	if err != nil {
-		return result, fmt.Errorf("create public read request: %w", err)
+		return result, fmt.Errorf("create object read request: %w", err)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -478,14 +509,14 @@ func verifyTaskResultRehostStorage(ctx context.Context, cfg taskResultRehostConf
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		preview, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return result, fmt.Errorf("public read returned status %d: %s", resp.StatusCode, string(preview))
+		return result, fmt.Errorf("object read returned status %d: %s", resp.StatusCode, string(preview))
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(len(content)+1)))
 	if err != nil {
 		return result, fmt.Errorf("read test object response: %w", err)
 	}
 	if !bytes.Equal(body, content) {
-		return result, fmt.Errorf("public read returned unexpected content")
+		return result, fmt.Errorf("object read returned unexpected content")
 	}
 	result.Readable = true
 	if err = cleanup(); err != nil {

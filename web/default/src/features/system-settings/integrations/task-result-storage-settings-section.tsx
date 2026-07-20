@@ -75,12 +75,13 @@ const createSchema = (t: (key: string) => string) =>
     .object({
       enabled: z.boolean(),
       domains: z.string(),
-      backend: z.enum(['tencent_cos', 's3', 'aliyun_oss']),
+      backend: z.enum(['tencent_cos', 's3', 'aliyun_oss', 'idrive']),
       uploadEndpoint: z.string(),
       bucket: z.string(),
       region: z.string(),
       publicBaseURL: z.string(),
       usePathStyle: z.boolean(),
+      signedURLExpiryHours: z.number().int().min(1).max(168),
       prefix: z.string().trim().min(1, t('Object prefix is required')),
       maxMB: z.number().int().min(1).max(10240),
       timeoutSeconds: z.number().int().min(1).max(1800),
@@ -127,6 +128,7 @@ const EMPTY_VALUES: FormValues = {
   region: '',
   publicBaseURL: '',
   usePathStyle: false,
+  signedURLExpiryHours: 168,
   prefix: 'generated/newapi/videos',
   maxMB: 512,
   timeoutSeconds: 180,
@@ -147,6 +149,7 @@ function settingsToValues(settings: TaskResultStorageSettings): FormValues {
     region: settings.region,
     publicBaseURL: settings.public_base_url,
     usePathStyle: settings.use_path_style,
+    signedURLExpiryHours: settings.signed_url_expiry_hours,
     prefix: settings.prefix,
     maxMB: settings.max_mb,
     timeoutSeconds: settings.timeout_seconds,
@@ -168,6 +171,7 @@ function valuesToUpdate(values: FormValues): TaskResultStorageUpdate {
     region: values.region.trim(),
     public_base_url: values.publicBaseURL.trim(),
     use_path_style: values.usePathStyle,
+    signed_url_expiry_hours: values.signedURLExpiryHours,
     prefix: values.prefix.trim(),
     max_mb: values.maxMB,
     timeout_seconds: values.timeoutSeconds,
@@ -255,6 +259,16 @@ export function TaskResultStorageSettingsSection() {
         { shouldDirty: true }
       )
     }
+  }
+  const applyIDriveDefaults = () => {
+    const region = form.getValues('region').trim()
+    if (region !== '') {
+      form.setValue('uploadEndpoint', `https://s3.${region}.idrivee2.com`, {
+        shouldDirty: true,
+      })
+    }
+    form.setValue('publicBaseURL', '', { shouldDirty: true })
+    form.setValue('usePathStyle', true, { shouldDirty: true })
   }
 
   if (query.isLoading) {
@@ -351,7 +365,13 @@ export function TaskResultStorageSettingsSection() {
                 <FormLabel>{t('Storage backend')}</FormLabel>
                 <Select
                   value={field.value}
-                  onValueChange={field.onChange}
+                  onValueChange={(value) => {
+                    field.onChange(value)
+                    if (value === 'idrive') {
+                      form.setValue('publicBaseURL', '', { shouldDirty: true })
+                      form.setValue('usePathStyle', true, { shouldDirty: true })
+                    }
+                  }}
                   disabled={busy}
                 >
                   <FormControl>
@@ -367,6 +387,7 @@ export function TaskResultStorageSettingsSection() {
                       <SelectItem value='s3'>
                         {t('S3-compatible storage')}
                       </SelectItem>
+                      <SelectItem value='idrive'>{t('iDrive E2')}</SelectItem>
                       <SelectItem value='aliyun_oss'>
                         {t('Aliyun OSS')}
                       </SelectItem>
@@ -446,25 +467,27 @@ export function TaskResultStorageSettingsSection() {
               </FormItem>
             )}
           />
-          <FormField
-            control={form.control}
-            name='publicBaseURL'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{t('Public base URL')}</FormLabel>
-                <FormControl>
-                  <Input
-                    placeholder='https://media-1250000000.cos.ap-guangzhou.myqcloud.com'
-                    {...field}
-                  />
-                </FormControl>
-                <FormDescription>
-                  {t('Returned to clients after an object is stored')}
-                </FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          {backend !== 'idrive' ? (
+            <FormField
+              control={form.control}
+              name='publicBaseURL'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Public base URL')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder='https://media-1250000000.cos.ap-guangzhou.myqcloud.com'
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t('Returned to clients after an object is stored')}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          ) : null}
 
           {backend === 's3' ? (
             <FormField
@@ -505,6 +528,44 @@ export function TaskResultStorageSettingsSection() {
                 {t('Apply recommended COS endpoints')}
               </Button>
             </div>
+          ) : null}
+          {backend === 'idrive' ? (
+            <div data-settings-form-span='full'>
+              <Button
+                type='button'
+                size='sm'
+                variant='outline'
+                onClick={applyIDriveDefaults}
+                disabled={busy}
+              >
+                <RefreshCw data-icon='inline-start' />
+                {t('Apply recommended iDrive E2 endpoint')}
+              </Button>
+            </div>
+          ) : null}
+
+          {backend === 'idrive' ? (
+            <FormField
+              control={form.control}
+              name='signedURLExpiryHours'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Signed URL expiry (hours)')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      min={1}
+                      max={168}
+                      value={field.value}
+                      onChange={(event) =>
+                        field.onChange(Number(event.target.value))
+                      }
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
           ) : null}
 
           <FormField
@@ -725,7 +786,7 @@ export function TaskResultStorageSettingsSection() {
               <AlertTitle>{t('Connection successful')}</AlertTitle>
               <AlertDescription>
                 {t(
-                  'Upload, public read, and cleanup completed in {{latency}} ms',
+                  'Upload, read, and cleanup completed in {{latency}} ms',
                   { latency: testMutation.data.data.latency_ms }
                 )}
               </AlertDescription>

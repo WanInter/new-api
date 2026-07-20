@@ -27,12 +27,13 @@ export type TaskResultStorageSource =
 export type TaskResultStorageSettings = {
   enabled: boolean
   domains: string
-  backend: 'tencent_cos' | 's3' | 'aliyun_oss'
+  backend: 'tencent_cos' | 's3' | 'aliyun_oss' | 'idrive'
   upload_endpoint: string
   bucket: string
   region: string
   public_base_url: string
   use_path_style: boolean
+  signed_url_expiry_hours: number
   prefix: string
   max_mb: number
   timeout_seconds: number
@@ -52,6 +53,7 @@ export type TaskResultStorageUpdate = {
   region: string
   public_base_url: string
   use_path_style: boolean
+  signed_url_expiry_hours: number
   prefix: string
   max_mb: number
   timeout_seconds: number

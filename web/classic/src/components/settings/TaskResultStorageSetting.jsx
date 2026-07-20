@@ -49,6 +49,7 @@ const emptyDraft = {
   region: '',
   public_base_url: '',
   use_path_style: false,
+  signed_url_expiry_hours: 168,
   prefix: 'generated/newapi/videos',
   max_mb: 512,
   timeout_seconds: 180,
@@ -69,6 +70,7 @@ const fromSettings = (settings) => ({
   region: settings.region,
   public_base_url: settings.public_base_url,
   use_path_style: settings.use_path_style,
+  signed_url_expiry_hours: settings.signed_url_expiry_hours,
   prefix: settings.prefix,
   max_mb: settings.max_mb,
   timeout_seconds: settings.timeout_seconds,
@@ -162,7 +164,7 @@ const TaskResultStorageSetting = () => {
       (!draft.upload_endpoint ||
         !draft.bucket ||
         !draft.region ||
-        !draft.public_base_url)
+        (draft.backend !== 'idrive' && !draft.public_base_url))
     ) {
       showError(t('请填写完整的对象存储连接配置'));
       return false;
@@ -221,6 +223,18 @@ const TaskResultStorageSetting = () => {
     }));
   };
 
+  const applyIDriveDefaults = () => {
+    const region = draft.region.trim();
+    setDraft((current) => ({
+      ...current,
+      upload_endpoint: region
+        ? `https://s3.${region}.idrivee2.com`
+        : current.upload_endpoint,
+      public_base_url: '',
+      use_path_style: true,
+    }));
+  };
+
   return (
     <Card style={{ marginTop: 10 }}>
       <Spin spinning={loading}>
@@ -275,11 +289,18 @@ const TaskResultStorageSetting = () => {
               <Field label={t('存储后端')}>
                 <Select
                   value={draft.backend}
-                  onChange={(value) => update('backend', value)}
+                  onChange={(value) => {
+                    update('backend', value);
+                    if (value === 'idrive') {
+                      update('public_base_url', '');
+                      update('use_path_style', true);
+                    }
+                  }}
                   style={{ width: '100%' }}
                   optionList={[
                     { value: 'tencent_cos', label: 'Tencent COS' },
                     { value: 's3', label: 'S3' },
+                    { value: 'idrive', label: 'iDrive E2' },
                     { value: 'aliyun_oss', label: 'Aliyun OSS' },
                   ]}
                 />
@@ -328,18 +349,20 @@ const TaskResultStorageSetting = () => {
                 />
               </Field>
             </Col>
-            <Col xs={24} md={12}>
-              <Field
-                label={t('公开访问地址')}
-                description={t('该地址会返回给客户端')}
-              >
-                <Input
-                  value={draft.public_base_url}
-                  onChange={(value) => update('public_base_url', value)}
-                  placeholder='https://bucket.cos.ap-guangzhou.myqcloud.com'
-                />
-              </Field>
-            </Col>
+            {draft.backend !== 'idrive' ? (
+              <Col xs={24} md={12}>
+                <Field
+                  label={t('公开访问地址')}
+                  description={t('该地址会返回给客户端')}
+                >
+                  <Input
+                    value={draft.public_base_url}
+                    onChange={(value) => update('public_base_url', value)}
+                    placeholder='https://bucket.cos.ap-guangzhou.myqcloud.com'
+                  />
+                </Field>
+              </Col>
+            ) : null}
             {draft.backend === 's3' ? (
               <Col span={24}>
                 <Checkbox
@@ -367,6 +390,32 @@ const TaskResultStorageSetting = () => {
                 >
                   {t('应用推荐 COS 端点')}
                 </Button>
+              </Col>
+            ) : null}
+            {draft.backend === 'idrive' ? (
+              <Col span={24}>
+                <Button
+                  icon={<IconRefresh />}
+                  onClick={applyIDriveDefaults}
+                  disabled={!!action}
+                >
+                  {t('应用推荐 iDrive E2 端点')}
+                </Button>
+              </Col>
+            ) : null}
+            {draft.backend === 'idrive' ? (
+              <Col xs={12} md={6}>
+                <Field label={t('签名链接有效期（小时）')}>
+                  <InputNumber
+                    value={draft.signed_url_expiry_hours}
+                    min={1}
+                    max={168}
+                    onChange={(value) =>
+                      update('signed_url_expiry_hours', Number(value))
+                    }
+                    style={{ width: '100%' }}
+                  />
+                </Field>
               </Col>
             ) : null}
             <Col xs={24} md={12}>
@@ -487,10 +536,9 @@ const TaskResultStorageSetting = () => {
             <Banner
               type='success'
               icon={<IconTickCircle />}
-              description={t(
-                '上传、公开读取和清理均成功，耗时 {{latency}} ms',
-                { latency: testResult.latency_ms },
-              )}
+              description={t('上传、读取和清理均成功，耗时 {{latency}} ms', {
+                latency: testResult.latency_ms,
+              })}
             />
           ) : null}
           <div

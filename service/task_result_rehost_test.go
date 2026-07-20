@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -135,6 +137,51 @@ func TestS3UploadUsesPathStyleSignedRequest(t *testing.T) {
 	require.Equal(t, "s3.ap-northeast-1.idrivee2.com", captured.URL.Host)
 	require.Equal(t, "/waypeak-work/generated/newapi/videos/result.mp4", captured.URL.Path)
 	require.True(t, strings.HasPrefix(captured.Header.Get("Authorization"), "AWS4-HMAC-SHA256 Credential=secret-id/"))
+}
+
+func TestIDriveUsesPathStylePresignedObjectURL(t *testing.T) {
+	cfg := taskResultRehostConfig{
+		Backend:         taskResultRehostBackendIDrive,
+		Domains:         map[string]bool{"vidgen.x.ai": true},
+		UploadEndpoint:  "https://s3.ap-northeast-1.idrivee2.com",
+		Bucket:          "waypeak-work",
+		Region:          "ap-northeast-1",
+		UsePathStyle:    true,
+		SignedURLExpiry: defaultTaskResultRehostSignedURLExpiry,
+		AccessKeyID:     "test-access-id",
+		AccessKeySecret: "test-access-secret",
+	}
+
+	objectURL, err := cfg.objectURL(context.Background(), "generated/newapi/videos/result.mp4")
+
+	require.NoError(t, err)
+	parsed, err := url.Parse(objectURL)
+	require.NoError(t, err)
+	require.Equal(t, "s3.ap-northeast-1.idrivee2.com", parsed.Host)
+	require.Equal(t, "/waypeak-work/generated/newapi/videos/result.mp4", parsed.Path)
+	require.Equal(t, "AWS4-HMAC-SHA256", parsed.Query().Get("X-Amz-Algorithm"))
+	require.Equal(t, "604800", parsed.Query().Get("X-Amz-Expires"))
+	require.NotEmpty(t, parsed.Query().Get("X-Amz-Signature"))
+}
+
+func TestIDriveConfigDoesNotRequirePublicBaseURL(t *testing.T) {
+	cfg := taskResultRehostConfig{
+		Backend:         taskResultRehostBackendIDrive,
+		Domains:         map[string]bool{"vidgen.x.ai": true},
+		UploadEndpoint:  "https://s3.ap-northeast-1.idrivee2.com",
+		Bucket:          "waypeak-work",
+		Region:          "ap-northeast-1",
+		UsePathStyle:    true,
+		SignedURLExpiry: 24 * time.Hour,
+		Prefix:          defaultTaskResultRehostPrefix,
+		MaxBytes:        512 * 1024 * 1024,
+		Timeout:         180 * time.Second,
+		AccessKeyID:     "test-access-id",
+		AccessKeySecret: "test-access-secret",
+	}
+
+	require.NoError(t, cfg.validate())
+	require.NoError(t, validateTaskResultRehostSettings(cfg, true))
 }
 
 func TestTaskResultRehostConfigRejectsUnsupportedBackend(t *testing.T) {
@@ -265,6 +312,8 @@ func setupTaskResultRehostSettingsTest(t *testing.T) {
 		"TASK_RESULT_REHOST_BUCKET",
 		"TASK_RESULT_REHOST_REGION",
 		"TASK_RESULT_REHOST_PUBLIC_BASE_URL",
+		"TASK_RESULT_REHOST_S3_PATH_STYLE",
+		"TASK_RESULT_REHOST_SIGNED_URL_EXPIRY_HOURS",
 		"TASK_RESULT_REHOST_PREFIX",
 		"TASK_RESULT_REHOST_ACCESS_KEY_ID",
 		"TASK_RESULT_REHOST_ACCESS_KEY_SECRET",
@@ -283,16 +332,17 @@ func setupTaskResultRehostSettingsTest(t *testing.T) {
 
 func validTaskResultRehostSettingsUpdate() TaskResultRehostSettingsUpdate {
 	return TaskResultRehostSettingsUpdate{
-		Enabled:        true,
-		Domains:        "vidgen.x.ai,example.com",
-		Backend:        taskResultRehostBackendTencentCOS,
-		UploadEndpoint: "https://cos-internal.ap-guangzhou.myqcloud.com",
-		Bucket:         "media-1250000000",
-		Region:         "ap-guangzhou",
-		PublicBaseURL:  "https://media-1250000000.cos.ap-guangzhou.myqcloud.com",
-		Prefix:         "generated/newapi/videos",
-		MaxMB:          512,
-		TimeoutSeconds: 180,
+		Enabled:              true,
+		Domains:              "vidgen.x.ai,example.com",
+		Backend:              taskResultRehostBackendTencentCOS,
+		UploadEndpoint:       "https://cos-internal.ap-guangzhou.myqcloud.com",
+		Bucket:               "media-1250000000",
+		Region:               "ap-guangzhou",
+		PublicBaseURL:        "https://media-1250000000.cos.ap-guangzhou.myqcloud.com",
+		SignedURLExpiryHours: 168,
+		Prefix:               "generated/newapi/videos",
+		MaxMB:                512,
+		TimeoutSeconds:       180,
 	}
 }
 
