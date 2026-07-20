@@ -3,7 +3,7 @@ name: Build Docker Image on Push
 on:
   push:
     branches:
-      - "**"
+      - waninter
     paths:
       - "common/**"
       - "constant/**"
@@ -33,6 +33,10 @@ concurrency:
   group: build-image-on-push-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  IMAGE_NAME: ghcr.io/waninter/new-api
+  IMAGE_TAG: waninter
+
 jobs:
   build:
     name: Build and push Docker image
@@ -50,52 +54,25 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
+      - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Prepare image tags
-        id: meta
-        env:
-          IMAGE: yzg963/new-api
-          REF_NAME: ${{ github.ref_name }}
-          SHA: ${{ github.sha }}
+      - name: Set image version
         run: |
           set -eu
-
-          ref_slug="$(printf '%s' "${REF_NAME}" \
-            | tr '[:upper:]' '[:lower:]' \
-            | sed -E 's#[^a-z0-9_.-]+#-#g; s#^-+##; s#-+$##' \
-            | cut -c1-100)"
-          if [ -z "${ref_slug}" ]; then
-            ref_slug="branch"
-          fi
-
-          short_sha="$(printf '%s' "${SHA}" | cut -c1-8)"
-          tag="waninter"
-          echo "${tag}" > VERSION
-
-          tags="${IMAGE}:${tag}"
-          case "${ref_slug}" in
-            main|master)
-              tags="$(printf '%s\n%s:latest' "${tags}" "${IMAGE}")"
-              ;;
-          esac
-
-          {
-            echo "tag=${tag}"
-            echo "tags<<EOF"
-            echo "${tags}"
-            echo "EOF"
-          } >> "${GITHUB_OUTPUT}"
+          printf '%s\n' "${IMAGE_TAG}" > VERSION
 
       - name: Extract metadata labels
         id: docker_meta
         uses: docker/metadata-action@v5
         with:
-          images: yzg963/new-api
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ env.IMAGE_TAG }}
 
       - name: Build and push image
         id: build
@@ -105,7 +82,7 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
           cache-from: type=gha,scope=new-api-push
           cache-to: type=gha,scope=new-api-push,mode=max
@@ -115,7 +92,7 @@ jobs:
       - name: Print image refs
         run: |
           set -eu
-          echo "Image tag: ${{ steps.meta.outputs.tag }}"
+          echo "Image tag: ${{ env.IMAGE_TAG }}"
           echo "Image tags:"
-          printf '%s\n' '${{ steps.meta.outputs.tags }}'
+          printf '%s\n' '${{ steps.docker_meta.outputs.tags }}'
           echo "Digest: ${{ steps.build.outputs.digest }}"
