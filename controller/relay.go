@@ -383,6 +383,7 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		other["channel_id"] = channelId
 		other["channel_name"] = c.GetString("channel_name")
 		other["channel_type"] = c.GetInt("channel_type")
+		appendMappedModelInfo(c, other)
 		adminInfo := make(map[string]interface{})
 		adminInfo["use_channel"] = c.GetStringSlice("use_channel")
 		isMultiKey := common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey)
@@ -401,6 +402,18 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
 	}
 
+}
+
+func appendMappedModelInfo(c *gin.Context, other map[string]interface{}) {
+	if !common.GetContextKeyBool(c, constant.ContextKeyIsModelMapped) {
+		return
+	}
+	upstreamModel := common.GetContextKeyString(c, constant.ContextKeyUpstreamModel)
+	if upstreamModel == "" {
+		return
+	}
+	other["is_model_mapped"] = true
+	other["upstream_model_name"] = upstreamModel
 }
 
 func RelayMidjourney(c *gin.Context) {

@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	rootcommon "github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -42,6 +43,10 @@ func ModelMappedHelper(c *gin.Context, info *relaycommon.RelayInfo, request dto.
 		info.UpstreamModelName = finalUpstreamModelName
 		info.OriginModelName = ratio_setting.WithCompactModelSuffix(finalUpstreamModelName)
 	}
+	// Keep the selected upstream model on the request context so the retry/error
+	// path can persist the same routing details as successful consume logs.
+	rootcommon.SetContextKey(c, constant.ContextKeyUpstreamModel, info.UpstreamModelName)
+	rootcommon.SetContextKey(c, constant.ContextKeyIsModelMapped, info.IsModelMapped)
 	if request != nil {
 		request.SetModelName(info.UpstreamModelName)
 	}

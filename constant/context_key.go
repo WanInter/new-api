@@ -8,6 +8,8 @@ const (
 	ContextKeyEstimatedTokens ContextKey = "estimated_tokens"
 
 	ContextKeyOriginalModel    ContextKey = "original_model"
+	ContextKeyUpstreamModel    ContextKey = "upstream_model_name"
+	ContextKeyIsModelMapped    ContextKey = "is_model_mapped"
 	ContextKeyRequestStartTime ContextKey = "request_start_time"
 
 	/* token related keys */
