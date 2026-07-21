@@ -45,3 +45,12 @@ func TestGetTaskAdaptorSeventhFrame(t *testing.T) {
 	assert.Contains(t, adaptor.GetModelList(), "viraldance900--person-stripe--6c832bb1--voice-tone--a0c4ee78")
 	assert.Contains(t, adaptor.GetModelList(), "seedance-2.0--person-stripe--6e9f7f9c--voice-tone--a7f8bf20")
 }
+
+func TestGetTaskAdaptorShishi(t *testing.T) {
+	platform := constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeShishi))
+	adaptor := GetTaskAdaptor(platform)
+
+	require.NotNil(t, adaptor)
+	assert.Equal(t, "shishi-universal", adaptor.GetChannelName())
+	assert.Empty(t, adaptor.GetModelList())
+}

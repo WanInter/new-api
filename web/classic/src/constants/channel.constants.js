@@ -234,6 +234,11 @@ export const CHANNEL_OPTIONS = [
     color: 'blue',
     label: 'YoboxCorp',
   },
+  {
+    value: 67,
+    color: 'blue',
+    label: 'Shishi Universal',
+  },
 ];
 
 // Channel types that support upstream model list fetching in UI.

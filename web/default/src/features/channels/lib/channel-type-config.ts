@@ -258,6 +258,21 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
         'Video task channel. Submit uses POST /async/tasks and polling uses GET /async/tasks/{task_id}; request fields follow the CorpYobox Dreamina contract.',
     },
   },
+  67: {
+    id: 67,
+    name: CHANNEL_TYPES[67],
+    icon: 'video',
+    defaultBaseUrl: 'http://154.40.44.244:3000',
+    hints: {
+      baseUrl:
+        'Default: http://154.40.44.244:3000. Do not append /v1; the adaptor uses the OpenAI-compatible video paths.',
+      key: 'Use the platform API key. Requests are authenticated with the Bearer Authorization header.',
+      models:
+        'Add the video model IDs exposed by the platform. Model mapping is supported.',
+      other:
+        'Video tasks use POST /v1/videos and GET /v1/videos/{task_id}. All video models share prompt, duration, ratio, resolution, reference image/video/audio, and first/last-frame semantics.',
+    },
+  },
 }
 
 /**

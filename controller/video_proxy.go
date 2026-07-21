@@ -103,15 +103,16 @@ func VideoProxy(c *gin.Context) {
 			videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to resolve Vertex video URL")
 			return
 		}
-	case constant.ChannelTypeOpenAI, constant.ChannelTypeSora:
+	case constant.ChannelTypeOpenAI, constant.ChannelTypeSora, constant.ChannelTypeShishi:
+		apiKey := videoProxyAPIKey(channel.Type, task, channel.Key)
 		if url := extractStoredVideoURL(task); url != "" {
 			videoURL = url
-			if channel.Type == constant.ChannelTypeSora && sameURLHostname(videoURL, baseURL) {
-				req.Header.Set("Authorization", "Bearer "+channel.Key)
+			if (channel.Type == constant.ChannelTypeSora || channel.Type == constant.ChannelTypeShishi) && sameURLHostname(videoURL, baseURL) {
+				req.Header.Set("Authorization", "Bearer "+apiKey)
 			}
 		} else {
 			videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
-			req.Header.Set("Authorization", "Bearer "+channel.Key)
+			req.Header.Set("Authorization", "Bearer "+apiKey)
 		}
 	default:
 		// Video URL is stored in PrivateData.ResultURL (fallback to FailReason for old data)
@@ -176,6 +177,15 @@ func VideoProxy(c *gin.Context) {
 	if _, err = io.Copy(c.Writer, resp.Body); err != nil && !isClientCanceledVideoProxyError(c, err) {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to stream video content: %s", err.Error()))
 	}
+}
+
+func videoProxyAPIKey(channelType int, task *model.Task, channelKey string) string {
+	if channelType == constant.ChannelTypeShishi && task != nil {
+		if key := strings.TrimSpace(task.PrivateData.Key); key != "" {
+			return key
+		}
+	}
+	return channelKey
 }
 
 func isClientCanceledVideoProxyError(c *gin.Context, err error) bool {

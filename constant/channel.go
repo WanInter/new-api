@@ -64,6 +64,7 @@ const (
 	ChannelTypeAxmgc          = 64
 	ChannelTypeSeventhFrame   = 65
 	ChannelTypeYoboxCorp      = 66
+	ChannelTypeShishi         = 67
 	ChannelTypeDummy          // this one is only for count, do not add any channel after this
 
 )
@@ -136,6 +137,7 @@ var ChannelBaseURLs = []string{
 	"https://axmgc.com",                         //64
 	"https://diqizhen.jytt4.cn/api/v1",          //65
 	"https://corp.yoboxai.com",                  //66
+	"http://154.40.44.244:3000",                 //67
 }
 
 var ChannelTypeNames = map[int]string{
@@ -202,6 +204,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeAxmgc:          "Axmgc",
 	ChannelTypeSeventhFrame:   "SeventhFrame",
 	ChannelTypeYoboxCorp:      "YoboxCorp",
+	ChannelTypeShishi:         "Shishi Universal",
 }
 
 func GetChannelTypeName(channelType int) string {
