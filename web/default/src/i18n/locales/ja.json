@@ -4929,7 +4929,7 @@
     "Capture policy updated": "キャプチャポリシーを更新しました",
     "Captured At": "キャプチャ時刻",
     "Captured Requests": "キャプチャ済みリクエスト",
-    "Captured payloads are encrypted at rest and require additional verification to read.": "キャプチャしたペイロードは保存時に暗号化され、閲覧には追加認証が必要です。",
+    "Captured payloads are encrypted at rest.": "キャプチャしたペイロードは保存時に暗号化されます。",
     "Enable Relay Capture": "リレーキャプチャを有効化",
     "Failed to load captured payload": "キャプチャしたペイロードを読み込めませんでした",
     "Failed to load captured requests": "キャプチャ済みリクエストを読み込めませんでした",

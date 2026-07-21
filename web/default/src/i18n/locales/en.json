@@ -4929,7 +4929,7 @@
     "Capture policy updated": "Capture policy updated",
     "Captured At": "Captured At",
     "Captured Requests": "Captured Requests",
-    "Captured payloads are encrypted at rest and require additional verification to read.": "Captured payloads are encrypted at rest and require additional verification to read.",
+    "Captured payloads are encrypted at rest.": "Captured payloads are encrypted at rest.",
     "Enable Relay Capture": "Enable Relay Capture",
     "Failed to load captured payload": "Failed to load captured payload",
     "Failed to load captured requests": "Failed to load captured requests",

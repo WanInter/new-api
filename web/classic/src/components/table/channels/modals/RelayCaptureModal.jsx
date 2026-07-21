@@ -40,8 +40,6 @@ import {
   showSuccess,
   timestamp2string,
 } from '../../../../helpers';
-import { useSecureVerification } from '../../../../hooks/common/useSecureVerification';
-import SecureVerificationModal from '../../../common/modals/SecureVerificationModal';
 
 const protocolOptions = [
   {
@@ -100,33 +98,6 @@ const RelayCaptureModal = ({ visible, channel, onCancel }) => {
   const [captureTotal, setCaptureTotal] = useState(0);
   const [content, setContent] = useState('');
   const [contentTitle, setContentTitle] = useState('');
-
-  const applySecureResult = useCallback(
-    (result) => {
-      if (!result) return;
-      if (result.kind === 'policy') {
-        setEnabled(result.policy.enabled === true);
-        setProtocols(result.policy.protocols || []);
-        showSuccess(t('采集策略已更新'));
-      }
-      if (result.kind === 'payload') {
-        setContent(result.body);
-        setContentTitle(result.title);
-      }
-    },
-    [t],
-  );
-
-  const {
-    isModalVisible,
-    verificationMethods,
-    verificationState,
-    withVerification,
-    executeVerification,
-    cancelVerification,
-    setVerificationCode,
-    switchVerificationMethod,
-  } = useSecureVerification({ onSuccess: applySecureResult });
 
   const loadPolicy = useCallback(async () => {
     if (!channel?.id) return;
@@ -204,12 +175,10 @@ const RelayCaptureModal = ({ visible, channel, onCancel }) => {
     }
     setSaving(true);
     try {
-      const result = await withVerification(updatePolicy, {
-        preferredMethod: 'passkey',
-        title: t('验证后更新中继采集策略'),
-        description: t('请使用 Passkey 或双重验证确认对客户端采集报文的修改。'),
-      });
-      applySecureResult(result);
+      const result = await updatePolicy();
+      setEnabled(result.policy.enabled === true);
+      setProtocols(result.policy.protocols || []);
+      showSuccess(t('采集策略已更新'));
     } catch (error) {
       showError(error.message || t('更新采集策略失败'));
     } finally {
@@ -232,15 +201,9 @@ const RelayCaptureModal = ({ visible, channel, onCancel }) => {
   const handleViewPart = async (capture, part) => {
     setLoadingContent(true);
     try {
-      const result = await withVerification(
-        () => loadCapturePart(capture, part),
-        {
-          preferredMethod: 'passkey',
-          title: t('验证后查看采集报文'),
-          description: t('请使用 Passkey 或双重验证查看此客户端采集报文。'),
-        },
-      );
-      applySecureResult(result);
+      const result = await loadCapturePart(capture, part);
+      setContent(result.body);
+      setContentTitle(result.title);
     } catch (error) {
       showError(error.message || t('加载采集正文失败'));
     } finally {
@@ -365,7 +328,7 @@ const RelayCaptureModal = ({ visible, channel, onCancel }) => {
                         type='tertiary'
                         className='!mb-0 !mt-1'
                       >
-                        {t('采集正文会加密静态存储，读取时需要额外验证。')}
+                        {t('采集正文会加密静态存储。')}
                       </Typography.Paragraph>
                     </div>
                     <Switch
@@ -413,7 +376,7 @@ const RelayCaptureModal = ({ visible, channel, onCancel }) => {
             <div className='space-y-4 py-3'>
               <div className='flex items-center justify-between gap-3'>
                 <Typography.Text type='tertiary'>
-                  {t('采集正文会加密静态存储，读取时需要额外验证。')}
+                  {t('采集正文会加密静态存储。')}
                 </Typography.Text>
                 <Button
                   size='small'
@@ -466,17 +429,6 @@ const RelayCaptureModal = ({ visible, channel, onCancel }) => {
           </Tabs.TabPane>
         </Tabs>
       </Modal>
-      <SecureVerificationModal
-        visible={isModalVisible}
-        verificationMethods={verificationMethods}
-        verificationState={verificationState}
-        onVerify={executeVerification}
-        onCancel={cancelVerification}
-        onCodeChange={setVerificationCode}
-        onMethodSwitch={switchVerificationMethod}
-        title={verificationState.title}
-        description={verificationState.description}
-      />
     </>
   );
 };

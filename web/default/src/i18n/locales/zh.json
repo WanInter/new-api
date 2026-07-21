@@ -4929,7 +4929,7 @@
     "Capture policy updated": "采集策略已更新",
     "Captured At": "采集时间",
     "Captured Requests": "已采集请求",
-    "Captured payloads are encrypted at rest and require additional verification to read.": "采集正文会加密静态存储，读取时需要额外验证。",
+    "Captured payloads are encrypted at rest.": "采集正文会加密静态存储。",
     "Enable Relay Capture": "启用中继采集",
     "Failed to load captured payload": "加载采集正文失败",
     "Failed to load captured requests": "加载采集请求失败",

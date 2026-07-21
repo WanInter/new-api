@@ -3834,7 +3834,7 @@
     "采集策略": "Politique de capture",
     "仅采集非流式 JSON 和纯文本报文。": "Seuls les messages JSON et texte brut sans flux sont capturés.",
     "启用中继采集": "Activer la capture du relais",
-    "采集正文会加密静态存储，读取时需要额外验证。": "Les messages capturés sont chiffrés au repos et leur lecture exige une vérification supplémentaire.",
+    "采集正文会加密静态存储。": "Les messages capturés sont chiffrés au repos.",
     "采集协议": "Protocoles de capture",
     "已采集请求": "Requêtes capturées",
     "未找到采集请求": "Aucune requête capturée trouvée"

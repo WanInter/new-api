@@ -41,10 +41,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { Dialog } from '@/components/dialog'
 import {
-  SecureVerificationDialog,
-  useSecureVerification,
-} from '@/features/auth/secure-verification'
-import {
   getChannelRelayCapturePolicy,
   getRelayCapturePart,
   getRelayCaptures,
@@ -116,17 +112,6 @@ export function RelayCaptureDialog({
       getRelayCaptures({ channel_id: currentRow!.id, page_size: 20 }),
     enabled: open && Boolean(currentRow),
   })
-  const {
-    open: verificationOpen,
-    methods: verificationMethods,
-    state: verificationState,
-    executeVerification,
-    withVerification,
-    cancel: cancelVerification,
-    setCode: setVerificationCode,
-    switchMethod: switchVerificationMethod,
-  } = useSecureVerification()
-
   if (!currentRow) return null
 
   const serverPolicy = policyQuery.data?.data
@@ -174,37 +159,22 @@ export function RelayCaptureDialog({
     }
     setIsSaving(true)
     try {
-      await withVerification(
-        async () => {
-          const response = await updateChannelRelayCapturePolicy(
-            currentRow.id,
-            {
-              enabled,
-              protocols,
-            }
-          )
-          if (!response.success) {
-            throw new Error(
-              response.message || t('Failed to update capture policy')
-            )
-          }
-          await queryClient.invalidateQueries({
-            queryKey: ['channel-relay-capture-policy', currentRow.id],
-          })
-          await queryClient.invalidateQueries({
-            queryKey: channelsQueryKeys.detail(currentRow.id),
-          })
-          toast.success(t('Capture policy updated'))
-          return response
-        },
-        {
-          preferredMethod: 'passkey',
-          title: t('Verify to update relay capture policy'),
-          description: t(
-            'Use Passkey or 2FA to confirm changes to captured client payloads.'
-          ),
-        }
-      )
+      const response = await updateChannelRelayCapturePolicy(currentRow.id, {
+        enabled,
+        protocols,
+      })
+      if (!response.success) {
+        throw new Error(
+          response.message || t('Failed to update capture policy')
+        )
+      }
+      await queryClient.invalidateQueries({
+        queryKey: ['channel-relay-capture-policy', currentRow.id],
+      })
+      await queryClient.invalidateQueries({
+        queryKey: channelsQueryKeys.detail(currentRow.id),
+      })
+      toast.success(t('Capture policy updated'))
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -222,16 +192,7 @@ export function RelayCaptureDialog({
   ) => {
     setIsLoadingContent(true)
     try {
-      const body = await withVerification(
-        () => getRelayCapturePart(metadata.id, part),
-        {
-          preferredMethod: 'passkey',
-          title: t('Verify to view captured payload'),
-          description: t(
-            'Use Passkey or 2FA to view this captured client payload.'
-          ),
-        }
-      )
+      const body = await getRelayCapturePart(metadata.id, part)
       if (typeof body === 'string') {
         setContent(body)
         setContentPart(part)
@@ -315,9 +276,7 @@ export function RelayCaptureDialog({
                       {t('Enable Relay Capture')}
                     </Label>
                     <p className='text-muted-foreground text-sm'>
-                      {t(
-                        'Captured payloads are encrypted at rest and require additional verification to read.'
-                      )}
+                      {t('Captured payloads are encrypted at rest.')}
                     </p>
                   </div>
                   <Switch
@@ -371,9 +330,7 @@ export function RelayCaptureDialog({
           <TabsContent value='captures' className='space-y-4'>
             <div className='flex items-center justify-between gap-3'>
               <p className='text-muted-foreground text-sm'>
-                {t(
-                  'Captured payloads are encrypted at rest and require additional verification to read.'
-                )}
+                {t('Captured payloads are encrypted at rest.')}
               </p>
               <Button
                 variant='outline'
@@ -508,19 +465,6 @@ export function RelayCaptureDialog({
           </TabsContent>
         </Tabs>
       </Dialog>
-
-      <SecureVerificationDialog
-        open={verificationOpen}
-        onOpenChange={(nextOpen) => {
-          if (!nextOpen) cancelVerification()
-        }}
-        methods={verificationMethods}
-        state={verificationState}
-        onVerify={(method, code) => executeVerification(method, code)}
-        onCancel={cancelVerification}
-        onCodeChange={setVerificationCode}
-        onMethodChange={switchVerificationMethod}
-      />
     </>
   )
 }

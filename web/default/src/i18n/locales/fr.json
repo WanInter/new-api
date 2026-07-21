@@ -4929,7 +4929,7 @@
     "Capture policy updated": "Politique de capture mise a jour",
     "Captured At": "Capture le",
     "Captured Requests": "Requetes capturees",
-    "Captured payloads are encrypted at rest and require additional verification to read.": "Les charges utiles capturees sont chiffrees au repos et necessitent une verification supplementaire pour etre lues.",
+    "Captured payloads are encrypted at rest.": "Les charges utiles capturees sont chiffrees au repos.",
     "Enable Relay Capture": "Activer la capture de relais",
     "Failed to load captured payload": "Echec du chargement de la charge utile capturee",
     "Failed to load captured requests": "Echec du chargement des requetes capturees",

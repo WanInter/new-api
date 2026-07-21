@@ -4929,7 +4929,7 @@
     "Capture policy updated": "Da cap nhat chinh sach thu thap",
     "Captured At": "Thoi diem thu thap",
     "Captured Requests": "Yeu cau da thu thap",
-    "Captured payloads are encrypted at rest and require additional verification to read.": "Du lieu da thu thap duoc ma hoa khi luu tru va can xac minh bo sung de doc.",
+    "Captured payloads are encrypted at rest.": "Du lieu da thu thap duoc ma hoa khi luu tru.",
     "Enable Relay Capture": "Bat thu thap relay",
     "Failed to load captured payload": "Khong the tai du lieu da thu thap",
     "Failed to load captured requests": "Khong the tai cac yeu cau da thu thap",

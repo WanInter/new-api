@@ -4929,7 +4929,7 @@
     "Capture policy updated": "Политика захвата обновлена",
     "Captured At": "Время захвата",
     "Captured Requests": "Захваченные запросы",
-    "Captured payloads are encrypted at rest and require additional verification to read.": "Захваченные данные зашифрованы при хранении и для чтения требуют дополнительной проверки.",
+    "Captured payloads are encrypted at rest.": "Захваченные данные зашифрованы при хранении.",
     "Enable Relay Capture": "Включить захват реле",
     "Failed to load captured payload": "Не удалось загрузить захваченные данные",
     "Failed to load captured requests": "Не удалось загрузить захваченные запросы",
