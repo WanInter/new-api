@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -17,6 +18,40 @@ import (
 )
 
 func TestBuildRequestUsesDreaminaTopLevelVideoContract(t *testing.T) {
+	createdAssets := make([]assetRequest, 0, 2)
+	pollCounts := map[string]int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "Bearer upstream-key", r.Header.Get("Authorization"))
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == assetPath:
+			requestBody, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
+			var rawRequest map[string]any
+			require.NoError(t, common.Unmarshal(requestBody, &rawRequest))
+			assert.NotContains(t, rawRequest, "GroupId")
+			var request assetRequest
+			require.NoError(t, common.Unmarshal(requestBody, &request))
+			createdAssets = append(createdAssets, request)
+			assetID := "asset-image"
+			if request.AssetType == "Video" {
+				assetID = "asset-video"
+			}
+			_, _ = w.Write([]byte(`{"success":true,"data":{"Id":"` + assetID + `","base_resp":{"status_code":0,"status_msg":"success"}}}`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, assetPath+"/"):
+			assert.Equal(t, "dreamina-seedance-2-0-fast-hc", r.URL.Query().Get("model"))
+			assetID := strings.TrimPrefix(r.URL.Path, assetPath+"/")
+			pollCounts[assetID]++
+			status := "Active"
+			if assetID == "asset-image" && pollCounts[assetID] == 1 {
+				status = "Processing"
+			}
+			_, _ = w.Write([]byte(`{"success":true,"data":{"Id":"` + assetID + `","Status":"` + status + `","base_resp":{"status_code":0,"status_msg":"success"}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
 		"model":"dreamina-seedance-2-0-fast-hc",
@@ -33,15 +68,22 @@ func TestBuildRequestUsesDreaminaTopLevelVideoContract(t *testing.T) {
 	t.Cleanup(func() { common.CleanupBodyStorage(c) })
 	info := &relaycommon.RelayInfo{
 		OriginModelName: "dreamina-seedance-2-0-fast-hc",
-		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "dreamina-seedance-2-0-fast-hc"},
-		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ApiKey:            "upstream-key",
+			ChannelBaseUrl:    server.URL,
+			UpstreamModelName: "dreamina-seedance-2-0-fast-hc",
+		},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
 	}
-	adaptor := &TaskAdaptor{baseURL: "https://corp.example.test"}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	adaptor.assetPollInterval = time.Millisecond
+	adaptor.assetPollTimeout = time.Second
 
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
 	requestURL, err := adaptor.BuildRequestURL(info)
 	require.NoError(t, err)
-	assert.Equal(t, "https://corp.example.test/async/tasks", requestURL)
+	assert.Equal(t, server.URL+"/async/tasks", requestURL)
 
 	body, err := adaptor.BuildRequestBody(c, info)
 	require.NoError(t, err)
@@ -56,10 +98,106 @@ func TestBuildRequestUsesDreaminaTopLevelVideoContract(t *testing.T) {
 	assert.Equal(t, true, payload["watermark"])
 	assert.Equal(t, []any{
 		map[string]any{"type": "text", "text": "create a cinematic portrait"},
-		map[string]any{"type": "image_url", "role": "reference_image", "image_url": map[string]any{"url": "https://example.com/face.png"}},
-		map[string]any{"type": "video_url", "role": "reference_video", "video_url": map[string]any{"url": "https://example.com/motion.mp4"}},
+		map[string]any{"type": "image_url", "role": "reference_image", "image_url": map[string]any{"url": "asset://asset-image"}},
+		map[string]any{"type": "video_url", "role": "reference_video", "video_url": map[string]any{"url": "asset://asset-video"}},
 		map[string]any{"type": "audio_url", "role": "reference_audio", "audio_url": map[string]any{"url": "https://example.com/music.mp3"}},
 	}, payload["content"])
+	assert.Equal(t, []assetRequest{
+		{
+			Model:     "dreamina-seedance-2-0-fast-hc",
+			URL:       "https://example.com/face.png",
+			Name:      "reference-image-001",
+			AssetType: "Image",
+		},
+		{
+			Model:     "dreamina-seedance-2-0-fast-hc",
+			URL:       "https://example.com/motion.mp4",
+			Name:      "reference-video-001",
+			AssetType: "Video",
+		},
+	}, createdAssets)
+	assert.Equal(t, 2, pollCounts["asset-image"])
+	assert.Equal(t, 1, pollCounts["asset-video"])
+}
+
+func TestBuildRequestBodyReusesExistingAssetReferences(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected asset request: %s %s", r.Method, r.URL.Path)
+	}))
+	t.Cleanup(server.Close)
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"dreamina-seedance-2-0-hc",
+		"prompt":"animate",
+		"images":["asset://asset-existing-image"],
+		"videos":["asset://asset-existing-video"]
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "dreamina-seedance-2-0-hc",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ApiKey:            "upstream-key",
+			ChannelBaseUrl:    server.URL,
+			UpstreamModelName: "dreamina-seedance-2-0-hc",
+		},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	assert.Equal(t, []any{
+		map[string]any{"type": "text", "text": "animate"},
+		map[string]any{"type": "image_url", "role": "reference_image", "image_url": map[string]any{"url": "asset://asset-existing-image"}},
+		map[string]any{"type": "video_url", "role": "reference_video", "video_url": map[string]any{"url": "asset://asset-existing-video"}},
+	}, payload["content"])
+}
+
+func TestBuildRequestBodyReturnsAssetProcessingFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			_, _ = w.Write([]byte(`{"success":true,"data":{"Id":"asset-rejected"}}`))
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"success":true,"message":"asset rejected by upstream","data":{"Id":"asset-rejected","Status":"Failed"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"dreamina-seedance-2-0-mini-hc",
+		"prompt":"animate the reference",
+		"images":["https://example.com/rejected.png"]
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "dreamina-seedance-2-0-mini-hc",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ApiKey:            "upstream-key",
+			ChannelBaseUrl:    server.URL,
+			UpstreamModelName: "dreamina-seedance-2-0-mini-hc",
+		},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+
+	_, err := adaptor.BuildRequestBody(c, info)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "asset rejected by upstream")
 }
 
 func TestBuildGeneratePayloadDefaultsRequiredFields(t *testing.T) {

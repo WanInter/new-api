@@ -26,8 +26,12 @@ const (
 	ChannelName    = "yoboxcorp"
 	DefaultBaseURL = "https://corp.yoboxai.com"
 
+	assetPath    = "/v1/sd/assets"
 	generatePath = "/async/tasks"
 	taskPath     = "/async/tasks"
+
+	defaultAssetPollInterval = time.Second
+	defaultAssetPollTimeout  = 90 * time.Second
 )
 
 var ModelList = []string{
@@ -92,10 +96,38 @@ type asyncTaskPayload struct {
 	FailReason string   `json:"fail_reason"`
 }
 
+type assetRequest struct {
+	Model     string `json:"model"`
+	URL       string `json:"URL"`
+	Name      string `json:"Name"`
+	AssetType string `json:"AssetType"`
+}
+
+type assetResponse struct {
+	Success bool      `json:"success"`
+	Message string    `json:"message"`
+	Error   any       `json:"error"`
+	Data    assetData `json:"data"`
+}
+
+type assetData struct {
+	ID        string `json:"Id"`
+	Status    string `json:"Status"`
+	AssetType string `json:"AssetType"`
+	Error     any    `json:"Error"`
+	BaseResp  struct {
+		StatusCode int    `json:"status_code"`
+		StatusMsg  string `json:"status_msg"`
+	} `json:"base_resp"`
+}
+
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
-	apiKey  string
-	baseURL string
+	apiKey            string
+	baseURL           string
+	proxy             string
+	assetPollInterval time.Duration
+	assetPollTimeout  time.Duration
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
@@ -104,6 +136,7 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	if a.baseURL == "" {
 		a.baseURL = DefaultBaseURL
 	}
+	a.proxy = info.ChannelSetting.Proxy
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
@@ -152,6 +185,12 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, err
 	}
 	payload := buildGeneratePayload(req, info)
+	content, _ := payload["content"].([]any)
+	content, err = a.uploadReferences(c.Request.Context(), upstreamModelName(req, info), content)
+	if err != nil {
+		return nil, err
+	}
+	payload["content"] = content
 	data, err := common.Marshal(payload)
 	if err != nil {
 		return nil, err
@@ -312,6 +351,201 @@ func (a *TaskAdaptor) BuildPrivateData(_ *gin.Context, info *relaycommon.RelayIn
 		return nil, errors.New("relay info is nil")
 	}
 	return &model.TaskPrivateData{Key: info.ApiKey}, nil
+}
+
+func (a *TaskAdaptor) uploadReferences(ctx context.Context, modelName string, content []any) ([]any, error) {
+	assetIDs := make(map[string]string)
+	assetCounts := map[string]int{"Image": 0, "Video": 0}
+
+	for _, rawItem := range content {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		contentType, _ := item["type"].(string)
+		assetType := ""
+		switch contentType {
+		case "image_url":
+			assetType = "Image"
+		case "video_url":
+			assetType = "Video"
+		default:
+			continue
+		}
+
+		reference, ok := item[contentType].(map[string]any)
+		if !ok {
+			continue
+		}
+		referenceURL, _ := reference["url"].(string)
+		referenceURL = strings.TrimSpace(referenceURL)
+		if referenceURL == "" || strings.HasPrefix(strings.ToLower(referenceURL), "asset://") {
+			continue
+		}
+
+		cacheKey := assetType + "\x00" + referenceURL
+		assetID := assetIDs[cacheKey]
+		if assetID == "" {
+			assetCounts[assetType]++
+			assetName := fmt.Sprintf("reference-%s-%03d", strings.ToLower(assetType), assetCounts[assetType])
+			var err error
+			assetID, err = a.createAndWaitForAsset(ctx, assetRequest{
+				Model:     modelName,
+				URL:       referenceURL,
+				Name:      assetName,
+				AssetType: assetType,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("prepare %s asset %q failed: %w", strings.ToLower(assetType), assetName, err)
+			}
+			assetIDs[cacheKey] = assetID
+		}
+		reference["url"] = "asset://" + assetID
+	}
+
+	return content, nil
+}
+
+func (a *TaskAdaptor) createAndWaitForAsset(ctx context.Context, payload assetRequest) (string, error) {
+	response, err := a.createAsset(ctx, payload)
+	if err != nil {
+		return "", err
+	}
+	assetID := strings.TrimSpace(response.Data.ID)
+	if assetID == "" {
+		return "", errors.New("asset create response has no Id")
+	}
+	if status := strings.TrimSpace(response.Data.Status); status != "" {
+		ready, err := assetReady(status, response)
+		if err != nil {
+			return "", err
+		}
+		if ready {
+			return assetID, nil
+		}
+	}
+
+	pollTimeout := a.assetPollTimeout
+	if pollTimeout <= 0 {
+		pollTimeout = defaultAssetPollTimeout
+	}
+	pollInterval := a.assetPollInterval
+	if pollInterval <= 0 {
+		pollInterval = defaultAssetPollInterval
+	}
+	pollCtx, cancel := context.WithTimeout(ctx, pollTimeout)
+	defer cancel()
+
+	for {
+		response, err = a.fetchAsset(pollCtx, payload.Model, assetID)
+		if err != nil {
+			return "", err
+		}
+		ready, err := assetReady(response.Data.Status, response)
+		if err != nil {
+			return "", err
+		}
+		if ready {
+			return assetID, nil
+		}
+
+		timer := time.NewTimer(pollInterval)
+		select {
+		case <-pollCtx.Done():
+			timer.Stop()
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			return "", fmt.Errorf("timed out waiting for asset %s to become Active", assetID)
+		case <-timer.C:
+		}
+	}
+}
+
+func (a *TaskAdaptor) createAsset(ctx context.Context, payload assetRequest) (*assetResponse, error) {
+	body, err := common.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encode asset create request failed: %w", err)
+	}
+	return a.doAssetRequest(ctx, http.MethodPost, a.baseURL+assetPath, bytes.NewReader(body))
+}
+
+func (a *TaskAdaptor) fetchAsset(ctx context.Context, modelName, assetID string) (*assetResponse, error) {
+	uri, err := url.Parse(a.baseURL + assetPath + "/" + url.PathEscape(assetID))
+	if err != nil {
+		return nil, fmt.Errorf("build asset query URL failed: %w", err)
+	}
+	query := uri.Query()
+	query.Set("model", modelName)
+	uri.RawQuery = query.Encode()
+	return a.doAssetRequest(ctx, http.MethodGet, uri.String(), nil)
+}
+
+func (a *TaskAdaptor) doAssetRequest(ctx context.Context, method, uri string, body io.Reader) (*assetResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, method, uri, body)
+	if err != nil {
+		return nil, fmt.Errorf("create asset request failed: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+a.apiKey)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	client, err := service.GetHttpClientWithProxy(a.proxy)
+	if err != nil {
+		return nil, fmt.Errorf("new proxy http client failed: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("asset request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read asset response failed: %w", err)
+	}
+	var parsed assetResponse
+	if err := common.Unmarshal(responseBody, &parsed); err != nil {
+		return nil, fmt.Errorf("decode asset response failed: %w", err)
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("asset request returned status %d: %s", resp.StatusCode, assetResponseMessage(&parsed))
+	}
+	if !parsed.Success && parsed.Data.ID == "" {
+		return nil, fmt.Errorf("asset request failed: %s", assetResponseMessage(&parsed))
+	}
+	return &parsed, nil
+}
+
+func assetReady(status string, response *assetResponse) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "active":
+		return true, nil
+	case "processing", "pending", "creating", "uploading":
+		return false, nil
+	case "failed", "failure", "error", "rejected", "inactive":
+		return false, fmt.Errorf("asset processing failed: %s", assetResponseMessage(response))
+	case "":
+		return false, nil
+	default:
+		return false, fmt.Errorf("unknown asset status %q", status)
+	}
+}
+
+func assetResponseMessage(response *assetResponse) string {
+	if response == nil {
+		return "unknown error"
+	}
+	message := firstNonEmpty(
+		response.Message,
+		taskErrorMessage(response.Data.Error),
+		taskErrorMessage(response.Error),
+		response.Data.BaseResp.StatusMsg,
+	)
+	if message == "" || strings.EqualFold(message, "success") {
+		return "unknown error"
+	}
+	return message
 }
 
 func buildGeneratePayload(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) map[string]any {
