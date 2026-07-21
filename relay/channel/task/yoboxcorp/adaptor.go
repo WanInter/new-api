@@ -26,8 +26,8 @@ const (
 	ChannelName    = "yoboxcorp"
 	DefaultBaseURL = "https://corp.yoboxai.com"
 
-	generatePath = "/v1/video/generate"
-	taskPath     = "/v1/video/tasks"
+	generatePath = "/async/tasks"
+	taskPath     = "/async/tasks"
 )
 
 var ModelList = []string{
@@ -46,6 +46,50 @@ type upstreamTask struct {
 	Model   string   `json:"model"`
 	Outputs []string `json:"outputs"`
 	Error   any      `json:"error"`
+}
+
+type asyncSubmitResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Data    struct {
+		TaskID string `json:"task_id"`
+	} `json:"data"`
+}
+
+type asyncTaskResponse struct {
+	Success    bool              `json:"success"`
+	Message    string            `json:"message"`
+	TaskID     string            `json:"task_id"`
+	Status     string            `json:"status"`
+	Progress   int               `json:"progress"`
+	FailReason string            `json:"fail_reason"`
+	Data       asyncTaskEnvelope `json:"data"`
+}
+
+type asyncTaskEnvelope struct {
+	TaskID     string           `json:"task_id"`
+	Status     string           `json:"status"`
+	Progress   int              `json:"progress"`
+	FailReason string           `json:"fail_reason"`
+	Data       asyncTaskPayload `json:"data"`
+
+	ID       string   `json:"id"`
+	VideoURL string   `json:"video_url"`
+	Outputs  []string `json:"outputs"`
+	URL      string   `json:"url"`
+	Phase    string   `json:"phase"`
+	Error    any      `json:"error"`
+}
+
+type asyncTaskPayload struct {
+	ID         string   `json:"id"`
+	Status     string   `json:"status"`
+	VideoURL   string   `json:"video_url"`
+	Outputs    []string `json:"outputs"`
+	URL        string   `json:"url"`
+	Phase      string   `json:"phase"`
+	Error      any      `json:"error"`
+	FailReason string   `json:"fail_reason"`
 }
 
 type TaskAdaptor struct {
@@ -126,11 +170,25 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	}
 	_ = resp.Body.Close()
 
-	var parsed generateResponse
-	if err := common.Unmarshal(responseBody, &parsed); err != nil {
+	var nativeResponse generateResponse
+	if err := common.Unmarshal(responseBody, &nativeResponse); err != nil {
 		return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
 	}
-	if parsed.Task == nil || strings.TrimSpace(parsed.Task.ID) == "" {
+	upstreamTaskID := ""
+	if nativeResponse.Task != nil {
+		upstreamTaskID = strings.TrimSpace(nativeResponse.Task.ID)
+	}
+	if upstreamTaskID == "" {
+		var asyncResponse asyncSubmitResponse
+		if err := common.Unmarshal(responseBody, &asyncResponse); err != nil {
+			return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
+		}
+		upstreamTaskID = strings.TrimSpace(asyncResponse.Data.TaskID)
+		if upstreamTaskID == "" && strings.TrimSpace(asyncResponse.Message) != "" {
+			return "", nil, service.TaskErrorWrapperLocal(errors.New(asyncResponse.Message), "submit_failed", http.StatusBadGateway)
+		}
+	}
+	if upstreamTaskID == "" {
 		return "", nil, service.TaskErrorWrapperLocal(errors.New("YoboxCorp generate response has no task id"), "invalid_response", http.StatusBadGateway)
 	}
 
@@ -141,7 +199,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	video.Model = info.OriginModelName
 	video.Status = model.TaskStatus(model.TaskStatusSubmitted).ToVideoStatus()
 	c.JSON(http.StatusOK, video)
-	return parsed.Task.ID, responseBody, nil
+	return upstreamTaskID, responseBody, nil
 }
 
 func (a *TaskAdaptor) FetchTask(ctx context.Context, baseURL, key string, body map[string]any, proxy string) (*http.Response, error) {
@@ -164,30 +222,69 @@ func (a *TaskAdaptor) FetchTask(ctx context.Context, baseURL, key string, body m
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
-	var parsed generateResponse
-	if err := common.Unmarshal(respBody, &parsed); err != nil {
+	var nativeResponse generateResponse
+	if err := common.Unmarshal(respBody, &nativeResponse); err != nil {
 		return nil, errors.Wrap(err, "unmarshal task result failed")
 	}
-	if parsed.Task == nil {
-		return nil, errors.New("YoboxCorp task response has no task")
-	}
-	status := mapTaskStatus(parsed.Task.Status)
-	if status == model.TaskStatusUnknown {
-		return nil, fmt.Errorf("unknown YoboxCorp task status %q", parsed.Task.Status)
+	if nativeResponse.Task != nil {
+		return taskInfoFromNativeTask(nativeResponse.Task)
 	}
 
+	var asyncResponse asyncTaskResponse
+	if err := common.Unmarshal(respBody, &asyncResponse); err != nil {
+		return nil, errors.Wrap(err, "unmarshal async task result failed")
+	}
+	rawStatus := firstNonEmpty(asyncResponse.Data.Status, asyncResponse.Status, asyncResponse.Data.Data.Status, asyncResponse.Data.Data.Phase, asyncResponse.Data.Phase)
+	status := mapTaskStatus(rawStatus)
+	if status == model.TaskStatusUnknown {
+		return nil, fmt.Errorf("unknown YoboxCorp task status %q", rawStatus)
+	}
 	result := &relaycommon.TaskInfo{
 		Code:     0,
-		TaskID:   parsed.Task.ID,
+		TaskID:   firstNonEmpty(asyncResponse.Data.TaskID, asyncResponse.TaskID, asyncResponse.Data.Data.ID, asyncResponse.Data.ID),
+		Status:   string(status),
+		Progress: progressString(firstPositive(asyncResponse.Data.Progress, asyncResponse.Progress), status),
+	}
+	if status == model.TaskStatusSuccess {
+		result.Url = firstNonEmpty(asyncResponse.Data.Data.VideoURL, firstString(asyncResponse.Data.Data.Outputs), asyncResponse.Data.Data.URL, asyncResponse.Data.VideoURL, firstString(asyncResponse.Data.Outputs), asyncResponse.Data.URL)
+		result.Progress = taskcommon.ProgressComplete
+	}
+	if status == model.TaskStatusFailure {
+		result.Reason = firstNonEmpty(
+			asyncResponse.Data.FailReason,
+			asyncResponse.FailReason,
+			asyncResponse.Data.Data.FailReason,
+			taskErrorMessage(asyncResponse.Data.Data.Error),
+			asyncResponse.Data.Data.Phase,
+			taskErrorMessage(asyncResponse.Data.Error),
+			asyncResponse.Data.Phase,
+			asyncResponse.Message,
+		)
+		if result.Reason == "" {
+			result.Reason = "task failed"
+		}
+		result.Progress = taskcommon.ProgressComplete
+	}
+	return result, nil
+}
+
+func taskInfoFromNativeTask(task *upstreamTask) (*relaycommon.TaskInfo, error) {
+	status := mapTaskStatus(task.Status)
+	if status == model.TaskStatusUnknown {
+		return nil, fmt.Errorf("unknown YoboxCorp task status %q", task.Status)
+	}
+	result := &relaycommon.TaskInfo{
+		Code:     0,
+		TaskID:   task.ID,
 		Status:   string(status),
 		Progress: progressForStatus(status),
 	}
 	if status == model.TaskStatusSuccess {
-		result.Url = firstString(parsed.Task.Outputs)
+		result.Url = firstString(task.Outputs)
 		result.Progress = taskcommon.ProgressComplete
 	}
 	if status == model.TaskStatusFailure {
-		result.Reason = taskErrorMessage(parsed.Task.Error)
+		result.Reason = taskErrorMessage(task.Error)
 		if result.Reason == "" {
 			result.Reason = "task failed"
 		}
@@ -413,6 +510,25 @@ func progressForStatus(status model.TaskStatus) string {
 		return "20%"
 	}
 	return "30%"
+}
+
+func progressString(progress int, status model.TaskStatus) string {
+	if status == model.TaskStatusSuccess || status == model.TaskStatusFailure {
+		return taskcommon.ProgressComplete
+	}
+	if progress > 0 {
+		return fmt.Sprintf("%d%%", progress)
+	}
+	return progressForStatus(status)
+}
+
+func firstPositive(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func taskErrorMessage(value any) string {

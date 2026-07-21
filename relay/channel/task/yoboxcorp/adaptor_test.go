@@ -41,7 +41,7 @@ func TestBuildRequestUsesDreaminaTopLevelVideoContract(t *testing.T) {
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
 	requestURL, err := adaptor.BuildRequestURL(info)
 	require.NoError(t, err)
-	assert.Equal(t, "https://corp.example.test/v1/video/generate", requestURL)
+	assert.Equal(t, "https://corp.example.test/async/tasks", requestURL)
 
 	body, err := adaptor.BuildRequestBody(c, info)
 	require.NoError(t, err)
@@ -72,14 +72,14 @@ func TestBuildGeneratePayloadDefaultsRequiredFields(t *testing.T) {
 	assert.Equal(t, false, payload["watermark"])
 }
 
-func TestDoResponseUsesTaskEnvelope(t *testing.T) {
+func TestDoResponseUsesAsyncTaskEnvelope(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	info := &relaycommon.RelayInfo{
 		OriginModelName: "dreamina-seedance-2-0-fast-hc",
 		TaskRelayInfo:   &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
 	}
-	resp := &http.Response{Body: io.NopCloser(strings.NewReader(`{"task":{"id":"mvt_upstream","status":"pending","outputs":[]}}`))}
+	resp := &http.Response{Body: io.NopCloser(strings.NewReader(`{"success":true,"data":{"task_id":"mvt_upstream","status":"SUBMITTED"}}`))}
 
 	upstreamTaskID, taskData, taskErr := (&TaskAdaptor{}).DoResponse(c, resp, info)
 
@@ -91,9 +91,9 @@ func TestDoResponseUsesTaskEnvelope(t *testing.T) {
 
 func TestFetchAndParseTask(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/v1/video/tasks/mvt_upstream", r.URL.Path)
+		assert.Equal(t, "/async/tasks/mvt_upstream", r.URL.Path)
 		assert.Equal(t, "Bearer upstream-key", r.Header.Get("Authorization"))
-		_, _ = w.Write([]byte(`{"task":{"id":"mvt_upstream","status":"completed","outputs":["https://example.com/result.mp4"]}}`))
+		_, _ = w.Write([]byte(`{"success":true,"data":{"task_id":"mvt_upstream","status":"SUCCESS","progress":100,"data":{"video_url":"https://example.com/result.mp4"}}}`))
 	}))
 	t.Cleanup(server.Close)
 
@@ -113,12 +113,21 @@ func TestFetchAndParseTask(t *testing.T) {
 }
 
 func TestParseTaskFailureExposesUpstreamError(t *testing.T) {
-	result, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{"task":{"id":"mvt_upstream","status":"failed","error":{"message":"invalid asset"}}}`))
+	result, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{"success":true,"data":{"task_id":"mvt_upstream","status":"FAILURE","data":{"error":{"message":"invalid asset"}}}}`))
 
 	require.NoError(t, err)
 	assert.Equal(t, string(model.TaskStatusFailure), result.Status)
 	assert.Equal(t, "invalid asset", result.Reason)
 	assert.Equal(t, "100%", result.Progress)
+}
+
+func TestParseNativeTaskEnvelopeRemainsSupported(t *testing.T) {
+	result, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{"task":{"id":"mvt_native","status":"completed","outputs":["https://example.com/native.mp4"]}}`))
+
+	require.NoError(t, err)
+	assert.Equal(t, "mvt_native", result.TaskID)
+	assert.Equal(t, string(model.TaskStatusSuccess), result.Status)
+	assert.Equal(t, "https://example.com/native.mp4", result.Url)
 }
 
 func TestConvertToOpenAIVideoIncludesStoredResultURL(t *testing.T) {

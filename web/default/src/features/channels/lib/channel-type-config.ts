@@ -250,12 +250,12 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
     ],
     hints: {
       baseUrl:
-        'Default host: https://corp.yoboxai.com. The adaptor adds the video generation and task query paths automatically.',
+        'Default host: https://corp.yoboxai.com. The adaptor adds the asynchronous task paths automatically.',
       key: 'Use the YoboxCorp API key. Requests are authenticated with the Bearer Authorization header.',
       models:
         'Expose dreamina-seedance-2-0-hc, dreamina-seedance-2-0-fast-hc, and dreamina-seedance-2-0-mini-hc.',
       other:
-        'Video task channel. Submit uses POST /v1/video/generate and polling uses GET /v1/video/tasks/{task_id}.',
+        'Video task channel. Submit uses POST /async/tasks and polling uses GET /async/tasks/{task_id}; request fields follow the CorpYobox Dreamina contract.',
     },
   },
 }
