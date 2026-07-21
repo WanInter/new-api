@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -25,9 +24,6 @@ import (
 const (
 	defaultYoboxBaseURL              = "https://max.yoboxai.com"
 	yoboxTasksPath                   = "/async/tasks"
-	dreaminaSeedance20GeneratePath   = "/v1/video/generate"
-	dreaminaSeedance20TaskPath       = "/v1/video/tasks"
-	dreaminaSeedance20ModelPrefix    = "dreamina-seedance-2-0-"
 	yoboxImageReferencesLimitMessage = "最多支持 4 张 image_references"
 	yoboxGenericProcessingError      = "视频生成请求处理失败"
 )
@@ -37,9 +33,6 @@ var modelList = []string{
 	"seedance-2.0",
 	"seedance-2.0-fast",
 	"happy-horse-1.1",
-	"dreamina-seedance-2-0-hc",
-	"dreamina-seedance-2-0-fast-hc",
-	"dreamina-seedance-2-0-mini-hc",
 }
 
 type responseTask struct {
@@ -97,18 +90,6 @@ type submitResponse struct {
 	} `json:"data"`
 }
 
-type dreaminaTaskResponse struct {
-	Task *dreaminaTask `json:"task"`
-}
-
-type dreaminaTask struct {
-	ID      string   `json:"id"`
-	Status  string   `json:"status"`
-	Model   string   `json:"model"`
-	Outputs []string `json:"outputs"`
-	Error   any      `json:"error"`
-}
-
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
 	ChannelType int
@@ -162,10 +143,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 	return map[string]float64{"seconds": float64(seconds)}
 }
 
-func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	if isDreaminaSeedance20Model(yoboxModelName(nil, info)) {
-		return a.baseURL + dreaminaSeedance20GeneratePath, nil
-	}
+func (a *TaskAdaptor) BuildRequestURL(_ *relaycommon.RelayInfo) (string, error) {
 	return a.baseURL + yoboxTasksPath, nil
 }
 
@@ -202,16 +180,6 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return "", nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
 	}
 	_ = resp.Body.Close()
-	if isDreaminaSeedance20Model(yoboxModelName(nil, info)) {
-		var parsed dreaminaTaskResponse
-		if err := common.Unmarshal(responseBody, &parsed); err != nil {
-			return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
-		}
-		if parsed.Task == nil || strings.TrimSpace(parsed.Task.ID) == "" {
-			return "", nil, service.TaskErrorWrapperLocal(errors.New("Dreamina submit response has no task id"), "invalid_response", http.StatusBadGateway)
-		}
-		return writeYoboxOpenAIVideoResponse(c, info, parsed.Task.ID, responseBody)
-	}
 
 	var parsed submitResponse
 	if err := common.Unmarshal(responseBody, &parsed); err != nil {
@@ -225,10 +193,6 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return "", nil, service.TaskErrorWrapperLocal(fmt.Errorf("yobox submit failed: %s", message), "submit_failed", http.StatusBadRequest)
 	}
 
-	return writeYoboxOpenAIVideoResponse(c, info, parsed.Data.TaskID, responseBody)
-}
-
-func writeYoboxOpenAIVideoResponse(c *gin.Context, info *relaycommon.RelayInfo, upstreamTaskID string, responseBody []byte) (string, []byte, *dto.TaskError) {
 	ov := dto.NewOpenAIVideo()
 	ov.ID = info.PublicTaskID
 	ov.TaskID = info.PublicTaskID
@@ -236,7 +200,7 @@ func writeYoboxOpenAIVideoResponse(c *gin.Context, info *relaycommon.RelayInfo, 
 	ov.Model = info.OriginModelName
 	ov.Status = model.TaskStatus(model.TaskStatusSubmitted).ToVideoStatus()
 	c.JSON(http.StatusOK, ov)
-	return upstreamTaskID, responseBody, nil
+	return parsed.Data.TaskID, responseBody, nil
 }
 
 func (a *TaskAdaptor) FetchTask(ctx context.Context, baseURL, key string, body map[string]any, proxy string) (*http.Response, error) {
@@ -244,11 +208,7 @@ func (a *TaskAdaptor) FetchTask(ctx context.Context, baseURL, key string, body m
 	if strings.TrimSpace(taskID) == "" {
 		return nil, fmt.Errorf("invalid task_id")
 	}
-	path := yoboxTasksPath
-	if isDreaminaSeedance20Model(stringValue(body["model"])) {
-		path = dreaminaSeedance20TaskPath
-	}
-	uri := strings.TrimRight(baseURL, "/") + path + "/" + url.PathEscape(taskID)
+	uri := strings.TrimRight(baseURL, "/") + yoboxTasksPath + "/" + taskID
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, uri, nil)
 	if err != nil {
 		return nil, err
@@ -263,11 +223,6 @@ func (a *TaskAdaptor) FetchTask(ctx context.Context, baseURL, key string, body m
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
-	var dreaminaResponse dreaminaTaskResponse
-	if err := common.Unmarshal(respBody, &dreaminaResponse); err == nil && dreaminaResponse.Task != nil {
-		return taskInfoFromDreaminaTask(dreaminaResponse.Task)
-	}
-
 	var parsed responseTask
 	if err := common.Unmarshal(respBody, &parsed); err != nil {
 		return nil, errors.Wrap(err, "unmarshal task result failed")
@@ -290,42 +245,6 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		info.Reason, _ = sanitizeYoboxFailureReason(firstNonEmpty(parsed.Data.FailReason, parsed.FailReason, parsed.Data.Data.FailReason, parsed.Data.Data.Error, parsed.Data.Data.Phase, parsed.Data.Error, parsed.Data.Phase, parsed.Message, "task failed"))
 	}
 	return info, nil
-}
-
-func taskInfoFromDreaminaTask(task *dreaminaTask) (*relaycommon.TaskInfo, error) {
-	status := mapYoboxStatus(task.Status)
-	if status == model.TaskStatusUnknown {
-		return nil, fmt.Errorf("unknown Dreamina task status %q", task.Status)
-	}
-	info := &relaycommon.TaskInfo{
-		Code:     0,
-		TaskID:   task.ID,
-		Status:   string(status),
-		Progress: progressString(0, status),
-	}
-	if status == model.TaskStatusSuccess {
-		info.Url = firstString(task.Outputs)
-		info.Progress = "100%"
-	}
-	if status == model.TaskStatusFailure {
-		info.Progress = "100%"
-		info.Reason = dreaminaTaskError(task.Error)
-		if info.Reason == "" {
-			info.Reason = "task failed"
-		}
-	}
-	return info, nil
-}
-
-func dreaminaTaskError(value any) string {
-	switch v := value.(type) {
-	case string:
-		return strings.TrimSpace(v)
-	case map[string]any:
-		return firstNonEmpty(stringValue(v["message"]), stringValue(v["error"]), stringValue(v["detail"]))
-	default:
-		return ""
-	}
 }
 
 func sanitizeYoboxFailureReason(message string) (string, bool) {
@@ -368,38 +287,26 @@ func (a *TaskAdaptor) GetModelList() []string { return modelList }
 func (a *TaskAdaptor) GetChannelName() string { return "yobox" }
 
 func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (any, error) {
-	modelName := yoboxModelName(req, info)
+	modelName := ""
+	if info != nil {
+		if info.ChannelMeta != nil {
+			modelName = strings.TrimSpace(info.UpstreamModelName)
+		}
+		if modelName == "" {
+			modelName = strings.TrimSpace(info.OriginModelName)
+		}
+	}
+	if modelName == "" {
+		modelName = strings.TrimSpace(req.Model)
+	}
+	if modelName == "" {
+		modelName = "seedance2"
+	}
 
 	if modelName == "seedance2" {
 		return convertSeedance2Payload(req, modelName), nil
 	}
-	if isDreaminaSeedance20Model(modelName) {
-		return convertDreaminaSeedance20Payload(req, modelName), nil
-	}
 	return convertSeedance20Payload(req, modelName), nil
-}
-
-func yoboxModelName(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) string {
-	if info != nil {
-		if info.ChannelMeta != nil {
-			if modelName := strings.TrimSpace(info.UpstreamModelName); modelName != "" {
-				return modelName
-			}
-		}
-		if modelName := strings.TrimSpace(info.OriginModelName); modelName != "" {
-			return modelName
-		}
-	}
-	if req != nil {
-		if modelName := strings.TrimSpace(req.Model); modelName != "" {
-			return modelName
-		}
-	}
-	return "seedance2"
-}
-
-func isDreaminaSeedance20Model(modelName string) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(modelName)), dreaminaSeedance20ModelPrefix)
 }
 
 func convertSeedance2Payload(req *relaycommon.TaskSubmitReq, modelName string) map[string]any {
@@ -471,103 +378,6 @@ func convertSeedance20Payload(req *relaycommon.TaskSubmitReq, modelName string) 
 		"model": modelName,
 		"input": input,
 	}
-}
-
-func convertDreaminaSeedance20Payload(req *relaycommon.TaskSubmitReq, modelName string) map[string]any {
-	ratio := firstNonEmpty(
-		req.AspectRatio,
-		stringValue(req.Metadata["ratio"]),
-		stringValue(req.Metadata["aspect_ratio"]),
-		defaultYoboxAspectRatio(req.Size),
-	)
-	resolution := firstNonEmpty(
-		req.Resolution,
-		stringValue(req.Metadata["resolution"]),
-		defaultYoboxResolution(req.Size),
-	)
-	watermark := false
-	if value, ok := req.Metadata["watermark"].(bool); ok {
-		watermark = value
-	}
-	payload := map[string]any{
-		"model":      modelName,
-		"content":    buildDreaminaSeedance20Content(req),
-		"duration":   normalizeYoboxSeconds(req.Seconds, req.Duration),
-		"resolution": resolution,
-		"watermark":  watermark,
-	}
-	if ratio != "" {
-		payload["ratio"] = ratio
-	}
-	return payload
-}
-
-func buildDreaminaSeedance20Content(req *relaycommon.TaskSubmitReq) []any {
-	content := make([]any, 0, 1+len(req.Images)+len(req.Videos)+len(req.Audios))
-	if prompt := strings.TrimSpace(req.Prompt); prompt != "" {
-		content = append(content, map[string]any{"type": "text", "text": prompt})
-	}
-	seen := make(map[string]struct{})
-	for _, item := range req.Content {
-		switch item.Type {
-		case "image_url":
-			if item.ImageURL != nil {
-				content = appendDreaminaReference(content, seen, "image_url", "reference_image", item.ImageURL.URL)
-			}
-		case "video_url":
-			if item.VideoURL != nil {
-				content = appendDreaminaReference(content, seen, "video_url", "reference_video", item.VideoURL.URL)
-			}
-		case "audio_url":
-			if item.AudioURL != nil {
-				content = appendDreaminaReference(content, seen, "audio_url", "reference_audio", item.AudioURL.URL)
-			}
-		}
-	}
-	for _, imageURL := range appendNonEmptyYoboxURLs(
-		[]string{req.Image, req.InputReference}, req.Images, req.ImageURLs,
-		req.InputStartFrames, req.InputImageReferences, req.MetadataStartFrames,
-	) {
-		content = appendDreaminaReference(content, seen, "image_url", "reference_image", imageURL)
-	}
-	for _, videoURL := range appendNonEmptyYoboxURLs(req.Videos, req.VideoURLs) {
-		content = appendDreaminaReference(content, seen, "video_url", "reference_video", videoURL)
-	}
-	for _, audioURL := range appendNonEmptyYoboxURLs(req.Audios, req.AudioURLs) {
-		content = appendDreaminaReference(content, seen, "audio_url", "reference_audio", audioURL)
-	}
-	return content
-}
-
-func appendNonEmptyYoboxURLs(groups ...[]string) []string {
-	values := make([]string, 0)
-	for _, group := range groups {
-		for _, value := range group {
-			if value = strings.TrimSpace(value); value != "" {
-				values = append(values, value)
-			}
-		}
-	}
-	return values
-}
-
-func appendDreaminaReference(content []any, seen map[string]struct{}, contentType, role, value string) []any {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return content
-	}
-	key := contentType + "\x00" + value
-	if _, exists := seen[key]; exists {
-		return content
-	}
-	seen[key] = struct{}{}
-	return append(content, map[string]any{
-		"type": contentType,
-		"role": role,
-		contentType: map[string]any{
-			"url": value,
-		},
-	})
 }
 
 func buildYoboxImageReferences(images []string) []map[string]any {
@@ -690,7 +500,7 @@ func mergeYoboxRequestMetadata(c *gin.Context, req *relaycommon.TaskSubmitReq) {
 	if req.Metadata == nil {
 		req.Metadata = map[string]any{}
 	}
-	for _, key := range []string{"content", "ratio", "aspect_ratio", "resolution", "watermark", "generate_audio", "audio", "n", "start_frames", "prompt_enhance"} {
+	for _, key := range []string{"content", "ratio", "aspect_ratio", "resolution", "generate_audio", "audio", "n", "start_frames", "prompt_enhance"} {
 		if v, ok := raw[key]; ok {
 			req.Metadata[key] = v
 		}

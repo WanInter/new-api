@@ -135,110 +135,6 @@ func TestConvertToRequestPayloadDefaultsSeedance20Resolution(t *testing.T) {
 	require.Equal(t, "720p", input["resolution"])
 }
 
-func TestDreaminaSeedance20BuildRequestUsesTopLevelVideoContract(t *testing.T) {
-	bodyJSON := `{
-		"model":"dreamina-seedance-2-0-fast-hc",
-		"prompt":"create a cinematic portrait",
-		"aspect_ratio":"9:16",
-		"duration":15,
-		"resolution":"720p",
-		"watermark":true,
-		"images":["https://example.com/face.png","https://example.com/scene.jpg"]
-	}`
-	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(bodyJSON))
-	c.Request.Header.Set("Content-Type", "application/json")
-	t.Cleanup(func() { common.CleanupBodyStorage(c) })
-	info := &relaycommon.RelayInfo{
-		OriginModelName: "dreamina-seedance-2-0-fast-hc",
-		ChannelMeta: &relaycommon.ChannelMeta{
-			UpstreamModelName: "dreamina-seedance-2-0-fast-hc",
-		},
-		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
-	}
-	adaptor := &TaskAdaptor{baseURL: "https://corp.example.test"}
-
-	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
-	requestURL, err := adaptor.BuildRequestURL(info)
-	require.NoError(t, err)
-	assert.Equal(t, "https://corp.example.test/v1/video/generate", requestURL)
-
-	body, err := adaptor.BuildRequestBody(c, info)
-	require.NoError(t, err)
-	data, err := io.ReadAll(body)
-	require.NoError(t, err)
-	var payload map[string]any
-	require.NoError(t, common.Unmarshal(data, &payload))
-	assert.Equal(t, "dreamina-seedance-2-0-fast-hc", payload["model"])
-	assert.Equal(t, "720p", payload["resolution"])
-	assert.Equal(t, "9:16", payload["ratio"])
-	assert.Equal(t, float64(15), payload["duration"])
-	assert.Equal(t, true, payload["watermark"])
-	assert.NotContains(t, payload, "input")
-	assert.Equal(t, []any{
-		map[string]any{"type": "text", "text": "create a cinematic portrait"},
-		map[string]any{
-			"type":      "image_url",
-			"role":      "reference_image",
-			"image_url": map[string]any{"url": "https://example.com/face.png"},
-		},
-		map[string]any{
-			"type":      "image_url",
-			"role":      "reference_image",
-			"image_url": map[string]any{"url": "https://example.com/scene.jpg"},
-		},
-	}, payload["content"])
-}
-
-func TestDreaminaSeedance20DoResponseUsesTaskEnvelope(t *testing.T) {
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	info := &relaycommon.RelayInfo{
-		OriginModelName: "dreamina-seedance-2-0-fast-hc",
-		ChannelMeta: &relaycommon.ChannelMeta{
-			UpstreamModelName: "dreamina-seedance-2-0-fast-hc",
-		},
-		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
-	}
-	resp := &http.Response{Body: io.NopCloser(strings.NewReader(`{
-		"task":{"id":"mvt_upstream","status":"pending","model":"dreamina-seedance-2-0-fast-hc","outputs":[]}
-	}`))}
-
-	upstreamTaskID, taskData, taskErr := (&TaskAdaptor{}).DoResponse(c, resp, info)
-
-	require.Nil(t, taskErr)
-	assert.Equal(t, "mvt_upstream", upstreamTaskID)
-	assert.Contains(t, string(taskData), "mvt_upstream")
-	assert.Equal(t, http.StatusOK, recorder.Code)
-}
-
-func TestDreaminaSeedance20FetchAndParseTask(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/v1/video/tasks/mvt_upstream", r.URL.Path)
-		assert.Equal(t, "Bearer upstream-key", r.Header.Get("Authorization"))
-		_, _ = w.Write([]byte(`{
-			"task":{"id":"mvt_upstream","status":"completed","outputs":["https://example.com/result.mp4"]}
-		}`))
-	}))
-	t.Cleanup(server.Close)
-
-	response, err := (&TaskAdaptor{}).FetchTask(t.Context(), server.URL, "upstream-key", map[string]any{
-		"task_id": "mvt_upstream",
-		"model":   "dreamina-seedance-2-0-fast-hc",
-	}, "")
-	require.NoError(t, err)
-	require.NotNil(t, response)
-	defer response.Body.Close()
-	body, err := io.ReadAll(response.Body)
-	require.NoError(t, err)
-
-	result, err := (&TaskAdaptor{}).ParseTaskResult(body)
-	require.NoError(t, err)
-	assert.Equal(t, "mvt_upstream", result.TaskID)
-	assert.Equal(t, string(model.TaskStatusSuccess), result.Status)
-	assert.Equal(t, "https://example.com/result.mp4", result.Url)
-}
-
 func TestConvertToRequestPayloadHappyHorseSupportsNineReferences(t *testing.T) {
 	images := make([]string, 9)
 	for i := range images {
@@ -532,13 +428,5 @@ func TestMergeYoboxRequestMetadataExtractsContentImages(t *testing.T) {
 }
 
 func TestModelListIncludesSupportedModels(t *testing.T) {
-	require.Equal(t, []string{
-		"seedance2",
-		"seedance-2.0",
-		"seedance-2.0-fast",
-		"happy-horse-1.1",
-		"dreamina-seedance-2-0-hc",
-		"dreamina-seedance-2-0-fast-hc",
-		"dreamina-seedance-2-0-mini-hc",
-	}, (&TaskAdaptor{}).GetModelList())
+	require.Equal(t, []string{"seedance2", "seedance-2.0", "seedance-2.0-fast", "happy-horse-1.1"}, (&TaskAdaptor{}).GetModelList())
 }
