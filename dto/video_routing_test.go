@@ -58,3 +58,39 @@ func TestVideoModelCapabilityValidateDurationConstraints(t *testing.T) {
 		})
 	}
 }
+
+func TestVideoModelCapabilityValidateVideoAudioTotal(t *testing.T) {
+	negative := -1
+	validMax := 3
+
+	testCases := []struct {
+		name       string
+		capability VideoModelCapability
+		wantError  string
+	}{
+		{
+			name: "valid joint media maximum",
+			capability: VideoModelCapability{
+				VideoAudioTotal: &VideoMediaRange{Max: &validMax},
+			},
+		},
+		{
+			name: "negative joint media maximum",
+			capability: VideoModelCapability{
+				VideoAudioTotal: &VideoMediaRange{Max: &negative},
+			},
+			wantError: "video_audio_total.max must be non-negative",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := testCase.capability.Validate()
+			if testCase.wantError == "" {
+				assert.NoError(t, err)
+				return
+			}
+			assert.EqualError(t, err, testCase.wantError)
+		})
+	}
+}

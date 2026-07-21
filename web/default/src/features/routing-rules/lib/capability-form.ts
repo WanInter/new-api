@@ -23,6 +23,8 @@ export const capabilityRuleFormSchema = z
     videos_max: optionalNonNegativeInteger,
     audios_min: optionalNonNegativeInteger,
     audios_max: optionalNonNegativeInteger,
+    video_audio_total_min: optionalNonNegativeInteger,
+    video_audio_total_max: optionalNonNegativeInteger,
     duration_min: optionalPositiveInteger,
     duration_max: optionalPositiveInteger,
     fixed_duration: optionalPositiveInteger,
@@ -34,6 +36,12 @@ export const capabilityRuleFormSchema = z
     validateRange(values.images_min, values.images_max, 'images_max', context)
     validateRange(values.videos_min, values.videos_max, 'videos_max', context)
     validateRange(values.audios_min, values.audios_max, 'audios_max', context)
+    validateRange(
+      values.video_audio_total_min,
+      values.video_audio_total_max,
+      'video_audio_total_max',
+      context
+    )
     validateRange(
       values.duration_min,
       values.duration_max,
@@ -68,6 +76,8 @@ export const emptyCapabilityRuleFormValues: CapabilityRuleFormValues = {
   videos_max: '',
   audios_min: '',
   audios_max: '',
+  video_audio_total_min: '',
+  video_audio_total_max: '',
   duration_min: '',
   duration_max: '',
   fixed_duration: '',
@@ -86,6 +96,8 @@ export function capabilityToFormValues(
     videos_max: numberToDraft(capability?.videos?.max),
     audios_min: numberToDraft(capability?.audios?.min),
     audios_max: numberToDraft(capability?.audios?.max),
+    video_audio_total_min: numberToDraft(capability?.video_audio_total?.min),
+    video_audio_total_max: numberToDraft(capability?.video_audio_total?.max),
     duration_min: numberToDraft(capability?.duration?.min),
     duration_max: numberToDraft(capability?.duration?.max),
     fixed_duration: numberToDraft(capability?.fixed_duration),
@@ -102,6 +114,10 @@ export function formValuesToCapability(
     images: rangeFromDraft(values.images_min, values.images_max),
     videos: rangeFromDraft(values.videos_min, values.videos_max),
     audios: rangeFromDraft(values.audios_min, values.audios_max),
+    video_audio_total: rangeFromDraft(
+      values.video_audio_total_min,
+      values.video_audio_total_max
+    ),
     duration: rangeFromDraft(values.duration_min, values.duration_max),
     fixed_duration: draftToNumber(values.fixed_duration),
     require_json: overrideToBoolean(values.require_json),

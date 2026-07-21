@@ -113,6 +113,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err := normalizeSoraContent(payload); err != nil {
 		return nil, err
 	}
+	mapSecondsToDuration(payload)
 	if upstreamModelName := strings.TrimSpace(info.UpstreamModelName); upstreamModelName != "" {
 		payload["model"] = upstreamModelName
 	}
@@ -126,6 +127,17 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, err
 	}
 	return bytes.NewReader(body), nil
+}
+
+// mapSecondsToDuration translates the legacy public alias into Shishi's
+// documented wire field. An explicitly supplied duration always wins.
+func mapSecondsToDuration(payload map[string]any) {
+	if _, hasDuration := payload["duration"]; !hasDuration {
+		if seconds, hasSeconds := payload["seconds"]; hasSeconds {
+			payload["duration"] = seconds
+		}
+	}
+	delete(payload, "seconds")
 }
 
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
@@ -312,8 +324,10 @@ func taskRequestFromPayload(payload map[string]any, fallbackModel string) (relay
 			}
 		}
 	}
-	media = media.unique()
-	duration := firstPositiveInt(payload["seconds"], payload["duration"], nestedValue(payload, "metadata", "duration"))
+	// duration is the canonical public spelling. Keep the request stored for
+	// billing consistent with the outgoing body, which also gives duration
+	// precedence over seconds.
+	duration := firstPositiveInt(payload["duration"], payload["seconds"], nestedValue(payload, "metadata", "duration"))
 	req := relaycommon.TaskSubmitReq{
 		Prompt:      prompt,
 		Model:       modelName,
@@ -339,13 +353,6 @@ type mediaReferences struct {
 
 func (m mediaReferences) hasAny() bool {
 	return len(m.images) > 0 || len(m.videos) > 0 || len(m.audios) > 0
-}
-
-func (m mediaReferences) unique() mediaReferences {
-	m.images = uniqueURLs(m.images)
-	m.videos = uniqueURLs(m.videos)
-	m.audios = uniqueURLs(m.audios)
-	return m
 }
 
 func collectMedia(payload map[string]any) mediaReferences {
@@ -382,7 +389,7 @@ func collectURLs(payload map[string]any, keys ...string) []string {
 	for _, key := range keys {
 		appendURLs(&values, payload[key])
 	}
-	return uniqueURLs(values)
+	return values
 }
 
 func appendURLs(target *[]string, value any) {
@@ -452,7 +459,6 @@ func normalizeSoraContent(payload map[string]any) error {
 			}
 		}
 	}
-	media = media.unique()
 	if len(media.images) > 0 {
 		payload["reference_image_urls"] = media.images
 	}
@@ -476,12 +482,20 @@ func buildMultipartBody(c *gin.Context, upstreamModel string) (io.Reader, error)
 	if err := writer.WriteField("model", upstreamModel); err != nil {
 		return nil, err
 	}
+	hasDuration := len(form.Value["duration"]) > 0
 	for key, values := range form.Value {
-		if key == "model" {
+		if key == "model" || key == "seconds" {
 			continue
 		}
 		for _, value := range values {
 			if err := writer.WriteField(key, value); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if !hasDuration {
+		for _, value := range form.Value["seconds"] {
+			if err := writer.WriteField("duration", value); err != nil {
 				return nil, err
 			}
 		}
@@ -756,23 +770,6 @@ func normalizedProgress(value any) string {
 		parsed = 100
 	}
 	return strconv.Itoa(parsed) + "%"
-}
-
-func uniqueURLs(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	unique := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		unique = append(unique, value)
-	}
-	return unique
 }
 
 func firstNonEmpty(values ...string) string {

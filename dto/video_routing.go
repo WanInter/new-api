@@ -8,20 +8,21 @@ type VideoMediaRange struct {
 }
 
 type VideoModelCapability struct {
-	Images        *VideoMediaRange `json:"images,omitempty"`
-	Videos        *VideoMediaRange `json:"videos,omitempty"`
-	Audios        *VideoMediaRange `json:"audios,omitempty"`
-	Duration      *VideoMediaRange `json:"duration,omitempty"`
-	FixedDuration *int             `json:"fixed_duration,omitempty"`
-	RequireJSON   *bool            `json:"require_json,omitempty"`
-	RequireText   *bool            `json:"require_text,omitempty"`
+	Images          *VideoMediaRange `json:"images,omitempty"`
+	Videos          *VideoMediaRange `json:"videos,omitempty"`
+	Audios          *VideoMediaRange `json:"audios,omitempty"`
+	VideoAudioTotal *VideoMediaRange `json:"video_audio_total,omitempty"`
+	Duration        *VideoMediaRange `json:"duration,omitempty"`
+	FixedDuration   *int             `json:"fixed_duration,omitempty"`
+	RequireJSON     *bool            `json:"require_json,omitempty"`
+	RequireText     *bool            `json:"require_text,omitempty"`
 	// ContentPrecedence means explicit content items replace legacy media fields
 	// when request references are counted for this upstream model.
 	ContentPrecedence *bool `json:"content_precedence,omitempty"`
 }
 
-// VideoRoutingConfig contains per-channel overrides keyed by upstream model.
-// The "*" key can be used as a channel-wide fallback.
+// VideoRoutingConfig is retained for stored channel-setting compatibility.
+// Effective video capabilities are resolved from exact channel_model rules.
 type VideoRoutingConfig struct {
 	Models map[string]VideoModelCapability `json:"models,omitempty"`
 }
@@ -49,6 +50,7 @@ func (c VideoModelCapability) Validate() error {
 		{name: "images", rangeValue: c.Images},
 		{name: "videos", rangeValue: c.Videos},
 		{name: "audios", rangeValue: c.Audios},
+		{name: "video_audio_total", rangeValue: c.VideoAudioTotal},
 	}
 	for _, item := range media {
 		if item.rangeValue == nil {

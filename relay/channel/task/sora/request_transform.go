@@ -8,38 +8,36 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
 
-var tokenStackRequestFields = map[string]bool{
-	"model":   true,
-	"prompt":  true,
-	"images":  true,
-	"videos":  true,
-	"audios":  true,
-	"seconds": true,
-	"size":    true,
-}
-
 func applyTokenStackJSONRequest(body map[string]interface{}) {
 	if body == nil {
 		return
 	}
 	applyTokenStackMediaFields(body)
-
-	if seconds, ok := normalizeVideoSeconds(body["seconds"]); ok {
-		body["seconds"] = seconds
-	} else if seconds, ok := normalizeVideoSeconds(body["duration"]); ok {
-		body["seconds"] = seconds
-	}
-
+	mapDurationToSoraSeconds(body)
 	if strings.TrimSpace(stringValue(body["size"])) == "" {
 		if size := tokenStackSizeFromLegacyFields(body); size != "" {
 			body["size"] = size
 		}
 	}
 
-	for key := range body {
-		if !tokenStackRequestFields[key] {
-			delete(body, key)
-		}
+	// Fields without a documented TokenStack mapping stay in the request. The
+	// upstream can reject them instead of this adaptor silently discarding data.
+}
+
+func tokenStackSizeFromLegacyFields(body map[string]interface{}) string {
+	ratio := firstNonEmpty(stringValue(body["aspect_ratio"]), stringValue(body["ratio"]))
+	resolution := strings.ToLower(strings.TrimSpace(stringValue(body["resolution"])))
+	if resolution != "" && resolution != "720p" {
+		return ""
+	}
+
+	switch ratio {
+	case "16:9":
+		return "1280x720"
+	case "9:16":
+		return "720x1280"
+	default:
+		return ""
 	}
 }
 
@@ -98,34 +96,18 @@ func appendNonEmptyTokenStackURLs(target []string, values ...string) []string {
 	return target
 }
 
-func tokenStackSizeFromLegacyFields(body map[string]interface{}) string {
-	ratio := firstNonEmpty(stringValue(body["aspect_ratio"]), stringValue(body["ratio"]))
-	resolution := strings.ToLower(strings.TrimSpace(stringValue(body["resolution"])))
-	if resolution != "" && resolution != "720p" {
-		return ""
-	}
-
-	switch ratio {
-	case "16:9":
-		return "1280x720"
-	case "9:16":
-		return "720x1280"
-	default:
-		return ""
-	}
-}
-
 func applySoraModelJSONProfile(body map[string]interface{}, profile soraModelProfile) {
+	if profile.DropSecondsField {
+		moveSecondsFieldToDuration(body)
+	}
+
 	switch profile.JSONTransform {
 	case requestTransformOpenAIContent:
-		applyContentRequestRules(body, profile.ContentRules)
+		applyOpenAIContentRequest(body)
 	case requestTransformOtoySeedanceReference:
 		applyOtoySeedanceMiniReferenceRequest(body)
 	case requestTransformVeoReferenceImages:
 		applyVeoReferenceImages(body)
-	}
-	if profile.DropSecondsField {
-		delete(body, "seconds")
 	}
 }
 
@@ -141,36 +123,51 @@ func applySoraModelMultipartProfile(writer *multipart.Writer, values map[string]
 	}
 }
 
-func applyContentRequestRules(body map[string]interface{}, rules *contentRequestRules) {
-	if body == nil || rules == nil || !rules.ConvertLegacyMedia {
+func moveSecondsFieldToDuration(body map[string]interface{}) {
+	if body == nil {
+		return
+	}
+	if _, exists := body["duration"]; !exists {
+		if seconds, exists := body["seconds"]; exists {
+			body["duration"] = seconds
+		}
+	}
+	delete(body, "seconds")
+}
+
+func applyOpenAIContentRequest(body map[string]interface{}) {
+	if body == nil {
 		return
 	}
 
-	if !hasContentItems(body["content"]) {
-		content := make([]interface{}, 0)
-		content = appendLegacyURLContent(content, "image_url", body["images"])
-		content = appendLegacyURLContent(content, "image_url", body["image"])
-		content = appendLegacyURLContent(content, "image_url", body["image_urls"])
-		content = appendLegacyURLContent(content, "image_url", body["input_reference"])
-		content = appendLegacyURLContent(content, "image_url", nestedRequestValue(body, "input", "start_frames"))
-		content = appendLegacyURLContent(content, "image_url", nestedRequestValue(body, "input", "image_references"))
-		content = appendLegacyURLContent(content, "image_url", nestedRequestValue(body, "metadata", "start_frames"))
-		content = appendLegacyURLContent(content, "video_url", body["video"])
-		content = appendLegacyURLContent(content, "video_url", body["videos"])
-		content = appendLegacyURLContent(content, "video_url", body["video_url"])
-		content = appendLegacyURLContent(content, "video_url", body["video_urls"])
-		content = appendLegacyURLContent(content, "audio_url", body["audio"])
-		content = appendLegacyURLContent(content, "audio_url", body["audios"])
-		content = appendLegacyURLContent(content, "audio_url", body["audio_url"])
-		content = appendLegacyURLContent(content, "audio_url", body["audio_urls"])
+	hadContent := hasContentItems(body["content"])
+	content, _ := body["content"].([]interface{})
+	legacyContent := make([]interface{}, 0)
+	legacyContent = appendLegacyURLContent(legacyContent, "image_url", body["images"])
+	legacyContent = appendLegacyURLContent(legacyContent, "image_url", body["image"])
+	legacyContent = appendLegacyURLContent(legacyContent, "image_url", body["image_urls"])
+	legacyContent = appendLegacyURLContent(legacyContent, "image_url", body["input_reference"])
+	legacyContent = appendLegacyURLContent(legacyContent, "image_url", nestedRequestValue(body, "input", "start_frames"))
+	legacyContent = appendLegacyURLContent(legacyContent, "image_url", nestedRequestValue(body, "input", "image_references"))
+	legacyContent = appendLegacyURLContent(legacyContent, "image_url", nestedRequestValue(body, "metadata", "start_frames"))
+	legacyContent = appendLegacyURLContent(legacyContent, "video_url", body["video"])
+	legacyContent = appendLegacyURLContent(legacyContent, "video_url", body["videos"])
+	legacyContent = appendLegacyURLContent(legacyContent, "video_url", body["video_url"])
+	legacyContent = appendLegacyURLContent(legacyContent, "video_url", body["video_urls"])
+	legacyContent = appendLegacyURLContent(legacyContent, "audio_url", body["audio"])
+	legacyContent = appendLegacyURLContent(legacyContent, "audio_url", body["audios"])
+	legacyContent = appendLegacyURLContent(legacyContent, "audio_url", body["audio_url"])
+	legacyContent = appendLegacyURLContent(legacyContent, "audio_url", body["audio_urls"])
+	content = append(legacyContent, content...)
+	if !hadContent {
 		if prompt, ok := body["prompt"].(string); ok && strings.TrimSpace(prompt) != "" {
 			content = append(content, map[string]interface{}{
 				"type": "text",
 				"text": prompt,
 			})
 		}
-		body["content"] = content
 	}
+	body["content"] = content
 
 	for _, field := range []string{
 		"images", "image", "image_urls", "input_reference",
@@ -274,44 +271,80 @@ func writeOtoySeedanceMiniReferenceMultipartFields(writer *multipart.Writer, val
 		}
 	}
 
-	allowedPassthrough := map[string]bool{
-		"prompt":         true,
-		"type":           true,
-		"video_urls":     true,
-		"audio_urls":     true,
-		"resolution":     true,
-		"aspect_ratio":   true,
-		"generate_audio": true,
-		"end_user_id":    true,
+	mappedAspectRatio, mappedResolution, mappedSize := otoyAspectRatioAndResolutionFromForm(values)
+	transformedFields := map[string]bool{
+		"model":           true,
+		"duration":        true,
+		"seconds":         true,
+		"image_urls":      true,
+		"images":          true,
+		"image":           true,
+		"input_reference": true,
+		"video_urls":      true,
+		"videos":          true,
+		"video":           true,
+		"video_url":       true,
+		"audio_urls":      true,
+		"audios":          true,
+		"audio":           true,
+		"audio_url":       true,
 	}
-	for key, values := range values {
-		if allowedPassthrough[key] {
-			writeValues(key, values)
+	if mappedSize {
+		transformedFields["size"] = true
+	}
+
+	for key, fieldValues := range values {
+		if !transformedFields[key] {
+			writeValues(key, fieldValues)
 		}
 	}
 
-	if len(values["aspect_ratio"]) == 0 {
-		writeValues("aspect_ratio", values["ratio"])
+	if mappedSize {
+		_ = writer.WriteField("aspect_ratio", mappedAspectRatio)
+		_ = writer.WriteField("resolution", mappedResolution)
 	}
-	if duration, ok := normalizeVideoDurationString(firstFormValue(values, "duration")); ok {
-		_ = writer.WriteField("duration", duration)
-	} else if duration, ok := normalizeVideoDurationString(firstFormValue(values, "seconds")); ok {
-		_ = writer.WriteField("duration", duration)
-	}
+	writeOtoyMultipartDuration(writer, values)
+	writeValues("image_urls", appendOtoyImageValues(nil, values))
+	writeValues("video_urls", appendOtoyVideoValues(nil, values))
+	writeValues("audio_urls", appendOtoyAudioValues(nil, values))
+}
 
-	imageValues := append([]string{}, values["image_urls"]...)
-	imageValues = append(imageValues, values["images"]...)
-	imageValues = append(imageValues, values["image"]...)
-	imageValues = append(imageValues, values["input_reference"]...)
-	imageValues = append(imageValues, values["file_paths"]...)
-	writeValues("image_urls", uniqueStrings(imageValues))
+func writeOtoyMultipartDuration(writer *multipart.Writer, values map[string][]string) {
+	durations, hasDuration := values["duration"]
+	if !hasDuration {
+		durations = values["seconds"]
+	}
+	for _, duration := range durations {
+		_ = writer.WriteField("duration", duration)
+	}
+}
 
-	if len(values["type"]) == 0 {
-		_ = writer.WriteField("type", "image-to-video")
+func appendOtoyImageValues(target []string, values map[string][]string) []string {
+	for _, key := range []string{"image_urls", "images", "image", "input_reference"} {
+		target = append(target, values[key]...)
 	}
-	if len(values["generate_audio"]) == 0 {
-		_ = writer.WriteField("generate_audio", "true")
+	return target
+}
+
+func appendOtoyVideoValues(target []string, values map[string][]string) []string {
+	for _, key := range []string{"video_urls", "videos", "video", "video_url"} {
+		target = append(target, values[key]...)
 	}
+	return target
+}
+
+func appendOtoyAudioValues(target []string, values map[string][]string) []string {
+	for _, key := range []string{"audio_urls", "audios", "audio", "audio_url"} {
+		target = append(target, values[key]...)
+	}
+	return target
+}
+
+func otoyAspectRatioAndResolutionFromForm(values map[string][]string) (string, string, bool) {
+	if len(values["aspect_ratio"]) > 0 || len(values["resolution"]) > 0 {
+		return "", "", false
+	}
+	return otoyAspectRatioAndResolutionFromSize(firstFormValue(values, "size"))
 }
 
 func firstFormValue(values map[string][]string, key string) string {
@@ -321,83 +354,57 @@ func firstFormValue(values map[string][]string, key string) string {
 	return values[key][0]
 }
 
-func uniqueStrings(values []string) []string {
-	seen := make(map[string]bool)
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" || seen[value] {
-			continue
-		}
-		seen[value] = true
-		out = append(out, value)
-	}
-	return out
-}
-
 func applyOtoySeedanceMiniReferenceRequest(body map[string]interface{}) {
 	if body == nil {
 		return
 	}
 
-	if _, exists := body["aspect_ratio"]; !exists {
-		if ratio, ok := body["ratio"].(string); ok && strings.TrimSpace(ratio) != "" {
-			body["aspect_ratio"] = strings.TrimSpace(ratio)
-		}
-	}
+	moveSecondsFieldToDuration(body)
+	applyOtoySizeMapping(body)
+	applyOtoyMediaAliases(body)
+}
 
-	delete(body, "seconds")
-	if duration, ok := normalizeVideoDurationString(body["duration"]); ok {
-		body["duration"] = duration
+func applyOtoySizeMapping(body map[string]interface{}) {
+	if strings.TrimSpace(stringValue(body["aspect_ratio"])) != "" || strings.TrimSpace(stringValue(body["resolution"])) != "" {
+		return
 	}
+	aspectRatio, resolution, ok := otoyAspectRatioAndResolutionFromSize(stringValue(body["size"]))
+	if !ok {
+		return
+	}
+	body["aspect_ratio"] = aspectRatio
+	body["resolution"] = resolution
+	delete(body, "size")
+}
+func otoyAspectRatioAndResolutionFromSize(size string) (string, string, bool) {
+	switch strings.TrimSpace(size) {
+	case "1280x720":
+		return "16:9", "720p", true
+	case "720x1280":
+		return "9:16", "720p", true
+	default:
+		return "", "", false
+	}
+}
 
-	images := collectOtoySeedanceMiniReferenceImages(body)
-	if len(images) > 0 {
+func applyOtoyMediaAliases(body map[string]interface{}) {
+	if images := collectStringFields(body, "image_urls", "images", "image", "input_reference"); len(images) > 0 {
 		body["image_urls"] = images
 	}
+	if videos := collectStringFields(body, "video_urls", "videos", "video", "video_url"); len(videos) > 0 {
+		body["video_urls"] = videos
+	}
+	if audios := collectStringFields(body, "audio_urls", "audios", "audio", "audio_url"); len(audios) > 0 {
+		body["audio_urls"] = audios
+	}
 
-	if _, exists := body["type"]; !exists {
-		body["type"] = "image-to-video"
+	for _, field := range []string{
+		"images", "image", "input_reference",
+		"videos", "video", "video_url",
+		"audios", "audio", "audio_url",
+	} {
+		delete(body, field)
 	}
-	if _, exists := body["generate_audio"]; !exists {
-		body["generate_audio"] = true
-	}
-
-	keep := map[string]bool{
-		"model":          true,
-		"prompt":         true,
-		"type":           true,
-		"image_urls":     true,
-		"video_urls":     true,
-		"audio_urls":     true,
-		"resolution":     true,
-		"duration":       true,
-		"aspect_ratio":   true,
-		"generate_audio": true,
-		"end_user_id":    true,
-	}
-	for key := range body {
-		if !keep[key] {
-			delete(body, key)
-		}
-	}
-}
-
-func normalizeVideoDurationString(value any) (string, bool) {
-	if duration, ok := normalizeVideoSeconds(value); ok {
-		return duration, true
-	}
-	if stringValue, ok := value.(string); ok {
-		stringValue = strings.TrimSpace(stringValue)
-		if strings.EqualFold(stringValue, "auto") {
-			return "auto", true
-		}
-	}
-	return "", false
-}
-
-func collectOtoySeedanceMiniReferenceImages(body map[string]interface{}) []string {
-	return collectUniqueStringFields(body, "image_urls", "images", "image", "input_reference", "file_paths")
 }
 
 func applyVeoReferenceImages(body map[string]interface{}) {
@@ -414,21 +421,19 @@ func applyVeoReferenceImages(body map[string]interface{}) {
 }
 
 func collectVeoImages(body map[string]interface{}) []string {
-	return collectUniqueStringFields(body, "Ingredients_images", "images", "image", "input_reference")
+	return collectStringFields(body, "Ingredients_images", "images", "image", "input_reference")
 }
 
-func collectUniqueStringFields(body map[string]interface{}, fields ...string) []string {
+func collectStringFields(body map[string]interface{}, fields ...string) []string {
 	if body == nil {
 		return nil
 	}
 	values := make([]string, 0)
-	seen := make(map[string]bool)
 	appendValue := func(value string) {
 		value = strings.TrimSpace(value)
-		if value == "" || seen[value] {
+		if value == "" {
 			return
 		}
-		seen[value] = true
 		values = append(values, value)
 	}
 	appendValues := func(value any) {

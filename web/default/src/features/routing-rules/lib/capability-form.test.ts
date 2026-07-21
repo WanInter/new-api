@@ -19,6 +19,35 @@ describe('routing capability override form', () => {
     )
   })
 
+  test('round-trips the combined video and audio total range', () => {
+    const values = capabilityToFormValues({
+      video_audio_total: { min: 0, max: 3 },
+    })
+
+    expect(values.video_audio_total_min).toBe('0')
+    expect(values.video_audio_total_max).toBe('3')
+    expect(JSON.stringify(formValuesToCapability(values))).toBe(
+      JSON.stringify({ video_audio_total: { min: 0, max: 3 } })
+    )
+  })
+
+  test('rejects a reversed combined video and audio total range', () => {
+    const result = capabilityRuleFormSchema.safeParse({
+      ...capabilityToFormValues(),
+      video_audio_total_min: '4',
+      video_audio_total_max: '3',
+    })
+
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(
+        result.error.issues.some(
+          (issue) => issue.path[0] === 'video_audio_total_max'
+        )
+      ).toBe(true)
+    }
+  })
+
   test('rejects reversed ranges and mixed duration modes', () => {
     const result = capabilityRuleFormSchema.safeParse({
       images_min: '4',
@@ -27,6 +56,8 @@ describe('routing capability override form', () => {
       videos_max: '',
       audios_min: '',
       audios_max: '',
+      video_audio_total_min: '',
+      video_audio_total_max: '',
       duration_min: '5',
       duration_max: '15',
       fixed_duration: '10',
@@ -57,6 +88,8 @@ describe('routing capability override form', () => {
       videos_max: '',
       audios_min: '',
       audios_max: '',
+      video_audio_total_min: '',
+      video_audio_total_max: '',
       duration_min: '',
       duration_max: '',
       fixed_duration: '',

@@ -22,7 +22,7 @@ func TestBuildRequestBodyUploadsAssetsAndPreservesFileObjects(t *testing.T) {
 	disableSSRFProtection(t)
 	gin.SetMode(gin.TestMode)
 
-	uploaded := make([]string, 0, 3)
+	uploaded := make([]string, 0, 4)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/source/first.png":
@@ -92,13 +92,12 @@ func TestBuildRequestBodyUploadsAssetsAndPreservesFileObjects(t *testing.T) {
 	assert.Equal(t, "channel17", payload.Channel)
 	assert.Equal(t, "viraldance900--person-stripe--6c832bb1--voice-tone--a0c4ee78", payload.Model)
 	assert.Equal(t, "animate the references", payload.Prompt)
-	require.NotNil(t, payload.Duration)
-	assert.Equal(t, 4, *payload.Duration)
+	assert.Equal(t, "4", string(payload.Duration))
 	assert.Equal(t, "16:9", payload.AspectRatio)
 	assert.Equal(t, "720p", payload.Resolution)
 	assert.Equal(t, "0", payload.Seed)
-	require.Len(t, payload.Assets, 3)
-	assert.Equal(t, []string{"first.png:image-one", "voice.mp3:audio-one", "second.jpg:image-two"}, uploaded)
+	require.Len(t, payload.Assets, 4)
+	assert.Equal(t, []string{"first.png:image-one", "first.png:image-one", "voice.mp3:audio-one", "second.jpg:image-two"}, uploaded)
 
 	for _, asset := range payload.Assets {
 		var file map[string]any
@@ -231,27 +230,136 @@ func TestBuildRequestBodyUsesASCIIFilenameForUnicodeAssetURL(t *testing.T) {
 	require.Len(t, payload.Assets, 1)
 }
 
-func TestValidateRequestRejectsUnsupportedAssetsAndOptions(t *testing.T) {
+func TestCollectAssetReferencesPreservesEveryExplicitReference(t *testing.T) {
+	references := collectAssetReferences(relaycommon.TaskSubmitReq{
+		Images:           []string{"image-a", "image-a"},
+		ImageURLs:        []string{"image-a", "image-b", "image-b"},
+		InputStartFrames: []string{"image-b", "start-frame"},
+		Image:            "image-a",
+		Videos:           []string{"video-a", "video-a"},
+		VideoURLs:        []string{"video-a", "video-b"},
+		Audios:           []string{"audio-a", "audio-a"},
+		AudioURLs:        []string{"audio-a", "audio-b"},
+		Content: []relaycommon.TaskContentItem{
+			{ImageURL: &relaycommon.TaskContentURL{URL: "image-a"}},
+			{VideoURL: &relaycommon.TaskContentURL{URL: "content-video"}},
+			{ImageURL: &relaycommon.TaskContentURL{URL: "content-image"}},
+			{ImageURL: &relaycommon.TaskContentURL{URL: "content-image"}},
+			{AudioURL: &relaycommon.TaskContentURL{URL: "audio-a"}},
+		},
+	})
+
+	assert.Equal(t, []assetReference{
+		{Type: "image", URL: "image-a"},
+		{Type: "image", URL: "image-a"},
+		{Type: "image", URL: "image-a"},
+		{Type: "image", URL: "image-b"},
+		{Type: "image", URL: "image-b"},
+		{Type: "image", URL: "image-b"},
+		{Type: "image", URL: "start-frame"},
+		{Type: "image", URL: "image-a"},
+		{Type: "video", URL: "video-a"},
+		{Type: "video", URL: "video-a"},
+		{Type: "video", URL: "video-a"},
+		{Type: "video", URL: "video-b"},
+		{Type: "audio", URL: "audio-a"},
+		{Type: "audio", URL: "audio-a"},
+		{Type: "audio", URL: "audio-a"},
+		{Type: "audio", URL: "audio-b"},
+		{Type: "image", URL: "image-a"},
+		{Type: "video", URL: "content-video"},
+		{Type: "image", URL: "content-image"},
+		{Type: "image", URL: "content-image"},
+		{Type: "audio", URL: "audio-a"},
+	}, references)
+}
+
+func TestValidateRequestPassesThroughModelSpecificOptionsAndAssets(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := `{
+		"model":"video",
+		"prompt":"test",
+		"duration":3,
+		"aspectRatio":"2:1",
+		"resolution":"1080p",
+		"images":[
+			"https://example.com/image-1.png", "https://example.com/image-2.png",
+			"https://example.com/image-3.png", "https://example.com/image-4.png",
+			"https://example.com/image-5.png", "https://example.com/image-6.png",
+			"https://example.com/image-7.png", "https://example.com/image-8.png",
+			"https://example.com/image-9.png", "https://example.com/image-10.png"
+		],
+		"videos":["https://example.com/input.mp4"],
+		"audios":[
+			"https://example.com/audio-1.mp3", "https://example.com/audio-2.mp3",
+			"https://example.com/audio-3.mp3", "https://example.com/audio-4.mp3"
+		]
+	}`
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
+	req, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, 3, req.Duration)
+	assert.Equal(t, "2:1", req.AspectRatio)
+	assert.Equal(t, "1080p", req.Resolution)
+	assert.Len(t, req.Images, 10)
+	assert.Len(t, req.Videos, 1)
+	assert.Len(t, req.Audios, 4)
+}
+
+func TestBuildRequestBodyMapsDurationAliasesWithoutLoss(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	testCases := []struct {
-		name string
-		body string
-		want string
+		name         string
+		body         string
+		contentType  string
+		wantDuration string
 	}{
 		{
-			name: "duration too short",
-			body: `{"model":"video","prompt":"test","duration":3}`,
-			want: "duration must be between 4 and 15 seconds",
+			name:         "fractional duration",
+			body:         `{"model":"video","prompt":"test","duration":14.5}`,
+			wantDuration: "14.5",
 		},
 		{
-			name: "unsupported ratio",
-			body: `{"model":"video","prompt":"test","aspectRatio":"2:1"}`,
-			want: "aspect_ratio must be one of",
+			name:         "fractional seconds alias",
+			body:         `{"model":"video","prompt":"test","seconds":"14.5"}`,
+			wantDuration: "14.5",
 		},
 		{
-			name: "video reference",
-			body: `{"model":"video","prompt":"test","videos":["https://example.com/input.mp4"]}`,
-			want: "video assets are not supported",
+			name:         "duration string with unit",
+			body:         `{"model":"video","prompt":"test","duration":"14.5s"}`,
+			wantDuration: "14.5",
+		},
+		{
+			name:         "explicit zero duration",
+			body:         `{"model":"video","prompt":"test","duration":0}`,
+			wantDuration: "0",
+		},
+		{
+			name:         "explicit zero seconds alias",
+			body:         `{"model":"video","prompt":"test","seconds":"0"}`,
+			wantDuration: "0",
+		},
+		{
+			name:         "duration takes precedence over seconds alias",
+			body:         `{"model":"video","prompt":"test","duration":0,"seconds":"14.5"}`,
+			wantDuration: "0",
+		},
+		{
+			name:         "duration omitted",
+			body:         `{"model":"video","prompt":"test"}`,
+			wantDuration: "",
+		},
+		{
+			name:         "explicit zero URL encoded duration",
+			body:         "model=video&prompt=test&duration=0",
+			contentType:  gin.MIMEPOSTForm,
+			wantDuration: "0",
 		},
 	}
 
@@ -259,31 +367,30 @@ func TestValidateRequestRejectsUnsupportedAssetsAndOptions(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(testCase.body))
-			c.Request.Header.Set("Content-Type", "application/json")
+			contentType := testCase.contentType
+			if contentType == "" {
+				contentType = "application/json"
+			}
+			c.Request.Header.Set("Content-Type", contentType)
 			t.Cleanup(func() { common.CleanupBodyStorage(c) })
 
-			taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, &relaycommon.RelayInfo{
+			info := &relaycommon.RelayInfo{
+				ChannelMeta:   &relaycommon.ChannelMeta{},
 				TaskRelayInfo: &relaycommon.TaskRelayInfo{},
-			})
-			require.NotNil(t, taskErr)
-			assert.Contains(t, taskErr.Message, testCase.want)
+			}
+			adaptor := &TaskAdaptor{}
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+
+			requestBody, err := adaptor.BuildRequestBody(c, info)
+			require.NoError(t, err)
+			encoded, err := io.ReadAll(requestBody)
+			require.NoError(t, err)
+
+			var payload generationRequest
+			require.NoError(t, common.Unmarshal(encoded, &payload))
+			assert.Equal(t, testCase.wantDuration, string(payload.Duration))
 		})
 	}
-}
-
-func TestValidateRequestNormalizesSecondsToDuration(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"video","prompt":"test","seconds":"15"}`))
-	c.Request.Header.Set("Content-Type", "application/json")
-	t.Cleanup(func() { common.CleanupBodyStorage(c) })
-
-	info := &relaycommon.RelayInfo{OriginModelName: "video", TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
-	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
-	req, err := relaycommon.GetTaskRequest(c)
-	require.NoError(t, err)
-	assert.Equal(t, 15, req.Duration)
 }
 
 func TestParseTaskResultMapsUpstreamStatuses(t *testing.T) {

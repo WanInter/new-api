@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,16 +23,17 @@ import (
 )
 
 const (
-	defaultYoboxBaseURL              = "https://max.yoboxai.com"
-	yoboxTasksPath                   = "/async/tasks"
-	yoboxImageReferencesLimitMessage = "最多支持 4 张 image_references"
-	yoboxGenericProcessingError      = "视频生成请求处理失败"
+	defaultYoboxBaseURL = "https://max.yoboxai.com"
+	yoboxTasksPath      = "/async/tasks"
 )
 
 var modelList = []string{
 	"seedance2",
+	"seedance2-pro",
 	"seedance-2.0",
 	"seedance-2.0-fast",
+	"seedance-2.0-noface",
+	"seedance-2.0-fast-noface",
 	"happy-horse-1.1",
 }
 
@@ -186,11 +188,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return "", nil, service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
 	}
 	if !parsed.Success {
-		message, redacted := sanitizeYoboxFailureReason(parsed.Message)
-		if redacted {
-			return "", nil, service.TaskErrorWrapperLocal(errors.New(message), "submit_failed", http.StatusBadRequest)
-		}
-		return "", nil, service.TaskErrorWrapperLocal(fmt.Errorf("yobox submit failed: %s", message), "submit_failed", http.StatusBadRequest)
+		return "", nil, service.TaskErrorWrapperLocal(fmt.Errorf("yobox submit failed: %s", strings.TrimSpace(parsed.Message)), "submit_failed", http.StatusBadRequest)
 	}
 
 	ov := dto.NewOpenAIVideo()
@@ -242,7 +240,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 	if status == model.TaskStatusFailure {
 		info.Progress = "100%"
-		info.Reason, _ = sanitizeYoboxFailureReason(firstNonEmpty(
+		info.Reason = firstNonEmpty(
 			parsed.Data.FailReason,
 			parsed.FailReason,
 			parsed.Data.Data.FailReason,
@@ -252,7 +250,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			parsed.Data.Phase,
 			parsed.Message,
 			"task failed",
-		))
+		)
 	}
 	return info, nil
 }
@@ -271,18 +269,7 @@ func yoboxTaskErrorMessage(value any) string {
 	return ""
 }
 
-func sanitizeYoboxFailureReason(message string) (string, bool) {
-	message = strings.TrimSpace(message)
-	if strings.Contains(strings.ToLower(message), strings.ToLower(yoboxImageReferencesLimitMessage)) {
-		return yoboxGenericProcessingError, true
-	}
-	return message, false
-}
-
 func (a *TaskAdaptor) SanitizeTaskUpstreamError(responseBody []byte) string {
-	if message, redacted := sanitizeYoboxFailureReason(string(responseBody)); redacted {
-		return message
-	}
 	return string(responseBody)
 }
 
@@ -327,76 +314,66 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 		modelName = "seedance2"
 	}
 
-	if modelName == "seedance2" {
+	if isYoboxSeedance2Model(modelName) {
 		return convertSeedance2Payload(req, modelName), nil
 	}
 	return convertSeedance20Payload(req, modelName), nil
 }
 
 func convertSeedance2Payload(req *relaycommon.TaskSubmitReq, modelName string) map[string]any {
-	payload := map[string]any{
-		"model":   modelName,
-		"prompt":  req.Prompt,
-		"seconds": normalizeYoboxSecondsString(req.Seconds, req.Duration),
+	payload := copyYoboxMetadata(req.Metadata, "model", "prompt", "input", "duration", "seconds", "aspect_ratio")
+	payload["model"] = modelName
+	payload["prompt"] = req.Prompt
+	if seconds, ok := yoboxSeedance2Seconds(req); ok {
+		payload["seconds"] = seconds
 	}
 	if req.Size != "" {
 		payload["size"] = req.Size
 	}
-	if len(req.Images) == 1 {
-		payload["input_reference"] = req.Images[0]
-	} else if len(req.Images) > 1 {
-		payload["content"] = buildYoboxContent(req.Prompt, req.Images)
+	if req.Resolution != "" {
+		payload["resolution"] = req.Resolution
 	}
-	if len(req.Images) > 2 {
-		payload["generate_audio"] = false
+	if _, ok := payload["ratio"]; !ok {
+		if ratio := firstNonEmpty(req.AspectRatio, stringValue(req.Metadata["aspect_ratio"])); ratio != "" {
+			payload["ratio"] = ratio
+		}
 	}
-	if req.Metadata != nil {
-		for _, key := range []string{"ratio", "resolution", "generate_audio"} {
-			if v, ok := req.Metadata[key]; ok {
-				payload[key] = v
-			}
+	if _, hasContent := payload["content"]; !hasContent {
+		images := yoboxRequestImages(req, true)
+		if len(images) == 1 {
+			payload["input_reference"] = images[0]
+		} else if len(images) > 1 {
+			payload["content"] = buildYoboxContent(req.Prompt, images)
 		}
 	}
 	return payload
 }
 
 func convertSeedance20Payload(req *relaycommon.TaskSubmitReq, modelName string) map[string]any {
-	input := map[string]any{
-		"prompt":       req.Prompt,
-		"duration":     normalizeYoboxSeconds(req.Seconds, req.Duration),
-		"aspect_ratio": firstNonEmpty(stringValue(req.Metadata["aspect_ratio"]), stringValue(req.Metadata["ratio"]), defaultYoboxAspectRatio(req.Size)),
-		"resolution":   firstNonEmpty(stringValue(req.Metadata["resolution"]), defaultYoboxResolution(req.Size)),
-		"audio":        true,
-		"n":            1,
+	input := copyYoboxMetadata(req.Metadata, "model", "prompt", "input", "seconds", "size")
+	input["prompt"] = req.Prompt
+	setYoboxDuration(input, req)
+	setYoboxAspectRatio(input, req)
+	setYoboxResolution(input, req)
+
+	images := yoboxRequestImages(req, false)
+	if _, hasInputReferences := input["image_references"]; !hasInputReferences {
+		images = append(images, req.InputImageReferences...)
 	}
-	if len(req.Images) > 0 {
-		input["image_references"] = buildYoboxImageReferences(req.Images)
+	if references := buildYoboxImageReferences(images); len(references) > 0 {
+		input["image_references"] = mergeYoboxReferences(input["image_references"], references)
 	}
 	if references := buildYoboxMediaReferences(req.Videos, req.VideoURLs); len(references) > 0 {
-		input["video_references"] = references
+		input["video_references"] = mergeYoboxReferences(input["video_references"], references)
 	}
 	if references := buildYoboxMediaReferences(req.Audios, req.AudioURLs); len(references) > 0 {
-		input["audio_references"] = references
+		input["audio_references"] = mergeYoboxReferences(input["audio_references"], references)
 	}
-	if v, ok := req.Metadata["audio"]; ok {
-		if b, ok := v.(bool); ok {
-			input["audio"] = b
-		}
+	if _, hasStartFrames := input["start_frames"]; !hasStartFrames && len(req.InputStartFrames) > 0 {
+		input["start_frames"] = req.InputStartFrames
 	}
-	if v, ok := req.Metadata["n"]; ok {
-		if n, ok := v.(int); ok && n > 0 {
-			input["n"] = n
-		}
-	}
-	if modelName == "happy-horse-1.1" {
-		if promptEnhance := stringValue(req.Metadata["prompt_enhance"]); promptEnhance != "" {
-			input["prompt_enhance"] = promptEnhance
-		}
-		if len(req.Images) == 0 {
-			if startFrames := stringValues(req.Metadata["start_frames"]); len(startFrames) > 0 {
-				input["start_frames"] = startFrames[:1]
-			}
-		}
+	if _, hasStartFrames := input["start_frames"]; !hasStartFrames && len(req.MetadataStartFrames) > 0 {
+		input["start_frames"] = req.MetadataStartFrames
 	}
 	return map[string]any{
 		"model": modelName,
@@ -408,8 +385,7 @@ func buildYoboxImageReferences(images []string) []map[string]any {
 	refs := make([]map[string]any, 0, len(images))
 	for _, imageURL := range images {
 		refs = append(refs, map[string]any{
-			"url":      imageURL,
-			"strength": "MID",
+			"url": imageURL,
 		})
 	}
 	return refs
@@ -419,14 +395,7 @@ func buildYoboxMediaReferences(groups ...[]string) []map[string]any {
 	refs := make([]map[string]any, 0)
 	for _, group := range groups {
 		for _, mediaURL := range group {
-			mediaURL = strings.TrimSpace(mediaURL)
-			if mediaURL == "" {
-				continue
-			}
-			refs = append(refs, map[string]any{
-				"url":      mediaURL,
-				"strength": "MID",
-			})
+			refs = append(refs, map[string]any{"url": mediaURL})
 		}
 	}
 	return refs
@@ -444,6 +413,168 @@ func buildYoboxContent(prompt string, images []string) []any {
 		})
 	}
 	return content
+}
+
+func isYoboxSeedance2Model(modelName string) bool {
+	switch strings.TrimSpace(modelName) {
+	case "seedance2", "seedance2-pro":
+		return true
+	default:
+		return false
+	}
+}
+
+func copyYoboxMetadata(metadata map[string]any, excludedKeys ...string) map[string]any {
+	excluded := make(map[string]struct{}, len(excludedKeys))
+	for _, key := range excludedKeys {
+		excluded[key] = struct{}{}
+	}
+	values := make(map[string]any, len(metadata))
+	for key, value := range metadata {
+		if _, skip := excluded[key]; !skip {
+			values[key] = value
+		}
+	}
+	return values
+}
+
+func yoboxSeedance2Seconds(req *relaycommon.TaskSubmitReq) (string, bool) {
+	if duration, ok := req.Metadata["duration"]; ok {
+		return yoboxStringValue(duration), true
+	}
+	if req.Duration != 0 {
+		return fmt.Sprintf("%d", req.Duration), true
+	}
+	if strings.TrimSpace(req.Seconds) != "" {
+		if seconds, ok := parseYoboxSeconds(req.Seconds); ok {
+			return fmt.Sprintf("%d", seconds), true
+		}
+		return req.Seconds, true
+	}
+	if seconds, ok := req.Metadata["seconds"]; ok {
+		return yoboxStringValue(seconds), true
+	}
+	return "", false
+}
+
+func yoboxStringValue(value any) string {
+	if value == nil {
+		return ""
+	}
+	if stringValue, ok := value.(string); ok {
+		return stringValue
+	}
+	return fmt.Sprint(value)
+}
+
+func setYoboxDuration(input map[string]any, req *relaycommon.TaskSubmitReq) {
+	if _, hasDuration := input["duration"]; hasDuration {
+		return
+	}
+	if req.Duration != 0 {
+		input["duration"] = req.Duration
+		return
+	}
+
+	seconds := req.Seconds
+	if strings.TrimSpace(seconds) == "" {
+		if value, ok := req.Metadata["seconds"]; ok {
+			switch typed := value.(type) {
+			case string:
+				seconds = typed
+			default:
+				input["duration"] = typed
+				return
+			}
+		}
+	}
+	if strings.TrimSpace(seconds) == "" {
+		return
+	}
+	if duration, ok := parseYoboxSeconds(seconds); ok {
+		input["duration"] = duration
+		return
+	}
+	// Preserve an invalid alias for the upstream to reject instead of inventing a default.
+	input["duration"] = seconds
+}
+
+func setYoboxAspectRatio(input map[string]any, req *relaycommon.TaskSubmitReq) {
+	if req.AspectRatio != "" {
+		input["aspect_ratio"] = req.AspectRatio
+		delete(input, "ratio")
+		return
+	}
+	if _, hasAspectRatio := input["aspect_ratio"]; hasAspectRatio {
+		delete(input, "ratio")
+		return
+	}
+	if ratio, ok := input["ratio"]; ok {
+		input["aspect_ratio"] = ratio
+		delete(input, "ratio")
+		return
+	}
+	if aspectRatio := yoboxAspectRatioFromSize(req.Size); aspectRatio != "" {
+		input["aspect_ratio"] = aspectRatio
+	}
+}
+
+func setYoboxResolution(input map[string]any, req *relaycommon.TaskSubmitReq) {
+	if req.Resolution != "" {
+		input["resolution"] = req.Resolution
+		return
+	}
+	if _, hasResolution := input["resolution"]; hasResolution {
+		return
+	}
+	if resolution := yoboxResolutionFromSize(req.Size); resolution != "" {
+		input["resolution"] = resolution
+	}
+}
+
+func yoboxRequestImages(req *relaycommon.TaskSubmitReq, includeInputReferences bool) []string {
+	images := make([]string, 0, len(req.Images)+len(req.ImageURLs)+len(req.InputImageReferences)+2)
+	images = append(images, req.Images...)
+	images = append(images, req.ImageURLs...)
+	if req.Image != "" {
+		images = append(images, req.Image)
+	}
+	if req.InputReference != "" {
+		images = append(images, req.InputReference)
+	}
+	if includeInputReferences {
+		images = append(images, req.InputImageReferences...)
+	}
+	return images
+}
+
+func mergeYoboxReferences(existing any, additions []map[string]any) any {
+	if len(additions) == 0 {
+		return existing
+	}
+	if existing == nil {
+		return additions
+	}
+
+	merged := make([]any, 0, len(additions)+1)
+	switch references := existing.(type) {
+	case []any:
+		merged = append(merged, references...)
+	case []map[string]any:
+		for _, reference := range references {
+			merged = append(merged, reference)
+		}
+	case []string:
+		for _, reference := range references {
+			merged = append(merged, reference)
+		}
+	default:
+		merged = append(merged, existing)
+	}
+	for _, reference := range additions {
+		merged = append(merged, reference)
+	}
+	return merged
 }
 
 func mapYoboxStatus(status string) model.TaskStatus {
@@ -476,20 +607,6 @@ func progressString(progress int, status model.TaskStatus) string {
 	return "30%"
 }
 
-func normalizeYoboxSeconds(seconds string, duration int) int {
-	if duration > 0 {
-		return duration
-	}
-	if v, ok := parseYoboxSeconds(seconds); ok {
-		return v
-	}
-	return 4
-}
-
-func normalizeYoboxSecondsString(seconds string, duration int) string {
-	return fmt.Sprintf("%d", normalizeYoboxSeconds(seconds, duration))
-}
-
 func parseYoboxSeconds(seconds string) (int, bool) {
 	seconds = strings.TrimSpace(strings.ToLower(seconds))
 	seconds = strings.TrimSuffix(seconds, "seconds")
@@ -501,8 +618,8 @@ func parseYoboxSeconds(seconds string) (int, bool) {
 	if seconds == "" {
 		return 0, false
 	}
-	var value int
-	if _, err := fmt.Sscanf(seconds, "%d", &value); err == nil && value > 0 {
+	value, err := strconv.Atoi(seconds)
+	if err == nil && value > 0 {
 		return value, true
 	}
 	return 0, false
@@ -524,64 +641,31 @@ func mergeYoboxRequestMetadata(c *gin.Context, req *relaycommon.TaskSubmitReq) {
 	if req.Metadata == nil {
 		req.Metadata = map[string]any{}
 	}
-	for _, key := range []string{"content", "ratio", "aspect_ratio", "resolution", "generate_audio", "audio", "n", "start_frames", "prompt_enhance"} {
-		if v, ok := raw[key]; ok {
-			req.Metadata[key] = v
+	for key, value := range raw {
+		if yoboxTopLevelMetadataField(key, value) {
+			req.Metadata[key] = value
 		}
 	}
 	if input, ok := raw["input"].(map[string]any); ok {
-		for _, key := range []string{"image_references", "start_frames", "end_frames", "audio", "n", "aspect_ratio", "resolution", "prompt_enhance"} {
-			if v, ok := input[key]; ok {
-				req.Metadata[key] = v
-			}
+		for key, value := range input {
+			req.Metadata[key] = value
 		}
-	}
-	if content, ok := req.Metadata["content"]; ok {
-		req.Metadata["content"] = content
-	}
-	req.Images = mergeYoboxImages(req.Images, extractYoboxContentImages(req.Metadata["content"]))
-	if len(req.Images) == 0 {
-		req.Images = mergeYoboxImages(req.Images, extractYoboxContentImages(raw["content"]))
 	}
 }
 
-func extractYoboxContentImages(content any) []string {
-	items, ok := content.([]any)
-	if !ok {
-		return nil
+func yoboxTopLevelMetadataField(key string, value any) bool {
+	switch key {
+	case "model", "prompt", "mode", "image", "images", "image_urls", "video", "videos", "video_url", "video_urls", "audios", "audio_url", "audio_urls", "input_reference", "size", "metadata", "input":
+		return false
+	case "audio":
+		_, isAudioSwitch := value.(bool)
+		return isAudioSwitch
+	default:
+		return true
 	}
-	images := make([]string, 0, len(items))
-	for _, item := range items {
-		itemMap, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		imageURL, ok := itemMap["image_url"].(map[string]any)
-		if !ok {
-			continue
-		}
-		url, _ := imageURL["url"].(string)
-		if strings.TrimSpace(url) != "" {
-			images = append(images, strings.TrimSpace(url))
-		}
-	}
-	return images
 }
 
-func mergeYoboxImages(existing, extra []string) []string {
-	if len(extra) == 0 {
-		return existing
-	}
-	if len(existing) == 0 {
-		return extra
-	}
-	merged := make([]string, 0, len(existing)+len(extra))
-	merged = append(merged, existing...)
-	merged = append(merged, extra...)
-	return merged
-}
-
-func defaultYoboxAspectRatio(size string) string {
+func yoboxAspectRatioFromSize(size string) string {
 	switch strings.TrimSpace(size) {
 	case "720x1280":
 		return "9:16"
@@ -594,12 +678,12 @@ func defaultYoboxAspectRatio(size string) string {
 	}
 }
 
-func defaultYoboxResolution(size string) string {
+func yoboxResolutionFromSize(size string) string {
 	switch strings.TrimSpace(size) {
-	case "720x1280", "1280x720", "720x720", "":
+	case "720x1280", "1280x720", "720x720":
 		return "720p"
 	default:
-		return "720p"
+		return ""
 	}
 }
 
@@ -650,22 +734,4 @@ func stringValue(v any) string {
 	default:
 		return ""
 	}
-}
-
-func stringValues(v any) []string {
-	var values []string
-	switch items := v.(type) {
-	case []string:
-		values = items
-	case []any:
-		values = make([]string, 0, len(items))
-		for _, item := range items {
-			if value := stringValue(item); value != "" {
-				values = append(values, value)
-			}
-		}
-	case string:
-		values = []string{items}
-	}
-	return values
 }

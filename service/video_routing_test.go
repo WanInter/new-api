@@ -18,346 +18,190 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func channelWithVideoModelMapping(t *testing.T, channelType int, upstreamModel string) *model.Channel {
+func channelWithVideoModelMapping(t *testing.T, id, channelType int, publicModel, upstreamModel string) *model.Channel {
 	t.Helper()
-	mapping, err := common.Marshal(map[string]string{StrictVideoRoutingModelSDBak1: upstreamModel})
+	mapping, err := common.Marshal(map[string]string{publicModel: upstreamModel})
 	require.NoError(t, err)
 	mappingString := string(mapping)
-	return &model.Channel{Type: channelType, ModelMapping: &mappingString}
-}
-
-func TestEvaluateChannelVideoRoutingForSDBak1Candidates(t *testing.T) {
-	ax := channelWithVideoModelMapping(t, constant.ChannelTypeSora, "ax2.0-9tu")
-	sdquan := channelWithVideoModelMapping(t, constant.ChannelTypeSora, "sdquan-2")
-	jsonContentType := "application/json"
-	duration := 15
-
-	testCases := []struct {
-		name           string
-		features       VideoRequestFeatures
-		axEligible     bool
-		sdquanEligible bool
-	}{
-		{
-			name:           "nine image ax boundary",
-			features:       VideoRequestFeatures{Images: 9, Duration: &duration, ContentType: jsonContentType},
-			axEligible:     true,
-			sdquanEligible: false,
-		},
-		{
-			name:           "sdquan multimodal boundary",
-			features:       VideoRequestFeatures{Images: 4, Videos: 3, Audios: 1, Duration: &duration, ContentType: jsonContentType},
-			axEligible:     false,
-			sdquanEligible: true,
-		},
-		{
-			name:           "overlapping image-only request",
-			features:       VideoRequestFeatures{Images: 4, Duration: &duration, ContentType: jsonContentType},
-			axEligible:     true,
-			sdquanEligible: true,
-		},
-		{
-			name:           "wrong duration",
-			features:       VideoRequestFeatures{Images: 1, Duration: common.GetPointer(12), ContentType: jsonContentType},
-			axEligible:     false,
-			sdquanEligible: false,
-		},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			axResult := EvaluateChannelVideoRouting(ax, StrictVideoRoutingModelSDBak1, testCase.features)
-			sdquanResult := EvaluateChannelVideoRouting(sdquan, StrictVideoRoutingModelSDBak1, testCase.features)
-
-			assert.Equal(t, testCase.axEligible, axResult.Eligible)
-			assert.Equal(t, testCase.sdquanEligible, sdquanResult.Eligible)
-			assert.Equal(t, "ax2.0-9tu", axResult.Mapping.Model)
-			assert.Equal(t, "sdquan-2", sdquanResult.Mapping.Model)
-		})
+	return &model.Channel{
+		Id:           id,
+		Name:         fmt.Sprintf("video-channel-%d", id),
+		Type:         channelType,
+		Key:          "key",
+		Status:       common.ChannelStatusEnabled,
+		ModelMapping: &mappingString,
 	}
 }
 
-func TestEvaluateChannelVideoRoutingUsesChannelOverride(t *testing.T) {
-	maxImages := 6
-	settings, err := common.Marshal(dto.ChannelOtherSettings{VideoRouting: &dto.VideoRoutingConfig{
-		Models: map[string]dto.VideoModelCapability{
-			"*": {Images: &dto.VideoMediaRange{Max: &maxImages}},
-		},
-	}})
-	require.NoError(t, err)
-	channel := &model.Channel{Type: constant.ChannelTypeYobox, OtherSettings: string(settings)}
-
-	result := EvaluateChannelVideoRouting(channel, StrictVideoRoutingModelSDBak1, VideoRequestFeatures{Images: 5})
-
-	assert.True(t, result.Eligible)
-	assert.Contains(t, result.Sources, "channel_override:*")
-}
-
-func TestDatabaseVideoRoutingOverridePreservesExplicitZeroAndFalse(t *testing.T) {
-	truncate(t)
-	channel := channelWithVideoModelMapping(t, constant.ChannelTypeSora, "ax2.0-9tu")
-	channel.Id = 301
-	channel.Name = "Database override"
-	channel.Key = "key"
-	channel.Status = common.ChannelStatusEnabled
+func createChannelVideoCapability(t *testing.T, channel *model.Channel, upstreamModel string, capability dto.VideoModelCapability) {
+	t.Helper()
 	require.NoError(t, model.DB.Create(channel).Error)
-
-	rule, err := UpsertChannelVideoRoutingCapabilityRule(channel.Id, "ax2.0-9tu", dto.VideoModelCapability{
-		Images:      &dto.VideoMediaRange{Max: common.GetPointer(0)},
-		RequireJSON: common.GetPointer(false),
-	}, 0, 1)
+	_, err := UpsertChannelVideoRoutingCapabilityRule(channel.Id, upstreamModel, capability, 0, 1)
 	require.NoError(t, err)
-	assert.Equal(t, 1, rule.Revision)
+}
 
-	result := EvaluateChannelVideoRouting(channel, StrictVideoRoutingModelSDBak1, VideoRequestFeatures{
-		Images:      0,
-		ContentType: "text/plain",
+func TestExactChannelModelCapabilityDoesNotLeakAcrossChannels(t *testing.T) {
+	truncate(t)
+	publicModel := "seedance-public"
+	upstreamModel := "seedance-2.0-fast-noface"
+	noFace := channelWithVideoModelMapping(t, 78, constant.ChannelTypeYobox, publicModel, upstreamModel)
+	createChannelVideoCapability(t, noFace, upstreamModel, dto.VideoModelCapability{
+		Images:          &dto.VideoMediaRange{Max: common.GetPointer(9)},
+		Videos:          &dto.VideoMediaRange{Max: common.GetPointer(3)},
+		Audios:          &dto.VideoMediaRange{Max: common.GetPointer(3)},
+		VideoAudioTotal: &dto.VideoMediaRange{Max: common.GetPointer(3)},
+	})
+	standard := channelWithVideoModelMapping(t, 79, constant.ChannelTypeYobox, publicModel, upstreamModel)
+	require.NoError(t, model.DB.Create(standard).Error)
+
+	features := VideoRequestFeatures{Images: 9, Videos: 2, Audios: 2}
+	noFaceResult := EvaluateChannelVideoRouting(noFace, publicModel, features)
+	standardResult := EvaluateChannelVideoRouting(standard, publicModel, features)
+
+	assert.False(t, noFaceResult.Eligible)
+	assert.Contains(t, noFaceResult.Violations, VideoConstraintViolation{
+		Code: "video_audio_total_above_max", Field: "video_audio_total", Actual: common.GetPointer(4), Expected: common.GetPointer(3),
+	})
+	require.Len(t, noFaceResult.Sources, 1)
+	assert.True(t, strings.HasPrefix(noFaceResult.Sources[0], "database:channel_model#"))
+	assert.True(t, standardResult.Eligible)
+	assert.Nil(t, standardResult.Capability)
+}
+
+func TestReloadVideoRoutingIgnoresLegacyCapabilityScopes(t *testing.T) {
+	truncate(t)
+	publicModel := "legacy-scope-public"
+	upstreamModel := "legacy-scope-upstream"
+	channel := channelWithVideoModelMapping(t, 88, constant.ChannelTypeYobox, publicModel, upstreamModel)
+	createChannelVideoCapability(t, channel, upstreamModel, dto.VideoModelCapability{
+		Images: &dto.VideoMediaRange{Max: common.GetPointer(0)},
 	})
 
+	require.NoError(t, model.DB.Create(&model.VideoRoutingCapabilityRule{
+		Scope:         model.VideoRoutingScopeUpstreamModel,
+		UpstreamModel: upstreamModel,
+		Capability:    "not valid JSON",
+	}).Error)
+	require.NoError(t, ReloadVideoRoutingRuleCache())
+
+	result := EvaluateChannelVideoRouting(channel, publicModel, VideoRequestFeatures{Images: 1})
+	assert.False(t, result.Eligible)
+	assert.Contains(t, result.Violations, VideoConstraintViolation{
+		Code: "images_above_max", Field: "images", Actual: common.GetPointer(1), Expected: common.GetPointer(0),
+	})
+}
+
+func TestLegacyChannelVideoRoutingSettingIsIgnored(t *testing.T) {
+	truncate(t)
+	publicModel := "legacy-channel-setting-public"
+	upstreamModel := "legacy-channel-setting-upstream"
+	legacySettings, err := common.Marshal(dto.ChannelOtherSettings{
+		VideoRouting: &dto.VideoRoutingConfig{Models: map[string]dto.VideoModelCapability{
+			"*": {Images: &dto.VideoMediaRange{Max: common.GetPointer(-1)}},
+		}},
+	})
+	require.NoError(t, err)
+	channel := channelWithVideoModelMapping(t, 89, constant.ChannelTypeYobox, publicModel, upstreamModel)
+	channel.OtherSettings = string(legacySettings)
+	require.NoError(t, channel.ValidateSettings())
+	require.NoError(t, model.DB.Create(channel).Error)
+
+	result := EvaluateChannelVideoRouting(channel, publicModel, VideoRequestFeatures{Images: 1})
+	assert.True(t, result.Eligible)
+	assert.Nil(t, result.Capability)
+}
+
+func TestVideoRoutingWithoutExactRulePassesUnlessStrict(t *testing.T) {
+	truncate(t)
+	publicModel := "unconfigured-public-model"
+	channel := channelWithVideoModelMapping(t, 80, constant.ChannelTypeYobox, publicModel, "unconfigured-upstream-model")
+	require.NoError(t, model.DB.Create(channel).Error)
+
+	result := EvaluateChannelVideoRouting(channel, publicModel, VideoRequestFeatures{Images: 99, Videos: 99, Audios: 99})
+	assert.True(t, result.Eligible)
+	assert.Nil(t, result.Capability)
+
+	_, err := UpsertVideoRoutingPolicy(publicModel, true, 0, 1)
+	require.NoError(t, err)
+	result = EvaluateChannelVideoRouting(channel, publicModel, VideoRequestFeatures{})
+	assert.False(t, result.Eligible)
+	require.Equal(t, []VideoConstraintViolation{{Code: "missing_capability"}}, result.Violations)
+}
+
+func TestExactCapabilityPreservesExplicitZeroAndFalse(t *testing.T) {
+	truncate(t)
+	publicModel := "zero-values-public"
+	channel := channelWithVideoModelMapping(t, 81, constant.ChannelTypeYobox, publicModel, "zero-values-upstream")
+	ruleCapability := dto.VideoModelCapability{
+		Images:      &dto.VideoMediaRange{Max: common.GetPointer(0)},
+		RequireJSON: common.GetPointer(false),
+	}
+	createChannelVideoCapability(t, channel, "zero-values-upstream", ruleCapability)
+
+	result := EvaluateChannelVideoRouting(channel, publicModel, VideoRequestFeatures{ContentType: "text/plain"})
 	require.NotNil(t, result.Capability)
 	require.NotNil(t, result.Capability.Images)
 	assert.Equal(t, common.GetPointer(0), result.Capability.Images.Max)
 	assert.Equal(t, common.GetPointer(false), result.Capability.RequireJSON)
 	assert.True(t, result.Eligible)
-	assert.Contains(t, result.Sources, "database:channel_model#"+fmt.Sprint(rule.Id))
 }
 
-func TestDatabaseVideoRoutingPolicyOverridesBuiltInStrictMode(t *testing.T) {
+func TestVideoRoutingUsesContentPrecedenceFromExactRule(t *testing.T) {
 	truncate(t)
-
-	policy, err := UpsertVideoRoutingPolicy(StrictVideoRoutingModelSDBak1, false, 0, 1)
-	require.NoError(t, err)
-	assert.False(t, policy.Strict)
-	assert.False(t, IsStrictVideoRoutingModel(StrictVideoRoutingModelSDBak1))
-
-	rules, err := GetVideoRoutingRuleSet(StrictVideoRoutingModelSDBak1, "creative-video")
-	require.NoError(t, err)
-	assert.False(t, rules.Strict)
-	assert.Equal(t, "database", rules.StrictSource)
-	require.NotNil(t, rules.Policy)
-	assert.Equal(t, policy.Revision, rules.Policy.Revision)
-}
-
-func TestVideoRoutingWritesRejectOverlongModelNames(t *testing.T) {
-	truncate(t)
-	overlongModel := strings.Repeat("m", 256)
-
-	_, err := UpsertVideoRoutingPolicy(overlongModel, true, 0, 1)
-	assert.EqualError(t, err, "public model must not exceed 255 characters")
-
-	_, err = UpsertChannelVideoRoutingCapabilityRule(1, overlongModel, dto.VideoModelCapability{
-		RequireJSON: common.GetPointer(false),
-	}, 0, 1)
-	assert.EqualError(t, err, "upstream model must not exceed 255 characters")
-}
-
-func TestEvaluateChannelVideoRoutingStrictModelRejectsUnknownCapability(t *testing.T) {
-	channel := &model.Channel{Type: constant.ChannelTypeSora}
-
-	result := EvaluateChannelVideoRouting(channel, StrictVideoRoutingModelSDBak1, VideoRequestFeatures{})
-
-	assert.False(t, result.Eligible)
-	require.Len(t, result.Violations, 1)
-	assert.Equal(t, "missing_capability", result.Violations[0].Code)
-}
-
-func TestEvaluateChannelVideoRoutingSeedanceSlowCapability(t *testing.T) {
-	channel := channelWithVideoModelMapping(t, constant.ChannelTypeSora, seedance2Slow15sModel)
-
-	testCases := []struct {
-		name          string
-		features      VideoRequestFeatures
-		wantEligible  bool
-		wantViolation string
-	}{
-		{
-			name:         "maximum media at minimum duration",
-			features:     VideoRequestFeatures{Images: 4, Videos: 3, Audios: 1, Duration: common.GetPointer(5)},
-			wantEligible: true,
-		},
-		{
-			name:         "maximum duration",
-			features:     VideoRequestFeatures{Duration: common.GetPointer(15)},
-			wantEligible: true,
-		},
-		{
-			name:         "duration omitted",
-			features:     VideoRequestFeatures{},
-			wantEligible: true,
-		},
-		{
-			name:          "duration below minimum",
-			features:      VideoRequestFeatures{Duration: common.GetPointer(4)},
-			wantViolation: "duration_below_min",
-		},
-		{
-			name:          "duration above maximum",
-			features:      VideoRequestFeatures{Duration: common.GetPointer(16)},
-			wantViolation: "duration_above_max",
-		},
-		{
-			name:          "too many images",
-			features:      VideoRequestFeatures{Images: 5},
-			wantViolation: "images_above_max",
-		},
-		{
-			name:          "too many videos",
-			features:      VideoRequestFeatures{Videos: 4},
-			wantViolation: "videos_above_max",
-		},
-		{
-			name:          "too many audios",
-			features:      VideoRequestFeatures{Audios: 2},
-			wantViolation: "audios_above_max",
-		},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			result := EvaluateChannelVideoRouting(channel, StrictVideoRoutingModelSDBak1, testCase.features)
-
-			assert.Equal(t, testCase.wantEligible, result.Eligible)
-			assert.Equal(t, seedance2Slow15sModel, result.Mapping.Model)
-			require.NotNil(t, result.Capability)
-			require.NotNil(t, result.Capability.Duration)
-			assert.Equal(t, common.GetPointer(5), result.Capability.Duration.Min)
-			assert.Equal(t, common.GetPointer(15), result.Capability.Duration.Max)
-			if testCase.wantViolation == "" {
-				assert.Empty(t, result.Violations)
-				return
-			}
-			require.Len(t, result.Violations, 1)
-			assert.Equal(t, testCase.wantViolation, result.Violations[0].Code)
-		})
-	}
-}
-
-func TestEvaluateChannelVideoRoutingSeedanceFastCapability(t *testing.T) {
-	channel := channelWithVideoModelMapping(t, constant.ChannelTypeSora, seedance20FastModel)
-
-	testCases := []struct {
-		name           string
-		features       VideoRequestFeatures
-		wantEligible   bool
-		wantViolations []VideoConstraintViolation
-	}{
-		{
-			name:         "maximum media at minimum duration",
-			features:     VideoRequestFeatures{Images: 4, Videos: 3, Audios: 1, Duration: common.GetPointer(4)},
-			wantEligible: true,
-		},
-		{
-			name:         "non fixed duration within range",
-			features:     VideoRequestFeatures{Duration: common.GetPointer(7)},
-			wantEligible: true,
-		},
-		{
-			name:         "maximum duration",
-			features:     VideoRequestFeatures{Duration: common.GetPointer(15)},
-			wantEligible: true,
-		},
-		{
-			name:     "duration below minimum",
-			features: VideoRequestFeatures{Duration: common.GetPointer(3)},
-			wantViolations: []VideoConstraintViolation{
-				{Code: "duration_below_min", Field: "duration", Actual: common.GetPointer(3), Expected: common.GetPointer(4)},
-			},
-		},
-		{
-			name:     "duration above maximum",
-			features: VideoRequestFeatures{Duration: common.GetPointer(16)},
-			wantViolations: []VideoConstraintViolation{
-				{Code: "duration_above_max", Field: "duration", Actual: common.GetPointer(16), Expected: common.GetPointer(15)},
-			},
-		},
-		{
-			name:     "too many media references",
-			features: VideoRequestFeatures{Images: 5, Videos: 4, Audios: 2},
-			wantViolations: []VideoConstraintViolation{
-				{Code: "images_above_max", Field: "images", Actual: common.GetPointer(5), Expected: common.GetPointer(4)},
-				{Code: "videos_above_max", Field: "videos", Actual: common.GetPointer(4), Expected: common.GetPointer(3)},
-				{Code: "audios_above_max", Field: "audios", Actual: common.GetPointer(2), Expected: common.GetPointer(1)},
-			},
-		},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			result := EvaluateChannelVideoRouting(channel, StrictVideoRoutingModelSDBak1, testCase.features)
-
-			assert.Equal(t, testCase.wantEligible, result.Eligible)
-			assert.Equal(t, seedance20FastModel, result.Mapping.Model)
-			require.NotNil(t, result.Capability)
-			require.NotNil(t, result.Capability.Duration)
-			assert.Equal(t, common.GetPointer(4), result.Capability.Duration.Min)
-			assert.Equal(t, common.GetPointer(15), result.Capability.Duration.Max)
-			assert.ElementsMatch(t, testCase.wantViolations, result.Violations)
-		})
-	}
-}
-
-func TestEvaluateChannelVideoRoutingAxmgcSeedanceCapability(t *testing.T) {
-	channel := channelWithVideoModelMapping(t, constant.ChannelTypeAxmgc, axmgcSeedance720p933Model)
-	duration := 8
-	valid := VideoRequestFeatures{
-		Images:      9,
-		Videos:      3,
-		Audios:      3,
-		Duration:    &duration,
-		ContentType: "application/json",
-		profiledContent: &videoMediaCounts{
-			Images: 9,
-			Videos: 3,
-			Audios: 3,
-			Text:   1,
-		},
-	}
-
-	result := EvaluateChannelVideoRouting(channel, axmgcSeedance720p933Model, valid)
-	assert.True(t, result.Eligible)
-	require.NotNil(t, result.Capability)
-	assert.Nil(t, result.Capability.FixedDuration)
-
-	invalid := valid
-	invalid.profiledContent = &videoMediaCounts{Images: 10, Text: 1}
-	result = EvaluateChannelVideoRouting(channel, axmgcSeedance720p933Model, invalid)
-	assert.False(t, result.Eligible)
-	assert.Contains(t, result.Violations, VideoConstraintViolation{
-		Code: "images_above_max", Field: "images", Actual: common.GetPointer(10), Expected: common.GetPointer(9),
+	publicModel := "content-public"
+	channel := channelWithVideoModelMapping(t, 82, constant.ChannelTypeShishi, publicModel, "content-upstream")
+	createChannelVideoCapability(t, channel, "content-upstream", dto.VideoModelCapability{
+		Images:            &dto.VideoMediaRange{Max: common.GetPointer(9)},
+		ContentPrecedence: common.GetPointer(true),
+		RequireText:       common.GetPointer(true),
 	})
-}
 
-func TestAxmgcAutomaticRoutingAcceptsCompatibleContentURLShapesAndNormalizesDurationLater(t *testing.T) {
 	body := `{
-		"model":"sd-bak-1",
+		"model":"content-public",
+		"images":["1","2","3","4","5","6","7","8","9","10"],
 		"content":[
-			{"type":"image_url","image_url":"https://example.com/image.png"},
-			{"type":"video_url","url":"https://example.com/video.mp4"},
-			{"type":"audio_url","audio_url":{"url":"https://example.com/audio.mp3"}},
-			{"type":"text","text":"animate the references"}
-		],
-		"duration":8
+			{"type":"image_url","image_url":{"url":"content.png"}},
+			{"type":"text","text":"animate it"}
+		]
 	}`
 	c := newChannelConstraintTestContext(t, "/v1/videos", body)
 	features, err := GetVideoRequestFeatures(c)
 	require.NoError(t, err)
-	assert.Equal(t, 1, features.Images)
-	assert.Equal(t, 1, features.Videos)
-	assert.Equal(t, 1, features.Audios)
-	require.NotNil(t, features.Duration)
-	assert.Equal(t, 8, *features.Duration)
+	assert.Equal(t, 11, features.Images)
 
-	channel := channelWithVideoModelMapping(t, constant.ChannelTypeAxmgc, axmgcSeedance720p933Model)
-	result := EvaluateChannelVideoRouting(channel, StrictVideoRoutingModelSDBak1, features)
+	result := EvaluateChannelVideoRouting(channel, publicModel, features)
 	assert.True(t, result.Eligible)
 	assert.Empty(t, result.Violations)
-	require.NotNil(t, result.Capability)
-	assert.Nil(t, result.Capability.FixedDuration)
+}
+
+func TestVideoRoutingRejectsInvalidContentWhenExactRuleRequiresIt(t *testing.T) {
+	truncate(t)
+	publicModel := "content-public"
+	channel := channelWithVideoModelMapping(t, 83, constant.ChannelTypeShishi, publicModel, "content-upstream")
+	createChannelVideoCapability(t, channel, "content-upstream", dto.VideoModelCapability{
+		ContentPrecedence: common.GetPointer(true),
+		RequireText:       common.GetPointer(true),
+	})
+
+	c := newChannelConstraintTestContext(t, "/v1/videos", `{
+		"model":"content-public",
+		"prompt":"top-level prompt",
+		"content":[{"image_url":{"url":"image.png"}}]
+	}`)
+	features, err := GetVideoRequestFeatures(c)
+	require.NoError(t, err)
+
+	result := EvaluateChannelVideoRouting(channel, publicModel, features)
+	assert.False(t, result.Eligible)
+	assert.Contains(t, result.Violations, VideoConstraintViolation{Code: "invalid_content", Field: "content"})
+	assert.Contains(t, result.Violations, VideoConstraintViolation{
+		Code: "text_below_min", Field: "text", Actual: common.GetPointer(0), Expected: common.GetPointer(1),
+	})
 }
 
 func TestGetVideoRequestFeaturesCountsEveryReferenceEntry(t *testing.T) {
 	body := `{
-		"model":"sd-bak-1",
+		"model":"video-model",
 		"images":["i1","i2"],
 		"videos":["v1"],
 		"image_urls":"i6",
@@ -385,59 +229,8 @@ func TestGetVideoRequestFeaturesCountsEveryReferenceEntry(t *testing.T) {
 	assert.Equal(t, 15, *features.Duration)
 }
 
-func TestVideoRoutingUsesExplicitContentForProfiledModels(t *testing.T) {
-	body := `{
-		"model":"sd-bak-1",
-		"images":["1","2","3","4","5","6","7","8","9","10"],
-		"content":[
-			{"type":"image_url","image_url":{"url":"content.png"}},
-			{"type":"text","text":"animate it"}
-		]
-	}`
-	c := newChannelConstraintTestContext(t, "/v1/videos", body)
-	features, err := GetVideoRequestFeatures(c)
-	require.NoError(t, err)
-	assert.Equal(t, 11, features.Images)
-
-	ax := channelWithVideoModelMapping(t, constant.ChannelTypeSora, "ax2.0-9tu")
-	sdquan := channelWithVideoModelMapping(t, constant.ChannelTypeSora, "sdquan-2")
-	assert.True(t, EvaluateChannelVideoRouting(ax, StrictVideoRoutingModelSDBak1, features).Eligible)
-	assert.True(t, EvaluateChannelVideoRouting(sdquan, StrictVideoRoutingModelSDBak1, features).Eligible)
-}
-
-func TestVideoRoutingDoesNotDeduplicateRepeatedReferences(t *testing.T) {
-	body := `{"model":"sd-bak-1","images":["same.png","same.png","same.png","same.png","same.png","same.png","same.png","same.png","same.png","same.png"]}`
-	c := newChannelConstraintTestContext(t, "/v1/videos", body)
-	features, err := GetVideoRequestFeatures(c)
-	require.NoError(t, err)
-	assert.Equal(t, 10, features.Images)
-
-	ax := channelWithVideoModelMapping(t, constant.ChannelTypeSora, "ax2.0-9tu")
-	assert.False(t, EvaluateChannelVideoRouting(ax, StrictVideoRoutingModelSDBak1, features).Eligible)
-}
-
-func TestVideoRoutingRejectsInvalidExplicitContentForProfiledModels(t *testing.T) {
-	body := `{
-		"model":"sd-bak-1",
-		"prompt":"top-level prompt",
-		"content":[{"image_url":{"url":"image.png"}}]
-	}`
-	c := newChannelConstraintTestContext(t, "/v1/videos", body)
-	features, err := GetVideoRequestFeatures(c)
-	require.NoError(t, err)
-
-	ax := channelWithVideoModelMapping(t, constant.ChannelTypeSora, "ax2.0-9tu")
-	result := EvaluateChannelVideoRouting(ax, StrictVideoRoutingModelSDBak1, features)
-
-	assert.False(t, result.Eligible)
-	assert.Contains(t, result.Violations, VideoConstraintViolation{Code: "invalid_content", Field: "content"})
-	assert.Contains(t, result.Violations, VideoConstraintViolation{
-		Code: "text_below_min", Field: "text", Actual: common.GetPointer(0), Expected: common.GetPointer(1),
-	})
-}
-
 func TestGetVideoRequestFeaturesReturnsTypedErrorForInvalidMediaField(t *testing.T) {
-	c := newChannelConstraintTestContext(t, "/v1/videos", `{"model":"sd-bak-1","images":{"url":"x"}}`)
+	c := newChannelConstraintTestContext(t, "/v1/videos", `{"model":"video-model","images":{"url":"x"}}`)
 
 	_, err := GetVideoRequestFeatures(c)
 
@@ -449,7 +242,7 @@ func TestGetVideoRequestFeaturesReturnsTypedErrorForInvalidMediaField(t *testing
 func TestGetVideoRequestFeaturesIgnoresBooleanAudioSwitch(t *testing.T) {
 	for _, audio := range []string{"true", "false"} {
 		t.Run(audio, func(t *testing.T) {
-			c := newChannelConstraintTestContext(t, "/v1/videos", `{"model":"sd-bak-1","prompt":"animate","audio":`+audio+`}`)
+			c := newChannelConstraintTestContext(t, "/v1/videos", `{"model":"video-model","prompt":"animate","audio":`+audio+`}`)
 
 			features, err := GetVideoRequestFeatures(c)
 
@@ -491,112 +284,65 @@ func TestGetVideoRequestFeaturesIgnoresNonVideoRoute(t *testing.T) {
 	assert.Equal(t, VideoRequestFeatures{}, features)
 }
 
-func TestChannelSupportsRequestConstraintsRejectsAxVideoReference(t *testing.T) {
-	channel := channelWithVideoModelMapping(t, constant.ChannelTypeSora, "ax2.0-9tu")
-	c := newChannelConstraintTestContext(t, "/v1/videos", `{"model":"sd-bak-1","videos":["v1"]}`)
+func TestChannelSupportsRequestConstraintsUsesExactCapability(t *testing.T) {
+	truncate(t)
+	publicModel := "constraint-public"
+	channel := channelWithVideoModelMapping(t, 84, constant.ChannelTypeYobox, publicModel, "constraint-upstream")
+	createChannelVideoCapability(t, channel, "constraint-upstream", dto.VideoModelCapability{
+		Videos: &dto.VideoMediaRange{Max: common.GetPointer(0)},
+	})
+	c := newChannelConstraintTestContext(t, "/v1/videos", `{"model":"constraint-public","videos":["v1"]}`)
 
-	assert.False(t, ChannelSupportsRequestConstraints(c, channel, StrictVideoRoutingModelSDBak1))
+	assert.False(t, ChannelSupportsRequestConstraints(c, channel, publicModel))
 }
 
-func TestSimulateVideoRoutingUsesEligiblePriorityTier(t *testing.T) {
+func TestSimulateVideoRoutingUsesExactCapabilityByMappedModel(t *testing.T) {
 	truncate(t)
 	group := "creative-video"
-	modelName := StrictVideoRoutingModelSDBak1
-	axPriority := int64(20)
-	sdquanPriority := int64(10)
-	yoboxPriority := int64(15)
-	aggcPriority := int64(0)
+	publicModel := "seedance-public"
+	noFacePriority := int64(20)
+	standardPriority := int64(10)
 	weight := uint(100)
-	axMapping, err := common.Marshal(map[string]string{modelName: "ax2.0-9tu"})
-	require.NoError(t, err)
-	sdquanMapping, err := common.Marshal(map[string]string{modelName: "sdquan-2"})
-	require.NoError(t, err)
-	axMappingString := string(axMapping)
-	sdquanMappingString := string(sdquanMapping)
-	channels := []model.Channel{
-		{Id: 101, Name: "AX", Type: constant.ChannelTypeSora, Key: "key", Status: common.ChannelStatusEnabled, Priority: &axPriority, Weight: &weight, ModelMapping: &axMappingString},
-		{Id: 102, Name: "SDQuan", Type: constant.ChannelTypeSora, Key: "key", Status: common.ChannelStatusEnabled, Priority: &sdquanPriority, Weight: &weight, ModelMapping: &sdquanMappingString},
-		{Id: 103, Name: "Yobox", Type: constant.ChannelTypeYobox, Key: "key", Status: common.ChannelStatusEnabled, Priority: &yoboxPriority, Weight: &weight},
-		{Id: 104, Name: "AGGC", Type: constant.ChannelTypeAGGC, Key: "key", Status: common.ChannelStatusEnabled, Priority: &aggcPriority, Weight: &weight},
-	}
-	require.NoError(t, model.DB.Create(&channels).Error)
-	abilities := []model.Ability{
-		{Group: group, Model: modelName, ChannelId: 101, Enabled: true, Priority: &axPriority, Weight: weight},
-		{Group: group, Model: modelName, ChannelId: 102, Enabled: true, Priority: &sdquanPriority, Weight: weight},
-		{Group: group, Model: modelName, ChannelId: 103, Enabled: true, Priority: &yoboxPriority, Weight: weight},
-		{Group: group, Model: modelName, ChannelId: 104, Enabled: true, Priority: &aggcPriority, Weight: weight},
-	}
-	require.NoError(t, model.DB.Create(&abilities).Error)
+	noFace := channelWithVideoModelMapping(t, 85, constant.ChannelTypeYobox, publicModel, "seedance-2.0-fast-noface")
+	noFace.Priority = &noFacePriority
+	noFace.Weight = &weight
+	standard := channelWithVideoModelMapping(t, 86, constant.ChannelTypeYobox, publicModel, "seedance-2.0")
+	standard.Priority = &standardPriority
+	standard.Weight = &weight
+	createChannelVideoCapability(t, noFace, "seedance-2.0-fast-noface", dto.VideoModelCapability{
+		VideoAudioTotal: &dto.VideoMediaRange{Max: common.GetPointer(3)},
+	})
+	require.NoError(t, model.DB.Create(standard).Error)
+	require.NoError(t, model.DB.Create(&[]model.Ability{
+		{Group: group, Model: publicModel, ChannelId: noFace.Id, Enabled: true, Priority: &noFacePriority, Weight: weight},
+		{Group: group, Model: publicModel, ChannelId: standard.Id, Enabled: true, Priority: &standardPriority, Weight: weight},
+	}).Error)
 
 	result, err := SimulateVideoRouting(VideoRoutingSimulationRequest{
-		Model:       modelName,
-		Group:       group,
-		Images:      4,
-		Videos:      3,
-		Audios:      1,
-		Duration:    common.GetPointer(15),
-		ContentType: "application/json",
+		Model: publicModel, Group: group, Videos: 2, Audios: 2, ContentType: "application/json",
 	})
 
 	require.NoError(t, err)
 	require.NotNil(t, result.TargetPriority)
-	assert.Equal(t, sdquanPriority, *result.TargetPriority)
-	selectedIDs := make([]int, 0)
+	assert.Equal(t, standardPriority, *result.TargetPriority)
 	for _, candidate := range result.Candidates {
-		if candidate.SelectedPriority {
-			selectedIDs = append(selectedIDs, candidate.ChannelID)
+		if candidate.ChannelID == noFace.Id {
+			require.NotNil(t, candidate.Eligible)
+			assert.False(t, *candidate.Eligible)
+			assert.Contains(t, candidate.Violations, VideoConstraintViolation{
+				Code: "video_audio_total_above_max", Field: "video_audio_total", Actual: common.GetPointer(4), Expected: common.GetPointer(3),
+			})
 		}
 	}
-	assert.Equal(t, []int{102}, selectedIDs)
-}
-
-func TestSimulateVideoRoutingRejectsAdvancedCustomWithoutVideoPath(t *testing.T) {
-	truncate(t)
-	group := "creative-video"
-	modelName := StrictVideoRoutingModelSDBak1
-	priority := int64(20)
-	weight := uint(100)
-	mapping, err := common.Marshal(map[string]string{modelName: "ax2.0-9tu"})
-	require.NoError(t, err)
-	otherSettings, err := common.Marshal(dto.ChannelOtherSettings{
-		AdvancedCustom: &dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
-			IncomingPath: "/v1/chat/completions",
-			UpstreamPath: "/v1/chat/completions",
-		}}},
-	})
-	require.NoError(t, err)
-	mappingString := string(mapping)
-	channel := model.Channel{
-		Id: 201, Name: "Chat only", Type: constant.ChannelTypeAdvancedCustom, Key: "key",
-		Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight,
-		ModelMapping: &mappingString, OtherSettings: string(otherSettings),
-	}
-	require.NoError(t, model.DB.Create(&channel).Error)
-	require.NoError(t, model.DB.Create(&model.Ability{
-		Group: group, Model: modelName, ChannelId: channel.Id, Enabled: true,
-		Priority: &priority, Weight: weight,
-	}).Error)
-
-	result, err := SimulateVideoRouting(VideoRoutingSimulationRequest{
-		Model: modelName, Group: group, Images: 1, Duration: common.GetPointer(15),
-		ContentType: "application/json",
-	})
-
-	require.NoError(t, err)
-	require.Len(t, result.Candidates, 1)
-	assert.Equal(t, "request_path_not_supported", result.Candidates[0].ConfigurationError)
-	require.NotNil(t, result.Candidates[0].Eligible)
-	assert.False(t, *result.Candidates[0].Eligible)
-	assert.Nil(t, result.TargetPriority)
 }
 
 func TestVideoRoutingRulesSupportAlternateVideoEntryPoint(t *testing.T) {
 	truncate(t)
 	group := "creative-video"
-	modelName := StrictVideoRoutingModelSDBak1
+	publicModel := "custom-video"
 	priority := int64(20)
 	weight := uint(100)
-	mapping, err := common.Marshal(map[string]string{modelName: "ax2.0-9tu"})
+	mapping, err := common.Marshal(map[string]string{publicModel: "custom-upstream"})
 	require.NoError(t, err)
 	otherSettings, err := common.Marshal(dto.ChannelOtherSettings{
 		AdvancedCustom: &dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
@@ -607,34 +353,23 @@ func TestVideoRoutingRulesSupportAlternateVideoEntryPoint(t *testing.T) {
 	require.NoError(t, err)
 	mappingString := string(mapping)
 	channel := model.Channel{
-		Id: 202, Name: "Alternate video route", Type: constant.ChannelTypeAdvancedCustom, Key: "key",
+		Id: 87, Name: "Alternate video route", Type: constant.ChannelTypeAdvancedCustom, Key: "key",
 		Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight,
 		ModelMapping: &mappingString, OtherSettings: string(otherSettings),
 	}
 	require.NoError(t, model.DB.Create(&channel).Error)
 	require.NoError(t, model.DB.Create(&model.Ability{
-		Group: group, Model: modelName, ChannelId: channel.Id, Enabled: true,
+		Group: group, Model: publicModel, ChannelId: channel.Id, Enabled: true,
 		Priority: &priority, Weight: weight,
 	}).Error)
 
-	overview, err := GetVideoRoutingRuleSet(modelName, group)
-	require.NoError(t, err)
-	require.Len(t, overview.Candidates, 1)
-	assert.Empty(t, overview.Candidates[0].ConfigurationError)
-
-	primaryRules, err := GetVideoRoutingRuleSetForPath(modelName, group, DefaultVideoRoutingRequestPath)
+	primaryRules, err := GetVideoRoutingRuleSetForPath(publicModel, group, DefaultVideoRoutingRequestPath)
 	require.NoError(t, err)
 	require.Len(t, primaryRules.Candidates, 1)
 	assert.Equal(t, "request_path_not_supported", primaryRules.Candidates[0].ConfigurationError)
 
-	alternateRules, err := GetVideoRoutingRuleSetForPath(modelName, group, "/v1/video/generations")
-	require.NoError(t, err)
-	require.Len(t, alternateRules.Candidates, 1)
-	assert.Empty(t, alternateRules.Candidates[0].ConfigurationError)
-
 	result, err := SimulateVideoRouting(VideoRoutingSimulationRequest{
-		Model: modelName, Group: group, Images: 1, Duration: common.GetPointer(15),
-		ContentType: "application/json", RequestPath: "/v1/video/generations",
+		Model: publicModel, Group: group, Images: 1, ContentType: "application/json", RequestPath: "/v1/video/generations",
 	})
 	require.NoError(t, err)
 	require.Len(t, result.Candidates, 1)
@@ -642,4 +377,17 @@ func TestVideoRoutingRulesSupportAlternateVideoEntryPoint(t *testing.T) {
 	assert.True(t, *result.Candidates[0].Eligible)
 	require.NotNil(t, result.TargetPriority)
 	assert.Equal(t, priority, *result.TargetPriority)
+}
+
+func TestVideoRoutingWritesRejectOverlongModelNames(t *testing.T) {
+	truncate(t)
+	overlongModel := strings.Repeat("m", 256)
+
+	_, err := UpsertVideoRoutingPolicy(overlongModel, true, 0, 1)
+	assert.EqualError(t, err, "public model must not exceed 255 characters")
+
+	_, err = UpsertChannelVideoRoutingCapabilityRule(1, overlongModel, dto.VideoModelCapability{
+		RequireJSON: common.GetPointer(false),
+	}, 0, 1)
+	assert.EqualError(t, err, "upstream model must not exceed 255 characters")
 }

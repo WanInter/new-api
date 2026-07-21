@@ -17,13 +17,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildRequestBodyNormalizesSoraContentAndMappedModel(t *testing.T) {
+func TestBuildRequestBodyNormalizesSoraContentAndPreservesDuplicateReferences(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
 		"model":"public-video-model",
 		"prompt":"animate the references",
 		"ratio":"16:9",
-		"reference_image_urls":["https://example.com/existing.png"],
+		"reference_image_urls":["https://example.com/image.png", "https://example.com/image.png"],
+		"reference_videos":["https://example.com/video.mp4", "https://example.com/video.mp4"],
+		"reference_audios":["https://example.com/audio.mp3", "https://example.com/audio.mp3"],
 		"content":[
 			{"type":"image_url","image_url":{"url":"https://example.com/image.png"}},
 			{"type":"video_url","video_url":"https://example.com/video.mp4"},
@@ -45,9 +47,71 @@ func TestBuildRequestBodyNormalizesSoraContentAndMappedModel(t *testing.T) {
 	assert.Equal(t, "sd-720-pro", got["model"])
 	assert.Equal(t, "16:9", got["aspect_ratio"])
 	assert.NotContains(t, got, "content")
-	assert.ElementsMatch(t, []any{"https://example.com/existing.png", "https://example.com/image.png"}, got["reference_image_urls"])
-	assert.Equal(t, []any{"https://example.com/video.mp4"}, got["reference_videos"])
-	assert.Equal(t, []any{"https://example.com/audio.mp3"}, got["reference_audios"])
+	assert.Equal(t, []any{
+		"https://example.com/image.png",
+		"https://example.com/image.png",
+		"https://example.com/image.png",
+	}, got["reference_image_urls"])
+	assert.Equal(t, []any{
+		"https://example.com/video.mp4",
+		"https://example.com/video.mp4",
+		"https://example.com/video.mp4",
+	}, got["reference_videos"])
+	assert.Equal(t, []any{
+		"https://example.com/audio.mp3",
+		"https://example.com/audio.mp3",
+		"https://example.com/audio.mp3",
+	}, got["reference_audios"])
+}
+
+func TestBuildRequestBodyMapsSecondsAliasToDurationWithoutChangingExplicitZero(t *testing.T) {
+	for _, testCase := range []struct {
+		name         string
+		request      string
+		wantDuration any
+	}{
+		{
+			name:         "seconds alias",
+			request:      `{"model":"public-video-model","prompt":"animate","seconds":0}`,
+			wantDuration: float64(0),
+		},
+		{
+			name:         "duration takes precedence",
+			request:      `{"model":"public-video-model","prompt":"animate","duration":15,"seconds":4}`,
+			wantDuration: float64(15),
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(testCase.request))
+			c.Request.Header.Set("Content-Type", "application/json")
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+			body, err := (&TaskAdaptor{}).BuildRequestBody(c, &relaycommon.RelayInfo{
+				ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "shishi-upstream-model"},
+			})
+			require.NoError(t, err)
+			data, err := io.ReadAll(body)
+			require.NoError(t, err)
+
+			var got map[string]any
+			require.NoError(t, common.Unmarshal(data, &got))
+			assert.Equal(t, testCase.wantDuration, got["duration"])
+			assert.NotContains(t, got, "seconds")
+		})
+	}
+}
+
+func TestTaskRequestFromPayloadPrefersCanonicalDuration(t *testing.T) {
+	req, _, err := taskRequestFromPayload(map[string]any{
+		"model":    "shishi-upstream-model",
+		"prompt":   "animate",
+		"duration": 15,
+		"seconds":  4,
+	}, "")
+
+	require.NoError(t, err)
+	assert.Equal(t, 15, req.Duration)
 }
 
 func TestParseTaskResultNormalizesNestedUniversalResponse(t *testing.T) {

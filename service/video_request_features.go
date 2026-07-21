@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -59,6 +60,26 @@ func (e *VideoRequestFeaturesError) Unwrap() error {
 	return e.Err
 }
 
+// videoRequestFeatureDTOError means the JSON itself was valid, but it could
+// not be represented by the common task DTO used only for routing features.
+// An unconstrained channel may still understand that upstream-specific shape.
+type videoRequestFeatureDTOError struct {
+	err error
+}
+
+func (e *videoRequestFeatureDTOError) Error() string {
+	return e.err.Error()
+}
+
+func (e *videoRequestFeatureDTOError) Unwrap() error {
+	return e.err
+}
+
+func isVideoRequestFeatureDTOError(err error) bool {
+	var dtoErr *videoRequestFeatureDTOError
+	return errors.As(err, &dtoErr)
+}
+
 func extractVideoRequestFeatures(c *gin.Context) (VideoRequestFeatures, error) {
 	features := VideoRequestFeatures{ContentType: c.GetHeader("Content-Type")}
 	contentType := strings.ToLower(features.ContentType)
@@ -100,7 +121,7 @@ func extractJSONVideoRequestFeatures(body []byte, features VideoRequestFeatures)
 	}
 	var request relaycommon.TaskSubmitReq
 	if err := common.Unmarshal(body, &request); err != nil {
-		return features, err
+		return features, &videoRequestFeatureDTOError{err: err}
 	}
 
 	features.Images = countNonEmptyFeatureStrings(request.Images) +

@@ -50,10 +50,12 @@ type TaskAdaptor struct {
 }
 
 type generationRequest struct {
-	Channel     string            `json:"channel"`
-	Model       string            `json:"model,omitempty"`
-	Prompt      string            `json:"prompt"`
-	Duration    *int              `json:"duration,omitempty"`
+	Channel string `json:"channel"`
+	Model   string `json:"model,omitempty"`
+	Prompt  string `json:"prompt"`
+	// Keep the original numeric representation so an explicit zero and a
+	// fractional duration survive the unified request DTO's integer field.
+	Duration    json.RawMessage   `json:"duration,omitempty"`
 	AspectRatio string            `json:"aspectRatio,omitempty"`
 	Resolution  string            `json:"resolution,omitempty"`
 	Seed        any               `json:"seed,omitempty"`
@@ -108,34 +110,11 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		return service.TaskErrorWrapper(err, "get_task_request_failed", http.StatusBadRequest)
 	}
 	mergeRequestOptions(c, &req)
-	normalizeSeventhFrameDuration(&req)
 	if strings.TrimSpace(req.Model) == "" {
 		req.Model = info.OriginModelName
 	}
 	if strings.TrimSpace(req.Model) == "" {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("model field is required"), "missing_model", http.StatusBadRequest)
-	}
-	if req.Duration != 0 && (req.Duration < 4 || req.Duration > 15) {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("duration must be between 4 and 15 seconds"), "invalid_request", http.StatusBadRequest)
-	}
-
-	aspectRatio := requestAspectRatio(req)
-	if aspectRatio != "" && !isSupportedAspectRatio(aspectRatio) {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("aspect_ratio must be one of 16:9, 9:16, 1:1, 4:3, or 3:4"), "invalid_request", http.StatusBadRequest)
-	}
-	if req.Resolution != "" && req.Resolution != "720p" {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("resolution must be 720p"), "invalid_request", http.StatusBadRequest)
-	}
-
-	assets := collectAssetReferences(req)
-	if countAssetsByType(assets, "image") > 9 {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("at most 9 image assets are supported"), "invalid_request", http.StatusBadRequest)
-	}
-	if countAssetsByType(assets, "audio") > 3 {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("at most 3 audio assets are supported"), "invalid_request", http.StatusBadRequest)
-	}
-	if countAssetsByType(assets, "video") > 0 {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("video assets are not supported"), "invalid_request", http.StatusBadRequest)
 	}
 
 	info.Action = constant.TaskActionGenerate
@@ -159,7 +138,11 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
-	payload, err := a.buildGenerationRequest(c.Request.Context(), req, info)
+	duration, err := seventhFrameDuration(c, req)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := a.buildGenerationRequestWithDuration(c.Request.Context(), req, info, duration)
 	if err != nil {
 		return nil, err
 	}
@@ -286,6 +269,14 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 }
 
 func (a *TaskAdaptor) buildGenerationRequest(ctx context.Context, req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (*generationRequest, error) {
+	duration, err := taskSubmitDuration(req)
+	if err != nil {
+		return nil, err
+	}
+	return a.buildGenerationRequestWithDuration(ctx, req, info, duration)
+}
+
+func (a *TaskAdaptor) buildGenerationRequestWithDuration(ctx context.Context, req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo, duration json.RawMessage) (*generationRequest, error) {
 	modelName := strings.TrimSpace(info.UpstreamModelName)
 	if modelName == "" {
 		modelName = req.Model
@@ -294,12 +285,10 @@ func (a *TaskAdaptor) buildGenerationRequest(ctx context.Context, req relaycommo
 		Channel:     a.channel,
 		Model:       modelName,
 		Prompt:      req.Prompt,
+		Duration:    duration,
 		AspectRatio: requestAspectRatio(req),
 		Resolution:  req.Resolution,
 		Seed:        requestSeed(req.Metadata),
-	}
-	if req.Duration > 0 {
-		payload.Duration = &req.Duration
 	}
 	for _, asset := range collectAssetReferences(req) {
 		file, err := a.uploadAsset(ctx, asset)
@@ -430,37 +419,48 @@ func mergeRequestOptions(c *gin.Context, req *relaycommon.TaskSubmitReq) {
 
 func collectAssetReferences(req relaycommon.TaskSubmitReq) []assetReference {
 	assets := make([]assetReference, 0, len(req.Images)+len(req.Audios)+len(req.Videos)+len(req.Content))
-	seen := make(map[string]struct{})
-	appendURLs := func(assetType string, urls ...[]string) {
-		for _, values := range urls {
-			for _, value := range values {
-				value = strings.TrimSpace(value)
-				if value == "" {
-					continue
-				}
-				key := assetType + "\x00" + value
-				if _, ok := seen[key]; ok {
-					continue
-				}
-				seen[key] = struct{}{}
-				assets = append(assets, assetReference{Type: assetType, URL: value})
+	appendSource := func(references []assetReference) {
+		for _, reference := range references {
+			reference.URL = strings.TrimSpace(reference.URL)
+			if reference.URL == "" {
+				continue
 			}
+			assets = append(assets, reference)
 		}
 	}
-	appendURLs("image", req.Images, req.ImageURLs, req.InputStartFrames, req.InputImageReferences, req.MetadataStartFrames, []string{req.Image, req.InputReference})
-	appendURLs("video", req.Videos, req.VideoURLs)
-	appendURLs("audio", req.Audios, req.AudioURLs)
+	appendURLs := func(assetType string, urls []string) {
+		references := make([]assetReference, 0, len(urls))
+		for _, value := range urls {
+			references = append(references, assetReference{Type: assetType, URL: value})
+		}
+		appendSource(references)
+	}
+
+	appendURLs("image", req.Images)
+	appendURLs("image", req.ImageURLs)
+	appendURLs("image", req.InputStartFrames)
+	appendURLs("image", req.InputImageReferences)
+	appendURLs("image", req.MetadataStartFrames)
+	appendURLs("image", []string{req.Image})
+	appendURLs("image", []string{req.InputReference})
+	appendURLs("video", req.Videos)
+	appendURLs("video", req.VideoURLs)
+	appendURLs("audio", req.Audios)
+	appendURLs("audio", req.AudioURLs)
+
+	contentAssets := make([]assetReference, 0, len(req.Content))
 	for _, item := range req.Content {
 		if item.ImageURL != nil {
-			appendURLs("image", []string{item.ImageURL.URL})
+			contentAssets = append(contentAssets, assetReference{Type: "image", URL: item.ImageURL.URL})
 		}
 		if item.VideoURL != nil {
-			appendURLs("video", []string{item.VideoURL.URL})
+			contentAssets = append(contentAssets, assetReference{Type: "video", URL: item.VideoURL.URL})
 		}
 		if item.AudioURL != nil {
-			appendURLs("audio", []string{item.AudioURL.URL})
+			contentAssets = append(contentAssets, assetReference{Type: "audio", URL: item.AudioURL.URL})
 		}
 	}
+	appendSource(contentAssets)
 	return assets
 }
 
@@ -481,32 +481,106 @@ func requestSeed(metadata map[string]any) any {
 	return metadata["seed"]
 }
 
-func normalizeSeventhFrameDuration(req *relaycommon.TaskSubmitReq) {
-	if req == nil || req.Duration > 0 {
-		return
-	}
-	seconds := strings.TrimSpace(strings.ToLower(req.Seconds))
-	for _, suffix := range []string{"seconds", "second", "secs", "sec", "s"} {
-		seconds = strings.TrimSuffix(seconds, suffix)
-	}
-	seconds = strings.TrimSpace(seconds)
-	if seconds == "" {
-		return
-	}
-	value, err := strconv.ParseFloat(seconds, 64)
-	if err == nil && value > 0 {
-		req.Duration = int(value)
-	}
-}
+func seventhFrameDuration(c *gin.Context, req relaycommon.TaskSubmitReq) (json.RawMessage, error) {
+	contentType := c.GetHeader("Content-Type")
+	switch {
+	case strings.HasPrefix(contentType, "application/json"):
+		storage, err := common.GetBodyStorage(c)
+		if err != nil {
+			return nil, err
+		}
+		body, err := storage.Bytes()
+		if err != nil {
+			return nil, err
+		}
 
-func countAssetsByType(assets []assetReference, assetType string) int {
-	count := 0
-	for _, asset := range assets {
-		if asset.Type == assetType {
-			count++
+		var fields map[string]json.RawMessage
+		if err := common.Unmarshal(body, &fields); err != nil {
+			return nil, err
+		}
+		if duration, ok := fields["duration"]; ok {
+			return upstreamDuration(duration), nil
+		}
+		if seconds, ok := fields["seconds"]; ok {
+			return upstreamDuration(seconds), nil
+		}
+	case strings.Contains(contentType, gin.MIMEMultipartPOSTForm):
+		form, err := common.ParseMultipartFormReusable(c)
+		if err != nil {
+			return nil, err
+		}
+		defer form.RemoveAll()
+		if duration, ok, err := formDuration(form.Value); ok || err != nil {
+			return duration, err
+		}
+	case strings.Contains(contentType, gin.MIMEPOSTForm):
+		storage, err := common.GetBodyStorage(c)
+		if err != nil {
+			return nil, err
+		}
+		body, err := storage.Bytes()
+		if err != nil {
+			return nil, err
+		}
+		values, err := url.ParseQuery(string(body))
+		if err != nil {
+			return nil, err
+		}
+		if duration, ok, err := formDuration(values); ok || err != nil {
+			return duration, err
 		}
 	}
-	return count
+
+	return taskSubmitDuration(req)
+}
+
+func formDuration(values map[string][]string) (json.RawMessage, bool, error) {
+	for _, field := range []string{"duration", "seconds"} {
+		if fieldValues, ok := values[field]; ok && len(fieldValues) > 0 {
+			raw, err := common.Marshal(fieldValues[0])
+			if err != nil {
+				return nil, true, err
+			}
+			return upstreamDuration(raw), true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func taskSubmitDuration(req relaycommon.TaskSubmitReq) (json.RawMessage, error) {
+	if req.Duration != 0 {
+		return json.RawMessage(strconv.Itoa(req.Duration)), nil
+	}
+	if strings.TrimSpace(req.Seconds) == "" {
+		return nil, nil
+	}
+	seconds, err := common.Marshal(req.Seconds)
+	if err != nil {
+		return nil, err
+	}
+	return upstreamDuration(seconds), nil
+}
+
+func upstreamDuration(raw json.RawMessage) json.RawMessage {
+	raw = bytes.TrimSpace(raw)
+	var value string
+	if len(raw) == 0 || common.Unmarshal(raw, &value) != nil {
+		return raw
+	}
+
+	value = strings.TrimSpace(value)
+	lowerValue := strings.ToLower(value)
+	for _, suffix := range []string{"seconds", "second", "secs", "sec", "s"} {
+		if strings.HasSuffix(lowerValue, suffix) {
+			value = strings.TrimSpace(value[:len(value)-len(suffix)])
+			break
+		}
+	}
+	var number json.Number
+	if value == "" || common.Unmarshal([]byte(value), &number) != nil {
+		return raw
+	}
+	return json.RawMessage(value)
 }
 
 func mapGenerationStatus(status string) model.TaskStatus {
@@ -535,15 +609,6 @@ func generationProgress(progress int, status model.TaskStatus) string {
 		return taskcommon.ProgressQueued
 	}
 	return taskcommon.ProgressInProgress
-}
-
-func isSupportedAspectRatio(value string) bool {
-	switch value {
-	case "16:9", "9:16", "1:1", "4:3", "3:4":
-		return true
-	default:
-		return false
-	}
 }
 
 func aspectRatioFromSize(size string) string {

@@ -111,42 +111,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if info.Action == constant.TaskActionRemix {
 		return validateRemixRequest(c)
 	}
-	if taskErr := a.ValidateMappedRequestBeforeDecode(c, info); taskErr != nil {
-		return taskErr
-	}
 	return relaycommon.ValidateMultipartDirect(c, info)
-}
-
-func (a *TaskAdaptor) ValidateMappedRequestBeforeDecode(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
-	profile, ok := soraModelProfileForInfo(info)
-	if !ok {
-		return nil
-	}
-	return validateSoraModelContentType(c, info.OriginModelName, profile)
-}
-
-func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
-	if info.Action == constant.TaskActionRemix {
-		return nil
-	}
-	return validateSoraModelRequest(c, info)
-}
-
-func (a *TaskAdaptor) NormalizeBillingRequestBody(info *relaycommon.RelayInfo, body []byte) ([]byte, error) {
-	fixedSeconds := fixedVideoSecondsForModel("", info)
-	if fixedSeconds <= 0 || len(body) == 0 {
-		return body, nil
-	}
-
-	var bodyMap map[string]interface{}
-	if err := common.Unmarshal(body, &bodyMap); err != nil {
-		return nil, err
-	}
-	bodyMap["duration"] = clampVideoSeconds(fixedSeconds, maxVideoSecondsForModel(info))
-	if profile, ok := soraModelProfileForInfo(info); ok && profile.DropSecondsField {
-		delete(bodyMap, "seconds")
-	}
-	return common.Marshal(bodyMap)
 }
 
 // EstimateBilling 根据用户请求的 seconds 和 size 计算 OtherRatios。
@@ -213,17 +178,8 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			if hasProfile {
 				applySoraModelJSONProfile(bodyMap, profile)
 			}
-			if fixedSeconds := fixedVideoSecondsForModel("", info); fixedSeconds > 0 {
-				bodyMap["duration"] = fixedSeconds
-			}
-			maxSeconds := maxVideoSecondsForModel(info)
-			clampJSONVideoDuration(bodyMap, maxSeconds)
-			if !hasProfile || !profile.SkipGenericDurationNormalization {
-				if seconds, ok := normalizeVideoSeconds(bodyMap["seconds"]); ok {
-					bodyMap["seconds"] = clampNormalizedVideoSeconds(seconds, maxSeconds)
-				} else if seconds, ok := normalizeVideoSeconds(bodyMap["duration"]); ok {
-					bodyMap["seconds"] = clampNormalizedVideoSeconds(seconds, maxSeconds)
-				}
+			if !hasProfile || !profile.SkipGenericDurationMapping {
+				mapDurationToSoraSeconds(bodyMap)
 			}
 			if hasProfile {
 				applySoraModelJSONFinalProfile(bodyMap, profile)
@@ -247,21 +203,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		if hasProfile && profile.MultipartTransform != requestTransformNone {
 			applySoraModelMultipartProfile(writer, formData.Value, profile)
 		} else {
-			maxSeconds := maxVideoSecondsForModel(info)
-			if seconds := normalizeVideoSecondsFromForm(formData.Value); seconds != "" {
-				writer.WriteField("seconds", clampNormalizedVideoSeconds(seconds, maxSeconds))
-			}
-			for key, values := range formData.Value {
-				if key == "model" || key == "seconds" {
-					continue
-				}
-				for _, v := range values {
-					if key == "duration" {
-						v = clampRawVideoSeconds(v, maxSeconds)
-					}
-					writer.WriteField(key, v)
-				}
-			}
+			writeSoraMultipartFields(writer, formData.Value)
 		}
 		for fieldName, fileHeaders := range formData.File {
 			for _, fh := range fileHeaders {
@@ -301,21 +243,96 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	return common.ReaderOnly(storage), nil
 }
 
-func estimateVideoSeconds(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) int {
-	if fixedSeconds := fixedVideoSecondsForModel(req.Model, info); fixedSeconds > 0 {
-		return clampVideoSeconds(fixedSeconds, maxVideoSecondsForModel(info))
+// mapDurationToSoraSeconds maps the public duration field to the Sora wire
+// field without validating, rounding, or defaulting its value. duration is the
+// canonical public spelling, so it takes precedence over the legacy seconds
+// alias when both are present.
+func mapDurationToSoraSeconds(body map[string]interface{}) {
+	if body == nil {
+		return
 	}
+
+	value, exists := body["duration"]
+	if !exists {
+		value, exists = body["seconds"]
+	}
+	if !exists {
+		return
+	}
+	if seconds, ok := soraSecondsString(value); ok {
+		body["seconds"] = seconds
+	} else {
+		body["seconds"] = value
+	}
+	delete(body, "duration")
+}
+
+func soraSecondsString(value interface{}) (string, bool) {
+	switch value := value.(type) {
+	case string:
+		return value, true
+	case json.Number:
+		return value.String(), true
+	case int:
+		return strconv.Itoa(value), true
+	case int8:
+		return strconv.FormatInt(int64(value), 10), true
+	case int16:
+		return strconv.FormatInt(int64(value), 10), true
+	case int32:
+		return strconv.FormatInt(int64(value), 10), true
+	case int64:
+		return strconv.FormatInt(value, 10), true
+	case uint:
+		return strconv.FormatUint(uint64(value), 10), true
+	case uint8:
+		return strconv.FormatUint(uint64(value), 10), true
+	case uint16:
+		return strconv.FormatUint(uint64(value), 10), true
+	case uint32:
+		return strconv.FormatUint(uint64(value), 10), true
+	case uint64:
+		return strconv.FormatUint(value, 10), true
+	case float32:
+		return strconv.FormatFloat(float64(value), 'f', -1, 32), true
+	case float64:
+		return strconv.FormatFloat(value, 'f', -1, 64), true
+	default:
+		return "", false
+	}
+}
+
+func writeSoraMultipartFields(writer *multipart.Writer, values map[string][]string) {
+	for key, fieldValues := range values {
+		if key == "model" || key == "duration" || key == "seconds" {
+			continue
+		}
+		for _, value := range fieldValues {
+			_ = writer.WriteField(key, value)
+		}
+	}
+
+	seconds, hasDuration := values["duration"]
+	if !hasDuration {
+		seconds = values["seconds"]
+	}
+	for _, value := range seconds {
+		_ = writer.WriteField("seconds", value)
+	}
+}
+
+func estimateVideoSeconds(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) int {
 	seconds := 0
-	if normalized, ok := normalizeVideoSeconds(req.Seconds); ok {
-		seconds = mustParsePositiveInt(normalized)
-	} else if req.Duration > 0 {
+	if req.Duration > 0 {
 		seconds = req.Duration
+	} else if normalized, ok := normalizeVideoSeconds(req.Seconds); ok {
+		seconds = mustParsePositiveInt(normalized)
 	} else if normalized, ok := normalizeVideoSeconds(req.Metadata["duration"]); ok {
 		seconds = mustParsePositiveInt(normalized)
 	} else {
-		seconds = defaultVideoSecondsForModel(req.Model, info)
+		seconds = defaultUnprofiledVideoSeconds
 	}
-	return clampVideoSeconds(seconds, maxVideoSecondsForModel(info))
+	return seconds
 }
 
 func tokenStackBillingSeconds(c *gin.Context, info *relaycommon.RelayInfo) (int, bool) {
@@ -323,12 +340,6 @@ func tokenStackBillingSeconds(c *gin.Context, info *relaycommon.RelayInfo) (int,
 		return 0, false
 	}
 	upstreamModel := strings.TrimSpace(info.ChannelMeta.UpstreamModelName)
-	if _, ok := tokenStackSora15sModels[upstreamModel]; ok {
-		return 15, true
-	}
-	if _, ok := tokenStackMultiResolutionModels[upstreamModel]; ok {
-		return 15, true
-	}
 	if upstreamModel != tokenStackMultiModeModel {
 		return 0, false
 	}
@@ -354,56 +365,6 @@ func mustParsePositiveInt(value string) int {
 		return 0
 	}
 	return parsed
-}
-
-func clampVideoSeconds(seconds, maxSeconds int) int {
-	if maxSeconds > 0 && seconds > maxSeconds {
-		return maxSeconds
-	}
-	return seconds
-}
-
-func clampNormalizedVideoSeconds(seconds string, maxSeconds int) string {
-	return strconv.Itoa(clampVideoSeconds(mustParsePositiveInt(seconds), maxSeconds))
-}
-
-func clampRawVideoSeconds(value string, maxSeconds int) string {
-	if maxSeconds <= 0 {
-		return value
-	}
-	seconds, ok := normalizeVideoSeconds(value)
-	if !ok {
-		return value
-	}
-	return clampNormalizedVideoSeconds(seconds, maxSeconds)
-}
-
-func clampJSONVideoDuration(body map[string]interface{}, maxSeconds int) {
-	if maxSeconds <= 0 {
-		return
-	}
-	seconds, ok := normalizeVideoSeconds(body["duration"])
-	if !ok {
-		return
-	}
-	body["duration"] = mustParsePositiveInt(clampNormalizedVideoSeconds(seconds, maxSeconds))
-}
-
-func normalizeVideoSecondsFromForm(values map[string][]string) string {
-	if len(values) == 0 {
-		return ""
-	}
-	if rawValues := values["seconds"]; len(rawValues) > 0 {
-		if seconds, ok := normalizeVideoSeconds(rawValues[0]); ok {
-			return seconds
-		}
-	}
-	if rawValues := values["duration"]; len(rawValues) > 0 {
-		if seconds, ok := normalizeVideoSeconds(rawValues[0]); ok {
-			return seconds
-		}
-	}
-	return ""
 }
 
 func normalizeVideoSeconds(value any) (string, bool) {

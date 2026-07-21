@@ -80,7 +80,12 @@ type CapabilityRuleEditorProps = {
   onSaved: () => void | Promise<void>
 }
 
-type RangePrefix = 'images' | 'videos' | 'audios' | 'duration'
+type RangePrefix =
+  | 'images'
+  | 'videos'
+  | 'audios'
+  | 'video_audio_total'
+  | 'duration'
 
 export function CapabilityRuleEditor(props: CapabilityRuleEditorProps) {
   const { t } = useTranslation()
@@ -196,6 +201,12 @@ export function CapabilityRuleEditor(props: CapabilityRuleEditorProps) {
                   prefix='audios'
                   label={t('Audios')}
                   effective={candidate.capability?.audios}
+                />
+                <RangeFieldSet
+                  form={form}
+                  prefix='video_audio_total'
+                  label={t('Video + audio total')}
+                  effective={candidate.capability?.video_audio_total}
                 />
 
                 <Separator />
@@ -357,6 +368,8 @@ function NumberOverrideField(props: {
     | 'videos_max'
     | 'audios_min'
     | 'audios_max'
+    | 'video_audio_total_min'
+    | 'video_audio_total_max'
     | 'duration_min'
     | 'duration_max'
     | 'fixed_duration'

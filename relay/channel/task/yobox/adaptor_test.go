@@ -17,14 +17,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestConvertToRequestPayloadSeedance2UsesInputReference(t *testing.T) {
+func TestConvertToRequestPayloadSeedance2UsesInputReferenceAlias(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	payload, err := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
-		Model:   "seedance2",
-		Prompt:  "dance",
-		Seconds: "12",
-		Size:    "720x1280",
-		Images:  []string{"https://example.com/ref.png"},
+		Model:          "seedance2",
+		Prompt:         "dance",
+		Seconds:        "12",
+		Size:           "720x1280",
+		InputReference: "https://example.com/ref.png",
 	}, &relaycommon.RelayInfo{})
 	require.NoError(t, err)
 
@@ -34,7 +34,7 @@ func TestConvertToRequestPayloadSeedance2UsesInputReference(t *testing.T) {
 	require.Contains(t, string(body), `"seconds":"12"`)
 }
 
-func TestConvertToRequestPayloadSeedance20AlwaysUsesImageReferences(t *testing.T) {
+func TestConvertToRequestPayloadSeedance20UsesImageReferencesWithoutAssumedStrength(t *testing.T) {
 	testCases := []struct {
 		name     string
 		model    string
@@ -45,15 +45,15 @@ func TestConvertToRequestPayloadSeedance20AlwaysUsesImageReferences(t *testing.T
 			name:     "one image",
 			model:    "seedance-2.0",
 			images:   []string{"https://example.com/1.png"},
-			expected: []map[string]any{{"url": "https://example.com/1.png", "strength": "MID"}},
+			expected: []map[string]any{{"url": "https://example.com/1.png"}},
 		},
 		{
 			name:   "two images",
 			model:  "seedance-2.0",
 			images: []string{"https://example.com/1.png", "https://example.com/2.png"},
 			expected: []map[string]any{
-				{"url": "https://example.com/1.png", "strength": "MID"},
-				{"url": "https://example.com/2.png", "strength": "MID"},
+				{"url": "https://example.com/1.png"},
+				{"url": "https://example.com/2.png"},
 			},
 		},
 		{
@@ -61,9 +61,9 @@ func TestConvertToRequestPayloadSeedance20AlwaysUsesImageReferences(t *testing.T
 			model:  "seedance-2.0-fast",
 			images: []string{"https://example.com/1.png", "https://example.com/2.png", "https://example.com/3.png"},
 			expected: []map[string]any{
-				{"url": "https://example.com/1.png", "strength": "MID"},
-				{"url": "https://example.com/2.png", "strength": "MID"},
-				{"url": "https://example.com/3.png", "strength": "MID"},
+				{"url": "https://example.com/1.png"},
+				{"url": "https://example.com/2.png"},
+				{"url": "https://example.com/3.png"},
 			},
 		},
 	}
@@ -107,22 +107,41 @@ func TestConvertToRequestPayloadSeedance20ForwardsVideoAndAudioReferences(t *tes
 	input, ok := body["input"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, []map[string]any{
-		{"url": "https://example.com/reference.mp4", "strength": "MID"},
-		{"url": "https://example.com/legacy-reference.mp4", "strength": "MID"},
+		{"url": "https://example.com/reference.mp4"},
+		{"url": "https://example.com/legacy-reference.mp4"},
 	}, input["video_references"])
 	assert.Equal(t, []map[string]any{
-		{"url": "https://example.com/reference.mp3", "strength": "MID"},
-		{"url": "https://example.com/legacy-reference.mp3", "strength": "MID"},
+		{"url": "https://example.com/reference.mp3"},
+		{"url": "https://example.com/legacy-reference.mp3"},
 	}, input["audio_references"])
-	assert.Equal(t, true, input["audio"])
+	assert.NotContains(t, input, "audio")
 }
 
-func TestConvertToRequestPayloadDefaultsSeedance20Resolution(t *testing.T) {
+func TestConvertToRequestPayloadNoFaceOmitsMediaStrength(t *testing.T) {
+	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Model:    "seedance-2.0-fast-noface",
+		Prompt:   "animate the cat",
+		Duration: 5,
+		Images:   []string{"https://example.com/reference.png"},
+		Videos:   []string{"https://example.com/reference.mp4"},
+		Audios:   []string{"https://example.com/reference.mp3"},
+	}, &relaycommon.RelayInfo{})
+	require.NoError(t, err)
+
+	body, ok := payload.(map[string]any)
+	require.True(t, ok)
+	input, ok := body["input"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, []map[string]any{{"url": "https://example.com/reference.png"}}, input["image_references"])
+	assert.Equal(t, []map[string]any{{"url": "https://example.com/reference.mp4"}}, input["video_references"])
+	assert.Equal(t, []map[string]any{{"url": "https://example.com/reference.mp3"}}, input["audio_references"])
+}
+
+func TestConvertToRequestPayloadSeedance20DoesNotInventOptionalParameters(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	payload, err := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
 		Model:    "seedance-2.0",
 		Prompt:   "run",
-		Duration: 15,
 		Metadata: map[string]any{"aspect_ratio": "9:16"},
 	}, &relaycommon.RelayInfo{})
 	require.NoError(t, err)
@@ -132,7 +151,10 @@ func TestConvertToRequestPayloadDefaultsSeedance20Resolution(t *testing.T) {
 	input, ok := body["input"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "9:16", input["aspect_ratio"])
-	require.Equal(t, "720p", input["resolution"])
+	assert.NotContains(t, input, "duration")
+	assert.NotContains(t, input, "resolution")
+	assert.NotContains(t, input, "audio")
+	assert.NotContains(t, input, "n")
 }
 
 func TestConvertToRequestPayloadHappyHorseSupportsNineReferences(t *testing.T) {
@@ -165,7 +187,7 @@ func TestConvertToRequestPayloadHappyHorseSupportsNineReferences(t *testing.T) {
 	assert.Equal(t, "AUTO", input["prompt_enhance"])
 }
 
-func TestConvertToRequestPayloadHappyHorseUsesOnlyFirstStartFrame(t *testing.T) {
+func TestConvertToRequestPayloadPreservesAllStartFrames(t *testing.T) {
 	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&relaycommon.TaskSubmitReq{
 		Prompt:   "character smiles",
 		Duration: 6,
@@ -179,7 +201,7 @@ func TestConvertToRequestPayloadHappyHorseUsesOnlyFirstStartFrame(t *testing.T) 
 	require.True(t, ok)
 	input, ok := body["input"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, []string{"https://example.com/start.png"}, input["start_frames"])
+	assert.Equal(t, []any{"https://example.com/start.png", "https://example.com/ignored.png"}, input["start_frames"])
 	assert.NotContains(t, input, "image_references")
 }
 
@@ -210,7 +232,7 @@ func TestValidateHappyHorseMetadataStartFramesPreservesDedicatedPayload(t *testi
 	require.True(t, ok)
 	input, ok := body["input"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, []string{"https://example.com/start.png"}, input["start_frames"])
+	assert.Equal(t, []any{"https://example.com/start.png", "https://example.com/ignored.png"}, input["start_frames"])
 	assert.NotContains(t, input, "image_references")
 }
 
@@ -242,6 +264,85 @@ func TestValidateSeedance20PreservesBooleanAudioSwitch(t *testing.T) {
 			assert.Equal(t, audio, input["audio"])
 		})
 	}
+}
+
+func TestValidateNoFacePreservesFramesMediaAndExtensions(t *testing.T) {
+	bodyJSON := `{
+		"model":"seedance-2.0-fast-noface",
+		"prompt":"animate every reference",
+		"duration":15,
+		"aspect_ratio":"9:16",
+		"resolution":"4k",
+		"images":["https://example.com/1.png","https://example.com/2.png","https://example.com/3.png","https://example.com/4.png","https://example.com/5.png","https://example.com/6.png","https://example.com/7.png","https://example.com/8.png","https://example.com/9.png"],
+		"videos":["https://example.com/1.mp4","https://example.com/2.mp4","https://example.com/3.mp4","https://example.com/4.mp4"],
+		"audios":["https://example.com/1.mp3","https://example.com/2.mp3","https://example.com/3.mp3","https://example.com/4.mp3"],
+		"metadata":{"custom_extension":{"enabled":true}},
+		"input":{
+			"start_frames":["https://example.com/start-1.png","https://example.com/start-2.png"],
+			"end_frames":["https://example.com/end-1.png","https://example.com/end-2.png"],
+			"audio":false,
+			"n":0
+		}
+	}`
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(bodyJSON))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "seedance-2.0-fast-noface",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+
+	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
+	req, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&req, info)
+	require.NoError(t, err)
+
+	body, ok := payload.(map[string]any)
+	require.True(t, ok)
+	input, ok := body["input"].(map[string]any)
+	require.True(t, ok)
+	assert.EqualValues(t, 15, input["duration"])
+	assert.Equal(t, "9:16", input["aspect_ratio"])
+	assert.Equal(t, "4k", input["resolution"])
+	assert.Len(t, input["image_references"], 9)
+	assert.Len(t, input["video_references"], 4)
+	assert.Len(t, input["audio_references"], 4)
+	assert.Equal(t, []any{"https://example.com/start-1.png", "https://example.com/start-2.png"}, input["start_frames"])
+	assert.Equal(t, []any{"https://example.com/end-1.png", "https://example.com/end-2.png"}, input["end_frames"])
+	assert.Equal(t, false, input["audio"])
+	assert.Equal(t, float64(0), input["n"])
+	assert.Equal(t, map[string]any{"enabled": true}, input["custom_extension"])
+
+	for _, reference := range input["video_references"].([]map[string]any) {
+		assert.NotContains(t, reference, "strength")
+	}
+}
+
+func TestValidateSeedance20PreservesExplicitZeroDuration(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"seedance-2.0",
+		"prompt":"run",
+		"duration":0
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "seedance-2.0",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+
+	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
+	req, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&req, info)
+	require.NoError(t, err)
+
+	body := payload.(map[string]any)
+	input := body["input"].(map[string]any)
+	assert.EqualValues(t, 0, input["duration"])
 }
 
 func TestConvertToRequestPayloadUsesMappedUpstreamModel(t *testing.T) {
@@ -359,7 +460,7 @@ func TestParseTaskResultRejectsUnknownStatus(t *testing.T) {
 	assert.Nil(t, info)
 }
 
-func TestDoResponseRedactsImageReferencesLimit(t *testing.T) {
+func TestDoResponsePreservesImageReferencesLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	resp := &http.Response{
@@ -371,21 +472,18 @@ func TestDoResponseRedactsImageReferencesLimit(t *testing.T) {
 
 	_, _, taskErr := (&TaskAdaptor{}).DoResponse(c, resp, &relaycommon.RelayInfo{})
 	require.NotNil(t, taskErr)
-	assert.Equal(t, yoboxGenericProcessingError, taskErr.Message)
-	assert.NotContains(t, taskErr.Message, "image_references")
+	assert.Equal(t, "yobox submit failed: 最多支持 4 张 image_references", taskErr.Message)
 }
 
-func TestSanitizeTaskUpstreamErrorRedactsNestedImageReferencesLimit(t *testing.T) {
+func TestSanitizeTaskUpstreamErrorPreservesUpstreamBody(t *testing.T) {
 	body := []byte(`{"success":false,"message":"{\"error\":\"sd-bak-3 最多支持 4 张 image_references\"}"}`)
 
 	message := (&TaskAdaptor{}).SanitizeTaskUpstreamError(body)
 
-	assert.Equal(t, yoboxGenericProcessingError, message)
-	assert.NotContains(t, message, "image_references")
-	assert.NotContains(t, message, "sd-bak-3")
+	assert.Equal(t, string(body), message)
 }
 
-func TestParseTaskResultRedactsImageReferencesLimit(t *testing.T) {
+func TestParseTaskResultPreservesImageReferencesLimit(t *testing.T) {
 	info, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{
 		"status": "FAILURE",
 		"fail_reason": "最多支持 4 张 image_references"
@@ -393,8 +491,7 @@ func TestParseTaskResultRedactsImageReferencesLimit(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, string(model.TaskStatusFailure), info.Status)
-	assert.Equal(t, yoboxGenericProcessingError, info.Reason)
-	assert.NotContains(t, info.Reason, "image_references")
+	assert.Equal(t, "最多支持 4 张 image_references", info.Reason)
 }
 
 func TestConvertToOpenAIVideoIncludesResultURL(t *testing.T) {
@@ -439,20 +536,34 @@ func TestConvertToOpenAIVideoExtractsNestedOutputFallback(t *testing.T) {
 	require.Equal(t, "https://example.com/nested.mp4", video.Metadata["url"])
 }
 
-func TestMergeYoboxRequestMetadataExtractsContentImages(t *testing.T) {
-	req := &relaycommon.TaskSubmitReq{
-		Metadata: map[string]any{
-			"content": []any{
-				map[string]any{"type": "text", "text": "prompt"},
-				map[string]any{"type": "image_url", "image_url": map[string]any{"url": "https://example.com/1.png"}},
-				map[string]any{"type": "image_url", "image_url": map[string]any{"url": "https://example.com/2.png"}},
-			},
-		},
+func TestConvertToRequestPayloadSeedance2PreservesExplicitContentAndExtensions(t *testing.T) {
+	content := []any{
+		map[string]any{"type": "text", "text": "prompt", "custom_text_option": true},
+		map[string]any{"type": "image_url", "role": "reference_image", "image_url": map[string]any{"url": "https://example.com/1.png"}},
 	}
-	req.Images = mergeYoboxImages(req.Images, extractYoboxContentImages(req.Metadata["content"]))
-	require.Equal(t, []string{"https://example.com/1.png", "https://example.com/2.png"}, req.Images)
+	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Model:  "seedance2",
+		Prompt: "prompt",
+		Images: []string{
+			"https://example.com/1.png",
+			"https://example.com/2.png",
+			"https://example.com/3.png",
+		},
+		Metadata: map[string]any{
+			"content":        content,
+			"generate_audio": true,
+			"custom_option":  map[string]any{"enabled": true},
+		},
+	}, &relaycommon.RelayInfo{})
+	require.NoError(t, err)
+
+	body, ok := payload.(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, content, body["content"])
+	assert.Equal(t, true, body["generate_audio"])
+	assert.Equal(t, map[string]any{"enabled": true}, body["custom_option"])
 }
 
 func TestModelListIncludesSupportedModels(t *testing.T) {
-	require.Equal(t, []string{"seedance2", "seedance-2.0", "seedance-2.0-fast", "happy-horse-1.1"}, (&TaskAdaptor{}).GetModelList())
+	require.Equal(t, []string{"seedance2", "seedance2-pro", "seedance-2.0", "seedance-2.0-fast", "seedance-2.0-noface", "seedance-2.0-fast-noface", "happy-horse-1.1"}, (&TaskAdaptor{}).GetModelList())
 }

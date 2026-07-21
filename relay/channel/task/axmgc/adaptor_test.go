@@ -2,6 +2,7 @@ package axmgc
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -78,9 +79,12 @@ func TestBuildJSONRequestSupportsDocumentedURLForms(t *testing.T) {
 
 	payload := parseBuiltJSONBody(t, c, body)
 	assert.Equal(t, Seedance720p933Model, payload.Model)
-	assert.Equal(t, "16:9", payload.AspectRatio)
-	assert.Equal(t, defaultResolution, payload.Resolution)
-	assert.Equal(t, defaultDuration, payload.Duration)
+	require.NotNil(t, payload.AspectRatio)
+	require.NotNil(t, payload.Resolution)
+	assert.Equal(t, "16:9", *payload.AspectRatio)
+	assert.Equal(t, "720p", *payload.Resolution)
+	require.NotNil(t, payload.Duration)
+	assert.Equal(t, 6, *payload.Duration)
 	assert.Equal(t, []map[string]any{
 		urlContentItem("image_url", "https://example.com/role.png"),
 		urlContentItem("image_url", "https://example.com/scene.jpg"),
@@ -125,7 +129,8 @@ func TestBuildJSONRequestConvertsTopLevelReferencesToContent(t *testing.T) {
 		urlContentItem("audio_url", "https://example.com/music.mp3"),
 		{"type": "text", "text": "@Image1 runs through the scene"},
 	}, payload.Content)
-	assert.Equal(t, defaultDuration, payload.Duration)
+	assert.Nil(t, payload.Duration)
+	assert.Nil(t, payload.Resolution)
 }
 
 func TestBuildJSONRequestSupportsAssetReferences(t *testing.T) {
@@ -154,7 +159,45 @@ func TestBuildJSONRequestSupportsAssetReferences(t *testing.T) {
 	}, payload.Content)
 }
 
-func TestBuildJSONRequestNormalizesDurationTo15Seconds(t *testing.T) {
+func TestBuildJSONRequestPassesThroughModelSpecificMediaCounts(t *testing.T) {
+	content := make([]any, 0, 19)
+	for _, testCase := range []struct {
+		contentType string
+		count       int
+	}{
+		{contentType: "image_url", count: 10},
+		{contentType: "video_url", count: 4},
+		{contentType: "audio_url", count: 4},
+	} {
+		for index := 1; index <= testCase.count; index++ {
+			content = append(content, map[string]any{
+				"type": testCase.contentType,
+				testCase.contentType: map[string]any{
+					"url": fmt.Sprintf("https://example.com/%s-%d", testCase.contentType, index),
+				},
+			})
+		}
+	}
+	content = append(content, map[string]any{"type": "text", "text": "animate the references"})
+	body, err := common.Marshal(map[string]any{
+		"model":   Seedance720p933Model,
+		"content": content,
+	})
+	require.NoError(t, err)
+
+	c := newJSONContext(t, string(body))
+	info := newRelayInfo()
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	requestBody, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	payload := parseBuiltJSONBody(t, c, requestBody)
+	assert.Len(t, payload.Content, 19)
+}
+
+func TestBuildJSONRequestPreservesExplicitDuration(t *testing.T) {
 	c := newJSONContext(t, `{"model":"seedance-2-720p-933","prompt":"test","duration":10}`)
 	info := newRelayInfo()
 	adaptor := &TaskAdaptor{}
@@ -163,11 +206,75 @@ func TestBuildJSONRequestNormalizesDurationTo15Seconds(t *testing.T) {
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
 	request, err := relaycommon.GetTaskRequest(c)
 	require.NoError(t, err)
-	assert.Equal(t, defaultDuration, request.Duration)
+	assert.Equal(t, 10, request.Duration)
 
 	body, err := adaptor.BuildRequestBody(c, info)
 	require.NoError(t, err)
-	assert.Equal(t, defaultDuration, parseBuiltJSONBody(t, c, body).Duration)
+	payload := parseBuiltJSONBody(t, c, body)
+	require.NotNil(t, payload.Duration)
+	assert.Equal(t, 10, *payload.Duration)
+}
+
+func TestBuildJSONRequestPreservesExplicitZeroValues(t *testing.T) {
+	c := newJSONContext(t, `{"model":"seedance-2-720p-933","prompt":"test","duration":0,"resolution":""}`)
+	info := newRelayInfo()
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	payload := parseBuiltJSONBody(t, c, body)
+	require.NotNil(t, payload.Duration)
+	assert.Zero(t, *payload.Duration)
+	require.NotNil(t, payload.Resolution)
+	assert.Empty(t, *payload.Resolution)
+}
+
+func TestBuildJSONRequestMapsSecondsAliasWithoutDefaults(t *testing.T) {
+	c := newJSONContext(t, `{"model":"seedance-2-720p-933","prompt":"test","seconds":"12s"}`)
+	info := newRelayInfo()
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	request, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, 12, request.Duration)
+
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	payload := parseBuiltJSONBody(t, c, body)
+	require.NotNil(t, payload.Duration)
+	assert.Equal(t, 12, *payload.Duration)
+}
+
+func TestBuildJSONRequestMergesLegacyReferencesWithNativeContent(t *testing.T) {
+	c := newJSONContext(t, `{
+		"model":"seedance-2-720p-933",
+		"input_reference":"https://example.com/reference.png",
+		"videos":["https://example.com/motion.mp4"],
+		"audios":["https://example.com/music.mp3"],
+		"content":[
+			{"type":"image_asset","image_asset":{"asset_id":"asset_role"}},
+			{"type":"text","text":"animate every reference"}
+		]
+	}`)
+	info := newRelayInfo()
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	payload := parseBuiltJSONBody(t, c, body)
+	assert.Equal(t, []map[string]any{
+		urlContentItem("image_url", "https://example.com/reference.png"),
+		urlContentItem("video_url", "https://example.com/motion.mp4"),
+		urlContentItem("audio_url", "https://example.com/music.mp3"),
+		{"type": "image_asset", "image_asset": map[string]any{"asset_id": "asset_role"}},
+		{"type": "text", "text": "animate every reference"},
+	}, payload.Content)
 }
 
 func TestBuildJSONRequestUsesExplicitModelMapping(t *testing.T) {
@@ -210,15 +317,18 @@ func TestValidateJSONRequestRejectsMissingModel(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
 }
 
-func TestValidateJSONRequestRejectsUnsupportedResolution(t *testing.T) {
+func TestValidateJSONRequestPassesThroughResolution(t *testing.T) {
 	c := newJSONContext(t, `{"model":"seedance-2-720p-933","prompt":"test","resolution":"1080p"}`)
 	info := newRelayInfo()
 	adaptor := &TaskAdaptor{}
 	adaptor.Init(info)
 
-	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
-	require.NotNil(t, taskErr)
-	assert.Contains(t, taskErr.Message, "resolution must be 720p")
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	resolution := parseBuiltJSONBody(t, c, body).Resolution
+	require.NotNil(t, resolution)
+	assert.Equal(t, "1080p", *resolution)
 }
 
 func TestValidateJSONRequestRejectsReferenceAfterText(t *testing.T) {
@@ -270,18 +380,15 @@ func TestRejectsRemixRequests(t *testing.T) {
 	assert.Contains(t, err.Error(), "does not support video remix")
 }
 
-func TestNormalizeBillingRequestBodyUsesFixedDuration(t *testing.T) {
-	body, err := (&TaskAdaptor{}).NormalizeBillingRequestBody(newRelayInfo(), []byte(`{
+func TestNormalizeBillingRequestBodyPreservesClientBody(t *testing.T) {
+	original := []byte(`{
 		"model":"seedance-2-720p-933",
 		"duration":10,
 		"seconds":"10"
-	}`))
+	}`)
+	body, err := (&TaskAdaptor{}).NormalizeBillingRequestBody(newRelayInfo(), original)
 	require.NoError(t, err)
-
-	var normalized map[string]any
-	require.NoError(t, common.Unmarshal(body, &normalized))
-	assert.Equal(t, float64(defaultDuration), normalized["duration"])
-	assert.NotContains(t, normalized, "seconds")
+	assert.Equal(t, original, body)
 }
 
 func mustBuildURL(t *testing.T, adaptor *TaskAdaptor, info *relaycommon.RelayInfo) string {

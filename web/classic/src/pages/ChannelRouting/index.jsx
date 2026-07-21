@@ -66,6 +66,8 @@ const EMPTY_CAPABILITY_FORM = {
   videos_max: '',
   audios_min: '',
   audios_max: '',
+  video_audio_total_min: '',
+  video_audio_total_max: '',
   duration_min: '',
   duration_max: '',
   fixed_duration: '',
@@ -113,6 +115,8 @@ const capabilityToForm = (capability) => ({
   videos_max: numberToDraft(capability?.videos?.max),
   audios_min: numberToDraft(capability?.audios?.min),
   audios_max: numberToDraft(capability?.audios?.max),
+  video_audio_total_min: numberToDraft(capability?.video_audio_total?.min),
+  video_audio_total_max: numberToDraft(capability?.video_audio_total?.max),
   duration_min: numberToDraft(capability?.duration?.min),
   duration_max: numberToDraft(capability?.duration?.max),
   fixed_duration: numberToDraft(capability?.fixed_duration),
@@ -142,6 +146,10 @@ const formToCapability = (form) => ({
   images: rangeFromDraft(form.images_min, form.images_max),
   videos: rangeFromDraft(form.videos_min, form.videos_max),
   audios: rangeFromDraft(form.audios_min, form.audios_max),
+  video_audio_total: rangeFromDraft(
+    form.video_audio_total_min,
+    form.video_audio_total_max,
+  ),
   duration: rangeFromDraft(form.duration_min, form.duration_max),
   fixed_duration: draftToNumber(form.fixed_duration),
   require_json: draftToBoolean(form.require_json),
@@ -157,6 +165,8 @@ const validateCapabilityForm = (form, t) => {
     'videos_max',
     'audios_min',
     'audios_max',
+    'video_audio_total_min',
+    'video_audio_total_max',
   ];
   const positiveFields = ['duration_min', 'duration_max', 'fixed_duration'];
   if (
@@ -177,6 +187,7 @@ const validateCapabilityForm = (form, t) => {
     ['images_min', 'images_max'],
     ['videos_min', 'videos_max'],
     ['audios_min', 'audios_max'],
+    ['video_audio_total_min', 'video_audio_total_max'],
     ['duration_min', 'duration_max'],
   ];
   if (
@@ -216,6 +227,14 @@ const violationText = (violation, t) => {
     images_above_max: t('最多支持 {{expected}} 张图片', options),
     videos_above_max: t('最多支持 {{expected}} 个视频', options),
     audios_above_max: t('最多支持 {{expected}} 个音频', options),
+    video_audio_total_below_min: t(
+      '视频与音频合计至少需要 {{expected}} 个',
+      options,
+    ),
+    video_audio_total_above_max: t(
+      '视频与音频合计最多支持 {{expected}} 个',
+      options,
+    ),
     duration_mismatch: t('仅支持 {{expected}} 秒时长', options),
     duration_below_min: t('时长至少为 {{expected}} 秒', options),
     duration_above_max: t('时长最多为 {{expected}} 秒', options),
@@ -309,6 +328,10 @@ const CandidateDetails = ({ candidate, onClose, t }) => (
               {
                 key: t('音频'),
                 value: formatRange(candidate.capability?.audios),
+              },
+              {
+                key: t('视频与音频合计'),
+                value: formatRange(candidate.capability?.video_audio_total),
               },
               {
                 key: t('时长'),
@@ -563,6 +586,14 @@ const CapabilityRuleEditor = ({ candidate, onClose, onSaved, t }) => {
             form={form}
             onChange={updateField}
             effective={candidate.capability?.audios}
+            t={t}
+          />
+          <RangeOverrideFields
+            label={t('视频与音频合计')}
+            prefix='video_audio_total'
+            form={form}
+            onChange={updateField}
+            effective={candidate.capability?.video_audio_total}
             t={t}
           />
 
@@ -877,6 +908,13 @@ const ChannelRouting = () => {
         render: (_, record) => formatRange(record.capability?.audios),
       },
       {
+        title: t('视频与音频合计'),
+        width: 128,
+        align: 'center',
+        render: (_, record) =>
+          formatRange(record.capability?.video_audio_total),
+      },
+      {
         title: t('时长'),
         width: 84,
         align: 'center',
@@ -978,7 +1016,7 @@ const ChannelRouting = () => {
         rowKey={(record) => `${record.group}-${record.channel_id}`}
         pagination={false}
         tableLayout='fixed'
-        scroll={{ x: 1492 }}
+        scroll={{ x: 1620 }}
         empty={t('未找到分流候选渠道')}
       />
     </Spin>

@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -147,7 +148,7 @@ func TestEmptyImageReferenceCollectionsDoNotConstrainChannels(t *testing.T) {
 	}
 }
 
-func TestChannelSupportsRequestConstraintsForYoboxReferenceImages(t *testing.T) {
+func TestChannelSupportsRequestConstraintsDoesNotImposeYoboxModelLimitsWithoutExactRule(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	yobox := &model.Channel{Type: constant.ChannelTypeYobox}
 	yoboxCorp := &model.Channel{Type: constant.ChannelTypeYoboxCorp}
@@ -166,17 +167,17 @@ func TestChannelSupportsRequestConstraintsForYoboxReferenceImages(t *testing.T) 
 			yoboxExpected: true,
 		},
 		{
-			name:          "five images exclude yobox",
+			name:          "five images remain eligible",
 			path:          "/v1/videos",
 			body:          `{"images":["1","2","3","4","5"]}`,
-			yoboxExpected: false,
+			yoboxExpected: true,
 		},
 		{
-			name:          "nine images exclude yobox for default models",
+			name:          "nine images remain eligible for default models",
 			path:          "/v1/video/generations",
 			model:         "seedance-2.0",
 			body:          `{"images":["1","2","3","4","5","6","7","8","9"]}`,
-			yoboxExpected: false,
+			yoboxExpected: true,
 		},
 		{
 			name:          "nine images remain eligible for happy horse 1.1",
@@ -186,14 +187,14 @@ func TestChannelSupportsRequestConstraintsForYoboxReferenceImages(t *testing.T) 
 			yoboxExpected: true,
 		},
 		{
-			name:          "ten images exclude yobox for happy horse 1.1",
+			name:          "ten images remain eligible for happy horse 1.1",
 			path:          "/v1/videos",
 			model:         "happy-horse-1.1",
 			body:          `{"images":["1","2","3","4","5","6","7","8","9","10"]}`,
-			yoboxExpected: false,
+			yoboxExpected: true,
 		},
 		{
-			name: "content images count toward limit",
+			name: "content images remain eligible",
 			path: "/v1/videos",
 			body: `{"content":[
 				{"image_url":{"url":"1"}},
@@ -202,7 +203,7 @@ func TestChannelSupportsRequestConstraintsForYoboxReferenceImages(t *testing.T) 
 				{"image_url":{"url":"4"}},
 				{"image_url":{"url":"5"}}
 			]}`,
-			yoboxExpected: false,
+			yoboxExpected: true,
 		},
 		{
 			name:          "non-video route is unaffected",
@@ -221,4 +222,51 @@ func TestChannelSupportsRequestConstraintsForYoboxReferenceImages(t *testing.T) 
 			assert.True(t, ChannelSupportsRequestConstraints(c, aggc, testCase.model))
 		})
 	}
+}
+
+func TestUnparseableVideoFeaturesPassOnlyUnconstrainedChannels(t *testing.T) {
+	truncate(t)
+	publicModel := "unparseable-video-public"
+	unconstrained := channelWithVideoModelMapping(t, 90, constant.ChannelTypeYobox, publicModel, "unparseable-video-upstream")
+	exact := channelWithVideoModelMapping(t, 91, constant.ChannelTypeYobox, publicModel, "exact-video-upstream")
+	createChannelVideoCapability(t, exact, "exact-video-upstream", dto.VideoModelCapability{
+		Images: &dto.VideoMediaRange{Max: common.GetPointer(9)},
+	})
+	c := newChannelConstraintTestContext(t, "/v1/videos", `{
+		"model":"unparseable-video-public",
+		"images":{"url":"https://example.com/reference.png"}
+	}`)
+
+	_, err := GetVideoRequestFeatures(c)
+	var featuresErr *VideoRequestFeaturesError
+	require.ErrorAs(t, err, &featuresErr)
+	assert.True(t, isVideoRequestFeatureDTOError(err))
+
+	assert.True(t, ChannelSupportsRequestConstraints(c, unconstrained, publicModel))
+	assert.False(t, ChannelSupportsRequestConstraints(c, exact, publicModel))
+
+	filter, err := channelFilterForRequest(c, publicModel)
+	require.NoError(t, err)
+	require.NotNil(t, filter)
+	assert.True(t, filter(unconstrained))
+	assert.False(t, filter(exact))
+}
+
+func TestUnparseableVideoFeaturesRemainBlockedForStrictModels(t *testing.T) {
+	truncate(t)
+	publicModel := "strict-unparseable-video-public"
+	channel := channelWithVideoModelMapping(t, 92, constant.ChannelTypeYobox, publicModel, "strict-unparseable-video-upstream")
+	_, err := UpsertVideoRoutingPolicy(publicModel, true, 0, 1)
+	require.NoError(t, err)
+	c := newChannelConstraintTestContext(t, "/v1/videos", `{
+		"model":"strict-unparseable-video-public",
+		"images":{"url":"https://example.com/reference.png"}
+	}`)
+
+	assert.False(t, ChannelSupportsRequestConstraints(c, channel, publicModel))
+
+	filter, err := channelFilterForRequest(c, publicModel)
+	require.NoError(t, err)
+	require.NotNil(t, filter)
+	assert.False(t, filter(channel))
 }

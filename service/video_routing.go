@@ -1,21 +1,19 @@
 package service
 
 import (
-	"fmt"
 	"mime"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 )
 
+// StrictVideoRoutingModelSDBak1 is retained for compatibility with existing
+// routing-policy records. Strictness is now configured only through an
+// explicit video_routing_policy, never inferred from this model name.
 const StrictVideoRoutingModelSDBak1 = "sd-bak-1"
-
-const seedance2Slow15sModel = "seedance-2-0-15s-slow"
-const seedance20FastModel = "seedance-2.0-fast"
-const axmgcSeedance720p933Model = "seedance-2-720p-933"
 
 type VideoRequestFeatures struct {
 	Images      int    `json:"images"`
@@ -57,202 +55,38 @@ type ChannelVideoRoutingEvaluation struct {
 	ConfigurationError string                        `json:"configuration_error,omitempty"`
 }
 
-type channelModelCapabilityKey struct {
-	ChannelType int
-	Model       string
-}
-
-var strictVideoRoutingModels = map[string]struct{}{
-	StrictVideoRoutingModelSDBak1: {},
-}
-
-var defaultVideoCapabilitiesByChannelType = map[int]dto.VideoModelCapability{
-	constant.ChannelTypeYobox:     capabilityWithLimits(nil, common.GetPointer(4), common.GetPointer(0), common.GetPointer(0), nil, nil),
-	constant.ChannelTypeYoboxCorp: {},
-	constant.ChannelTypeSeventhFrame: withDurationRange(
-		capabilityWithLimits(nil, common.GetPointer(9), common.GetPointer(0), common.GetPointer(3), nil, common.GetPointer(true)),
-		4,
-		15,
-	),
-	// AGGC accepts image, video, and audio arrays. Upstream-specific limits can
-	// be narrowed with a channel override once they are known.
-	constant.ChannelTypeAGGC: {},
-}
-
-var videoCapabilitiesByModel = map[string]dto.VideoModelCapability{
-	"ax2.0-9tu":           withContentRequestSemantics(capabilityWithLimits(nil, common.GetPointer(9), common.GetPointer(0), common.GetPointer(0), common.GetPointer(15), common.GetPointer(true))),
-	"sdquan-2":            withContentRequestSemantics(capabilityWithLimits(common.GetPointer(1), common.GetPointer(4), common.GetPointer(3), common.GetPointer(1), common.GetPointer(15), common.GetPointer(true))),
-	seedance2Slow15sModel: withDurationRange(capabilityWithLimits(nil, common.GetPointer(4), common.GetPointer(3), common.GetPointer(1), nil, nil), 5, 15),
-	seedance20FastModel:   withDurationRange(capabilityWithLimits(nil, common.GetPointer(4), common.GetPointer(3), common.GetPointer(1), nil, nil), 4, 15),
-	axmgcSeedance720p933Model: withContentRequestSemantics(
-		capabilityWithLimits(nil, common.GetPointer(9), common.GetPointer(3), common.GetPointer(3), nil, nil),
-	),
-}
-
-var videoCapabilitiesByChannelModel = map[channelModelCapabilityKey]dto.VideoModelCapability{
-	{ChannelType: constant.ChannelTypeYobox, Model: "happy-horse-1.1"}: capabilityWithLimits(nil, common.GetPointer(9), common.GetPointer(0), common.GetPointer(0), nil, nil),
-}
-
-func capabilityWithLimits(minImages, maxImages, maxVideos, maxAudios, fixedDuration *int, requireJSON *bool) dto.VideoModelCapability {
-	return dto.VideoModelCapability{
-		Images:        &dto.VideoMediaRange{Min: minImages, Max: maxImages},
-		Videos:        &dto.VideoMediaRange{Max: maxVideos},
-		Audios:        &dto.VideoMediaRange{Max: maxAudios},
-		FixedDuration: fixedDuration,
-		RequireJSON:   requireJSON,
-	}
-}
-
-func withContentRequestSemantics(capability dto.VideoModelCapability) dto.VideoModelCapability {
-	capability.ContentPrecedence = common.GetPointer(true)
-	capability.RequireText = common.GetPointer(true)
-	return capability
-}
-
-func withDurationRange(capability dto.VideoModelCapability, minDuration, maxDuration int) dto.VideoModelCapability {
-	capability.Duration = &dto.VideoMediaRange{
-		Min: common.GetPointer(minDuration),
-		Max: common.GetPointer(maxDuration),
-	}
-	return capability
-}
-
 func IsStrictVideoRoutingModel(modelName string) bool {
 	strict, _, _ := ResolveVideoRoutingStrict(modelName)
 	return strict
 }
 
-func GetBuiltInVideoModelCapability(modelName string) (dto.VideoModelCapability, bool) {
-	capability, ok := videoCapabilitiesByModel[strings.TrimSpace(modelName)]
-	if !ok {
-		return dto.VideoModelCapability{}, false
-	}
-	return mergeVideoCapability(dto.VideoModelCapability{}, capability), true
-}
-
+// ResolveEffectiveVideoCapability resolves only the exact selected channel and
+// mapped upstream model. Model limits must not leak to another channel using
+// the same adapter or to another model on the same channel.
 func ResolveEffectiveVideoCapability(channel *model.Channel, upstreamModel string) (*EffectiveVideoCapability, bool) {
-	if channel == nil {
+	if channel == nil || channel.Id <= 0 {
 		return nil, false
 	}
 	upstreamModel = strings.TrimSpace(upstreamModel)
-	var effective dto.VideoModelCapability
-	sources := make([]string, 0, 4)
-	found := false
-
-	if capability, ok := defaultVideoCapabilitiesByChannelType[channel.Type]; ok {
-		effective = mergeVideoCapability(effective, capability)
-		sources = append(sources, "channel_type")
-		found = true
-	}
-	if cached, ok := getCachedVideoRoutingCapabilityRule(model.VideoRoutingScopeChannelType, channel.Type, 0, ""); ok {
-		effective = mergeVideoCapability(effective, cached.Capability)
-		sources = append(sources, fmt.Sprintf("database:channel_type#%d", cached.Rule.Id))
-		found = true
-	}
-	if capability, ok := videoCapabilitiesByModel[upstreamModel]; ok {
-		effective = mergeVideoCapability(effective, capability)
-		sources = append(sources, "model")
-		found = true
-	}
-	if cached, ok := getCachedVideoRoutingCapabilityRule(model.VideoRoutingScopeUpstreamModel, 0, 0, upstreamModel); ok {
-		effective = mergeVideoCapability(effective, cached.Capability)
-		sources = append(sources, fmt.Sprintf("database:upstream_model#%d", cached.Rule.Id))
-		found = true
-	}
-	if capability, ok := videoCapabilitiesByChannelModel[channelModelCapabilityKey{ChannelType: channel.Type, Model: upstreamModel}]; ok {
-		effective = mergeVideoCapability(effective, capability)
-		sources = append(sources, "channel_model")
-		found = true
-	}
-	if cached, ok := getCachedVideoRoutingCapabilityRule(model.VideoRoutingScopeChannelTypeModel, channel.Type, 0, upstreamModel); ok {
-		effective = mergeVideoCapability(effective, cached.Capability)
-		sources = append(sources, fmt.Sprintf("database:channel_type_model#%d", cached.Rule.Id))
-		found = true
-	}
-
-	overrides := channel.GetOtherSettings().VideoRouting
-	if overrides != nil {
-		if capability, ok := overrides.Models["*"]; ok {
-			effective = mergeVideoCapability(effective, capability)
-			sources = append(sources, "channel_override:*")
-			found = true
-		}
-		if capability, ok := overrides.Models[upstreamModel]; ok {
-			effective = mergeVideoCapability(effective, capability)
-			sources = append(sources, "channel_override:"+upstreamModel)
-			found = true
-		}
-	}
-	if cached, ok := getCachedVideoRoutingCapabilityRule(model.VideoRoutingScopeChannel, 0, channel.Id, ""); ok {
-		effective = mergeVideoCapability(effective, cached.Capability)
-		sources = append(sources, fmt.Sprintf("database:channel#%d", cached.Rule.Id))
-		found = true
-	}
-	if cached, ok := getCachedVideoRoutingCapabilityRule(model.VideoRoutingScopeChannelModel, 0, channel.Id, upstreamModel); ok {
-		effective = mergeVideoCapability(effective, cached.Capability)
-		sources = append(sources, fmt.Sprintf("database:channel_model#%d", cached.Rule.Id))
-		found = true
-	}
-
-	if !found {
+	if upstreamModel == "" {
 		return nil, false
 	}
-	return &EffectiveVideoCapability{Capability: effective, Sources: sources}, true
-}
-
-func mergeVideoCapability(base, override dto.VideoModelCapability) dto.VideoModelCapability {
-	base.Images = mergeVideoMediaRange(base.Images, override.Images)
-	base.Videos = mergeVideoMediaRange(base.Videos, override.Videos)
-	base.Audios = mergeVideoMediaRange(base.Audios, override.Audios)
-	if override.Duration != nil {
-		base.Duration = mergeVideoMediaRange(nil, override.Duration)
-		base.FixedDuration = nil
+	cached, ok := getCachedVideoRoutingCapabilityRule(model.VideoRoutingScopeChannelModel, 0, channel.Id, upstreamModel)
+	if !ok {
+		return nil, false
 	}
-	if override.FixedDuration != nil {
-		base.FixedDuration = common.GetPointer(*override.FixedDuration)
-		base.Duration = nil
-	}
-	if override.RequireJSON != nil {
-		base.RequireJSON = common.GetPointer(*override.RequireJSON)
-	}
-	if override.RequireText != nil {
-		base.RequireText = common.GetPointer(*override.RequireText)
-	}
-	if override.ContentPrecedence != nil {
-		base.ContentPrecedence = common.GetPointer(*override.ContentPrecedence)
-	}
-	return base
-}
-
-func mergeVideoMediaRange(base, override *dto.VideoMediaRange) *dto.VideoMediaRange {
-	if base == nil && override == nil {
-		return nil
-	}
-	merged := &dto.VideoMediaRange{}
-	if base != nil {
-		if base.Min != nil {
-			merged.Min = common.GetPointer(*base.Min)
-		}
-		if base.Max != nil {
-			merged.Max = common.GetPointer(*base.Max)
-		}
-	}
-	if override != nil {
-		if override.Min != nil {
-			merged.Min = common.GetPointer(*override.Min)
-		}
-		if override.Max != nil {
-			merged.Max = common.GetPointer(*override.Max)
-		}
-	}
-	return merged
+	return &EffectiveVideoCapability{
+		Capability: cached.Capability,
+		Sources:    []string{"database:channel_model#" + strconv.Itoa(cached.Rule.Id)},
+	}, true
 }
 
 func MatchVideoCapability(features VideoRequestFeatures, capability dto.VideoModelCapability) []VideoConstraintViolation {
-	violations := make([]VideoConstraintViolation, 0, 4)
+	violations := make([]VideoConstraintViolation, 0, 5)
 	violations = append(violations, matchVideoMediaRange("images", features.Images, capability.Images)...)
 	violations = append(violations, matchVideoMediaRange("videos", features.Videos, capability.Videos)...)
 	violations = append(violations, matchVideoMediaRange("audios", features.Audios, capability.Audios)...)
+	violations = append(violations, matchVideoMediaRange("video_audio_total", features.Videos+features.Audios, capability.VideoAudioTotal)...)
 	if features.Duration != nil {
 		if capability.FixedDuration != nil && *features.Duration != *capability.FixedDuration {
 			violations = append(violations, VideoConstraintViolation{

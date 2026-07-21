@@ -119,6 +119,14 @@ function violationText(
     images_above_max: t('Supports at most {{expected}} images', values),
     videos_above_max: t('Supports at most {{expected}} videos', values),
     audios_above_max: t('Supports at most {{expected}} audios', values),
+    video_audio_total_below_min: t(
+      'Requires at least {{expected}} videos and audios in total',
+      values
+    ),
+    video_audio_total_above_max: t(
+      'Supports at most {{expected}} videos and audios in total',
+      values
+    ),
     duration_mismatch: t('Requires a duration of {{expected}} seconds', values),
     duration_below_min: t(
       'Requires a duration of at least {{expected}} seconds',
@@ -207,7 +215,7 @@ function CandidateTable({
   }
   return (
     <div className='overflow-x-auto rounded-md border'>
-      <Table className='min-w-[1492px] table-fixed'>
+      <Table className='min-w-[1620px] table-fixed'>
         <TableHeader>
           <TableRow>
             <TableHead className='w-[520px]'>{t('Channel')}</TableHead>
@@ -220,6 +228,9 @@ function CandidateTable({
             </TableHead>
             <TableHead className='w-[72px] text-center'>
               {t('Audios')}
+            </TableHead>
+            <TableHead className='w-[128px] text-center leading-tight whitespace-normal'>
+              {t('Video + audio total')}
             </TableHead>
             <TableHead className='w-[84px] text-center'>
               {t('Duration')}
@@ -240,7 +251,7 @@ function CandidateTable({
           {candidates.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={10}
+                colSpan={11}
                 className='text-muted-foreground h-28 text-center'
               >
                 {t('No routing candidates found')}
@@ -285,6 +296,9 @@ function CandidateTable({
                 </TableCell>
                 <TableCell className='text-center'>
                   {formatRange(candidate.capability?.audios)}
+                </TableCell>
+                <TableCell className='text-center'>
+                  {formatRange(candidate.capability?.video_audio_total)}
                 </TableCell>
                 <TableCell className='text-center'>
                   {formatDurationCapability(candidate.capability)}
@@ -439,6 +453,10 @@ function CandidateDetails({
                 <dd>{formatRange(candidate.capability?.videos)}</dd>
                 <dt className='text-muted-foreground'>{t('Audios')}</dt>
                 <dd>{formatRange(candidate.capability?.audios)}</dd>
+                <dt className='text-muted-foreground'>
+                  {t('Video + audio total')}
+                </dt>
+                <dd>{formatRange(candidate.capability?.video_audio_total)}</dd>
                 <dt className='text-muted-foreground'>{t('Duration')}</dt>
                 <dd>{formatDurationCapability(candidate.capability)}</dd>
                 <dt className='text-muted-foreground'>{t('Content Type')}</dt>
