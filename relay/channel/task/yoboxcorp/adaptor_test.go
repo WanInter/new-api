@@ -18,7 +18,7 @@ import (
 )
 
 func TestBuildRequestUsesDreaminaTopLevelVideoContract(t *testing.T) {
-	createdAssets := make([]assetRequest, 0, 2)
+	createdAssets := make([]assetRequest, 0, 3)
 	pollCounts := map[string]int{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "Bearer upstream-key", r.Header.Get("Authorization"))
@@ -33,8 +33,11 @@ func TestBuildRequestUsesDreaminaTopLevelVideoContract(t *testing.T) {
 			require.NoError(t, common.Unmarshal(requestBody, &request))
 			createdAssets = append(createdAssets, request)
 			assetID := "asset-image"
-			if request.AssetType == "Video" {
+			switch request.AssetType {
+			case "Video":
 				assetID = "asset-video"
+			case "Audio":
+				assetID = "asset-audio"
 			}
 			_, _ = w.Write([]byte(`{"success":true,"data":{"Id":"` + assetID + `","base_resp":{"status_code":0,"status_msg":"success"}}}`))
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, assetPath+"/"):
@@ -100,7 +103,7 @@ func TestBuildRequestUsesDreaminaTopLevelVideoContract(t *testing.T) {
 		map[string]any{"type": "text", "text": "create a cinematic portrait"},
 		map[string]any{"type": "image_url", "role": "reference_image", "image_url": map[string]any{"url": "asset://asset-image"}},
 		map[string]any{"type": "video_url", "role": "reference_video", "video_url": map[string]any{"url": "asset://asset-video"}},
-		map[string]any{"type": "audio_url", "role": "reference_audio", "audio_url": map[string]any{"url": "https://example.com/music.mp3"}},
+		map[string]any{"type": "audio_url", "role": "reference_audio", "audio_url": map[string]any{"url": "asset://asset-audio"}},
 	}, payload["content"])
 	assert.Equal(t, []assetRequest{
 		{
@@ -115,9 +118,16 @@ func TestBuildRequestUsesDreaminaTopLevelVideoContract(t *testing.T) {
 			Name:      "reference-video-001",
 			AssetType: "Video",
 		},
+		{
+			Model:     "dreamina-seedance-2-0-fast-hc",
+			URL:       "https://example.com/music.mp3",
+			Name:      "reference-audio-001",
+			AssetType: "Audio",
+		},
 	}, createdAssets)
 	assert.Equal(t, 2, pollCounts["asset-image"])
 	assert.Equal(t, 1, pollCounts["asset-video"])
+	assert.Equal(t, 1, pollCounts["asset-audio"])
 }
 
 func TestBuildRequestBodyReusesExistingAssetReferences(t *testing.T) {
@@ -131,7 +141,8 @@ func TestBuildRequestBodyReusesExistingAssetReferences(t *testing.T) {
 		"model":"dreamina-seedance-2-0-hc",
 		"prompt":"animate",
 		"images":["asset://asset-existing-image"],
-		"videos":["asset://asset-existing-video"]
+		"videos":["asset://asset-existing-video"],
+		"audios":["asset://asset-existing-audio"]
 	}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 	t.Cleanup(func() { common.CleanupBodyStorage(c) })
@@ -158,6 +169,7 @@ func TestBuildRequestBodyReusesExistingAssetReferences(t *testing.T) {
 		map[string]any{"type": "text", "text": "animate"},
 		map[string]any{"type": "image_url", "role": "reference_image", "image_url": map[string]any{"url": "asset://asset-existing-image"}},
 		map[string]any{"type": "video_url", "role": "reference_video", "video_url": map[string]any{"url": "asset://asset-existing-video"}},
+		map[string]any{"type": "audio_url", "role": "reference_audio", "audio_url": map[string]any{"url": "asset://asset-existing-audio"}},
 	}, payload["content"])
 }
 

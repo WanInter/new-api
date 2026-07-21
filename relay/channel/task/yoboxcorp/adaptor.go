@@ -355,7 +355,7 @@ func (a *TaskAdaptor) BuildPrivateData(_ *gin.Context, info *relaycommon.RelayIn
 
 func (a *TaskAdaptor) uploadReferences(ctx context.Context, modelName string, content []any) ([]any, error) {
 	assetIDs := make(map[string]string)
-	assetCounts := map[string]int{"Image": 0, "Video": 0}
+	assetCounts := map[string]int{"Image": 0, "Video": 0, "Audio": 0}
 
 	for _, rawItem := range content {
 		item, ok := rawItem.(map[string]any)
@@ -369,6 +369,8 @@ func (a *TaskAdaptor) uploadReferences(ctx context.Context, modelName string, co
 			assetType = "Image"
 		case "video_url":
 			assetType = "Video"
+		case "audio_url":
+			assetType = "Audio"
 		default:
 			continue
 		}
