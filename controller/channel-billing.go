@@ -536,7 +536,7 @@ func updateChannelBalance(channel *model.Channel) (float64, error) {
 			return updateChannelByteforBalance(channel)
 		}
 		return 0, errors.New("尚未实现")
-	case constant.ChannelTypeYobox:
+	case constant.ChannelTypeYobox, constant.ChannelTypeYoboxCorp:
 		return 0, errors.New("尚未实现")
 	case constant.ChannelTypeSeventhFrame:
 		return updateChannelSeventhFrameBalance(channel)

@@ -229,6 +229,11 @@ export const CHANNEL_OPTIONS = [
     color: 'blue',
     label: 'SeventhFrame',
   },
+  {
+    value: 66,
+    color: 'blue',
+    label: 'YoboxCorp',
+  },
 ];
 
 // Channel types that support upstream model list fetching in UI.

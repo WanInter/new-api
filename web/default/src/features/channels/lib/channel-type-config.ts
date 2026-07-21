@@ -225,7 +225,9 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
     name: CHANNEL_TYPES[65],
     icon: 'video',
     defaultBaseUrl: 'https://diqizhen.jytt4.cn/api/v1',
-    supportedModels: ['viraldance900--person-stripe--6c832bb1--voice-tone--a0c4ee78'],
+    supportedModels: [
+      'viraldance900--person-stripe--6c832bb1--voice-tone--a0c4ee78',
+    ],
     hints: {
       baseUrl:
         'Default: https://diqizhen.jytt4.cn/api/v1. Keep the /api/v1 suffix; the adaptor adds the files and video generation paths.',
@@ -234,6 +236,26 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
         'Expose viraldance900--person-stripe--6c832bb1--voice-tone--a0c4ee78, or map a public model name to it.',
       other:
         'Video task channel. Reference image, audio, and video URLs are securely downloaded and uploaded to /files before creating the task. Supports 4-15 second, 720p generation with up to 9 images and 3 audio assets.',
+    },
+  },
+  66: {
+    id: 66,
+    name: CHANNEL_TYPES[66],
+    icon: 'video',
+    defaultBaseUrl: 'https://corp.yoboxai.com',
+    supportedModels: [
+      'dreamina-seedance-2-0-hc',
+      'dreamina-seedance-2-0-fast-hc',
+      'dreamina-seedance-2-0-mini-hc',
+    ],
+    hints: {
+      baseUrl:
+        'Default host: https://corp.yoboxai.com. The adaptor adds the video generation and task query paths automatically.',
+      key: 'Use the YoboxCorp API key. Requests are authenticated with the Bearer Authorization header.',
+      models:
+        'Expose dreamina-seedance-2-0-hc, dreamina-seedance-2-0-fast-hc, and dreamina-seedance-2-0-mini-hc.',
+      other:
+        'Video task channel. Submit uses POST /v1/video/generate and polling uses GET /v1/video/tasks/{task_id}.',
     },
   },
 }

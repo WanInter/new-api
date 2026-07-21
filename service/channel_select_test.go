@@ -150,6 +150,7 @@ func TestEmptyImageReferenceCollectionsDoNotConstrainChannels(t *testing.T) {
 func TestChannelSupportsRequestConstraintsForYoboxReferenceImages(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	yobox := &model.Channel{Type: constant.ChannelTypeYobox}
+	yoboxCorp := &model.Channel{Type: constant.ChannelTypeYoboxCorp}
 	aggc := &model.Channel{Type: constant.ChannelTypeAGGC}
 	testCases := []struct {
 		name          string
@@ -216,6 +217,7 @@ func TestChannelSupportsRequestConstraintsForYoboxReferenceImages(t *testing.T) 
 			c := newChannelConstraintTestContext(t, testCase.path, testCase.body)
 
 			assert.Equal(t, testCase.yoboxExpected, ChannelSupportsRequestConstraints(c, yobox, testCase.model))
+			assert.True(t, ChannelSupportsRequestConstraints(c, yoboxCorp, testCase.model))
 			assert.True(t, ChannelSupportsRequestConstraints(c, aggc, testCase.model))
 		})
 	}

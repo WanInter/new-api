@@ -83,6 +83,8 @@ func ChannelType2APIType(channelType int) (int, bool) {
 		apiType = constant.APITypeOpenAI
 	case constant.ChannelTypeYobox:
 		apiType = constant.APITypeOpenAI
+	case constant.ChannelTypeYoboxCorp:
+		apiType = constant.APITypeOpenAI
 	case constant.ChannelTypeTencentVOD:
 		apiType = constant.APITypeOpenAI
 	case constant.ChannelTypeAxmgc:
