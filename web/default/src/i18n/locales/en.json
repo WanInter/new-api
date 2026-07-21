@@ -2553,6 +2553,8 @@
     "Routing Group": "Routing Group",
     "No users found": "No users found",
     "Search username or ID": "Search username or ID",
+    "Search user group": "Search user group",
+    "No user groups found": "No user groups found",
     "The channel group actually selected for the request; leave blank to match any group.": "The channel group actually selected for the request; leave blank to match any group.",
     "Ratio must be a non-negative number": "Ratio must be a non-negative number",
     "Rule updated": "Rule updated",

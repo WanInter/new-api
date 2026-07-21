@@ -2553,6 +2553,8 @@
     "Routing Group": "Группа маршрутизации",
     "No users found": "Пользователи не найдены",
     "Search username or ID": "Поиск по имени пользователя или ID",
+    "Search user group": "Поиск группы пользователей",
+    "No user groups found": "Группы пользователей не найдены",
     "The channel group actually selected for the request; leave blank to match any group.": "Группа каналов, фактически выбранная для запроса; оставьте пустым для соответствия любой группе.",
     "Ratio must be a non-negative number": "Коэффициент должен быть неотрицательным числом",
     "Rule updated": "Правило обновлено",

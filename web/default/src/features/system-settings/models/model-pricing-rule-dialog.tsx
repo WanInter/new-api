@@ -37,7 +37,7 @@ import {
 } from '@/components/ui/tooltip'
 import { Dialog } from '@/components/dialog'
 import { getEnabledModels } from '@/features/channels/api'
-import { searchUsers } from '@/features/users/api'
+import { getGroups, searchUsers } from '@/features/users/api'
 import type {
   ModelPricingRule,
   ModelPricingRulePayload,
@@ -165,6 +165,15 @@ export function ModelPricingRuleDialog(props: ModelPricingRuleDialogProps) {
     enabled: props.open,
     staleTime: 30_000,
   })
+  const userGroupOptionsQuery = useQuery({
+    queryKey: ['model-pricing-rule-user-group-options'],
+    queryFn: async () => {
+      const result = await getGroups()
+      return result.success ? (result.data ?? []) : []
+    },
+    enabled: props.open && subjectType === 'user_group',
+    staleTime: 30_000,
+  })
 
   useEffect(() => {
     const options = (userOptionsQuery.data ?? []).map((user) => ({
@@ -191,6 +200,26 @@ export function ModelPricingRuleDialog(props: ModelPricingRuleDialogProps) {
     }
     return options
   }, [model, modelOptionsQuery.data])
+
+  const userGroupOptions = useMemo(() => {
+    const options = Array.from(
+      new Set(
+        (userGroupOptionsQuery.data ?? [])
+          .map((name) => name.trim())
+          .filter(Boolean)
+      )
+    )
+      .sort((left, right) => left.localeCompare(right))
+      .map((name) => ({ value: name, label: name }))
+    if (
+      subjectType === 'user_group' &&
+      subjectValue &&
+      !options.some((option) => option.value === subjectValue)
+    ) {
+      return [{ value: subjectValue, label: subjectValue }, ...options]
+    }
+    return options
+  }, [subjectType, subjectValue, userGroupOptionsQuery.data])
 
   const onSubmit = async (values: ModelPricingRuleFormValues) => {
     const saved = await props.onSave({
@@ -267,10 +296,24 @@ export function ModelPricingRuleDialog(props: ModelPricingRuleDialogProps) {
               className='w-full'
             />
           ) : (
-            <Input
+            <Combobox
               id='model-pricing-rule-subject-value'
               aria-invalid={!!form.formState.errors.subject_value}
-              {...form.register('subject_value')}
+              options={userGroupOptions}
+              value={subjectValue}
+              onValueChange={(value) =>
+                form.setValue('subject_value', value ?? '', {
+                  shouldDirty: true,
+                  shouldValidate: true,
+                })
+              }
+              searchPlaceholder={t('Search user group')}
+              emptyText={
+                userGroupOptionsQuery.isLoading
+                  ? t('Loading...')
+                  : t('No user groups found')
+              }
+              className='w-full'
             />
           )}
           {form.formState.errors.subject_value?.message ? (

@@ -2553,6 +2553,8 @@
     "Routing Group": "Groupe de routage",
     "No users found": "Aucun utilisateur trouvé",
     "Search username or ID": "Rechercher par nom d'utilisateur ou ID",
+    "Search user group": "Rechercher un groupe d'utilisateurs",
+    "No user groups found": "Aucun groupe d'utilisateurs trouvé",
     "The channel group actually selected for the request; leave blank to match any group.": "Groupe de canaux effectivement sélectionné pour la requête ; laissez vide pour correspondre à tous les groupes.",
     "Ratio must be a non-negative number": "Le ratio doit être un nombre positif ou nul",
     "Rule updated": "Règle mise à jour",

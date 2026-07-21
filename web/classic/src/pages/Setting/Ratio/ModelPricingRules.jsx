@@ -70,11 +70,14 @@ export default function ModelPricingRules() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [draft, setDraft] = useState(EMPTY_RULE);
   const [userOptions, setUserOptions] = useState([]);
+  const [userGroupOptions, setUserGroupOptions] = useState([]);
   const [modelOptions, setModelOptions] = useState([]);
   const [userOptionsLoading, setUserOptionsLoading] = useState(false);
+  const [userGroupOptionsLoading, setUserGroupOptionsLoading] = useState(false);
   const [modelOptionsLoading, setModelOptionsLoading] = useState(false);
   const userSearchTimer = useRef(null);
   const userRequestId = useRef(0);
+  const userGroupRequestId = useRef(0);
   const modelRequestId = useRef(0);
 
   const loadRules = useCallback(async () => {
@@ -101,6 +104,7 @@ export default function ModelPricingRules() {
     () => () => {
       clearTimeout(userSearchTimer.current);
       userRequestId.current += 1;
+      userGroupRequestId.current += 1;
       modelRequestId.current += 1;
     },
     [],
@@ -182,6 +186,48 @@ export default function ModelPricingRules() {
     [t],
   );
 
+  const loadUserGroupOptions = useCallback(
+    async (selectedValue = '') => {
+      const requestId = ++userGroupRequestId.current;
+      setUserGroupOptionsLoading(true);
+      try {
+        const res = await API.get('/api/group/');
+        if (!res.data.success) {
+          showError(res.data.message);
+          return;
+        }
+        const options = Array.from(
+          new Set(
+            (res.data.data || [])
+              .map((group) => String(group || '').trim())
+              .filter(Boolean),
+          ),
+        )
+          .sort((left, right) => left.localeCompare(right))
+          .map((group) => ({ value: group, label: group }));
+        const selectedGroup = String(selectedValue || '').trim();
+        if (
+          selectedGroup &&
+          !options.some((option) => option.value === selectedGroup)
+        ) {
+          options.unshift({ value: selectedGroup, label: selectedGroup });
+        }
+        if (requestId === userGroupRequestId.current) {
+          setUserGroupOptions(options);
+        }
+      } catch (error) {
+        if (requestId === userGroupRequestId.current) {
+          showError(t('加载用户组失败'));
+        }
+      } finally {
+        if (requestId === userGroupRequestId.current) {
+          setUserGroupOptionsLoading(false);
+        }
+      }
+    },
+    [t],
+  );
+
   const searchUsers = (keyword) => {
     clearTimeout(userSearchTimer.current);
     userSearchTimer.current = setTimeout(
@@ -193,9 +239,11 @@ export default function ModelPricingRules() {
   const openCreate = () => {
     setDraft(EMPTY_RULE);
     setUserOptions([]);
+    setUserGroupOptions([]);
     setModelOptions([]);
     setModalVisible(true);
     loadUserOptions();
+    loadUserGroupOptions();
     loadModelOptions();
   };
 
@@ -210,11 +258,15 @@ export default function ModelPricingRules() {
       enabled: rule.enabled,
     });
     setUserOptions([]);
+    setUserGroupOptions([]);
     setModelOptions([]);
     setModalVisible(true);
     loadUserOptions(
       rule.subject_type === 'user' ? rule.subject_value : '',
       rule.subject_type === 'user' ? rule.subject_value : '',
+    );
+    loadUserGroupOptions(
+      rule.subject_type === 'user_group' ? rule.subject_value : '',
     );
     loadModelOptions(rule.model);
   };
@@ -403,9 +455,16 @@ export default function ModelPricingRules() {
               style={{ width: '100%' }}
             />
           ) : (
-            <Form.Input
+            <Form.Select
+              key={userGroupOptions.map((option) => option.value).join('|')}
               field='subject_value'
               label={t('用户组')}
+              placeholder={t('搜索用户组')}
+              searchPlaceholder={t('搜索用户组')}
+              filter
+              optionList={userGroupOptions}
+              loading={userGroupOptionsLoading}
+              emptyContent={t('未找到用户组')}
               value={draft.subject_value}
               onChange={(value) =>
                 setDraft((current) => ({ ...current, subject_value: value }))
