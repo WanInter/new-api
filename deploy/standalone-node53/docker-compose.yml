@@ -1,0 +1,110 @@
+name: new-api-node53
+
+x-logging: &default-logging
+  driver: local
+  options:
+    max-size: 20m
+    max-file: "3"
+    compress: "true"
+
+services:
+  new-api:
+    image: ghcr.io/waninter/new-api:waninter
+    container_name: new-api-node53
+    restart: unless-stopped
+    pull_policy: always
+    command: --log-dir /app/logs
+    volumes:
+      - ./data/new-api:/data
+      - ./logs:/app/logs
+    environment:
+      SQL_DSN: postgresql://newapi:${POSTGRES_PASSWORD}@postgres:5432/newapi?sslmode=disable
+      REDIS_CONN_STRING: redis://:${REDIS_PASSWORD}@redis:6379/0
+      SESSION_SECRET: ${SESSION_SECRET}
+      TZ: Asia/Shanghai
+      ERROR_LOG_ENABLED: "true"
+      BATCH_UPDATE_ENABLED: "true"
+      NODE_NAME: node53-new-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:3000/api/status | grep -q '\"success\":true'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    mem_limit: 1g
+    mem_reservation: 256m
+    logging: *default-logging
+    networks:
+      - new-api
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: new-api-node53-caddy
+    restart: unless-stopped
+    depends_on:
+      new-api:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy:/data
+      - ./config/caddy:/config
+    mem_limit: 128m
+    mem_reservation: 32m
+    logging: *default-logging
+    networks:
+      - new-api
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: new-api-node53-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: newapi
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: newapi
+      TZ: Asia/Shanghai
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U newapi -d newapi"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 512m
+    mem_reservation: 128m
+    logging: *default-logging
+    networks:
+      - new-api
+
+  redis:
+    image: redis:7-alpine
+    container_name: new-api-node53-redis
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 128m
+    mem_reservation: 32m
+    logging: *default-logging
+    networks:
+      - new-api
+
+networks:
+  new-api:
+    name: new-api-node53
