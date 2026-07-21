@@ -263,6 +263,8 @@ func SetApiRouter(router *gin.Engine) {
 			channelRoute.POST("/image_routing_rules/simulate", controller.SimulateImageRouting)
 			channelRoute.PUT("/image_routing_rules/policy", middleware.RootAuth(), controller.UpdateImageRoutingPolicy)
 			channelRoute.PUT("/image_routing_rules/config", middleware.RootAuth(), controller.ReplaceImageRoutingConfig)
+			channelRoute.GET("/:id/relay_capture", middleware.RootAuth(), controller.GetChannelRelayCapturePolicy)
+			channelRoute.PUT("/:id/relay_capture", middleware.RootAuth(), middleware.SecureVerificationRequired(), controller.UpdateChannelRelayCapturePolicy)
 			channelRoute.GET("/:id", controller.GetChannel)
 			channelRoute.POST("/:id/key", middleware.RootAuth(), middleware.CriticalRateLimit(), middleware.DisableCache(), middleware.SecureVerificationRequired(), controller.GetChannelKey)
 			channelRoute.GET("/test", controller.TestAllChannels)
@@ -294,6 +296,14 @@ func SetApiRouter(router *gin.Engine) {
 			channelRoute.POST("/upstream_updates/apply_all", controller.ApplyAllChannelUpstreamModelUpdates)
 			channelRoute.POST("/upstream_updates/detect", controller.DetectChannelUpstreamModelUpdates)
 			channelRoute.POST("/upstream_updates/detect_all", controller.DetectAllChannelUpstreamModelUpdates)
+		}
+		relayCaptureRoute := apiRouter.Group("/relay-captures")
+		relayCaptureRoute.Use(middleware.RootAuth())
+		{
+			relayCaptureRoute.GET("", controller.ListRelayCaptures)
+			relayCaptureRoute.GET("/:id", controller.GetRelayCaptureMetadata)
+			relayCaptureRoute.GET("/:id/:part", middleware.SecureVerificationRequired(), controller.GetRelayCapturePart)
+			relayCaptureRoute.DELETE("", middleware.SecureVerificationRequired(), controller.DeleteOldRelayCaptures)
 		}
 		tokenRoute := apiRouter.Group("/token")
 		tokenRoute.Use(middleware.UserAuth())

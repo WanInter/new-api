@@ -49,6 +49,83 @@ type ChannelOtherSettings struct {
 	UpstreamModelUpdateIgnoredModels      []string              `json:"upstream_model_update_ignored_models,omitempty"`       // 手动忽略的模型
 	AdvancedCustom                        *AdvancedCustomConfig `json:"advanced_custom,omitempty"`
 	VideoRouting                          *VideoRoutingConfig   `json:"video_routing,omitempty"`
+	RelayCapture                          *RelayCapturePolicy   `json:"relay_capture,omitempty"`
+}
+
+const (
+	RelayCaptureProtocolChatCompletions = "openai.chat_completions"
+	RelayCaptureProtocolClaudeMessages  = "anthropic.messages"
+	RelayCaptureProtocolResponses       = "openai.responses"
+)
+
+// RelayCapturePolicy controls client-facing text payload capture for one
+// channel. Payloads are written to the configured storage backend, never to
+// the application database.
+type RelayCapturePolicy struct {
+	Enabled   bool     `json:"enabled,omitempty"`
+	Protocols []string `json:"protocols,omitempty"`
+}
+
+func (p *RelayCapturePolicy) Validate() error {
+	if p == nil {
+		return nil
+	}
+	if p.Enabled && len(p.Protocols) == 0 {
+		return fmt.Errorf("relay_capture.protocols is required when enabled")
+	}
+	seen := make(map[string]struct{}, len(p.Protocols))
+	for i, protocol := range p.Protocols {
+		protocol = strings.TrimSpace(protocol)
+		if !isRelayCaptureProtocol(protocol) {
+			return fmt.Errorf("relay_capture.protocols[%d] is unsupported: %s", i, protocol)
+		}
+		if _, ok := seen[protocol]; ok {
+			return fmt.Errorf("relay_capture.protocols[%d] is duplicated: %s", i, protocol)
+		}
+		seen[protocol] = struct{}{}
+		p.Protocols[i] = protocol
+	}
+	return nil
+}
+
+func (p *RelayCapturePolicy) Matches(method string, path string) bool {
+	if p == nil || !p.Enabled || method != "POST" {
+		return false
+	}
+	protocol := RelayCaptureProtocolForPath(path)
+	if protocol == "" {
+		return false
+	}
+	for _, configured := range p.Protocols {
+		if configured == protocol {
+			return true
+		}
+	}
+	return false
+}
+
+func RelayCaptureProtocolForPath(path string) string {
+	switch path {
+	case "/v1/chat/completions":
+		return RelayCaptureProtocolChatCompletions
+	case "/v1/messages":
+		return RelayCaptureProtocolClaudeMessages
+	case "/v1/responses":
+		return RelayCaptureProtocolResponses
+	default:
+		return ""
+	}
+}
+
+func isRelayCaptureProtocol(protocol string) bool {
+	switch protocol {
+	case RelayCaptureProtocolChatCompletions,
+		RelayCaptureProtocolClaudeMessages,
+		RelayCaptureProtocolResponses:
+		return true
+	default:
+		return false
+	}
 }
 
 const DefaultSeventhFrameChannel = "channel14"

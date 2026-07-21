@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
+	relaycapture "github.com/QuantumNous/new-api/relay/capture"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -75,6 +76,25 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError *types.NewAPIError
 		ws          *websocket.Conn
 	)
+	captureWriter := relaycapture.NewResponseWriter(c.Writer)
+	c.Writer = captureWriter
+	var (
+		finalCapture        *relaycapture.Session
+		finalCaptureInfo    *relaycommon.RelayInfo
+		finalCaptureOutcome string
+	)
+	// This defer is registered before the relay error writer below so a final
+	// gateway error response is captured after it has been written.
+	defer func() {
+		if finalCapture == nil || finalCaptureInfo == nil {
+			return
+		}
+		relaycapture.SaveAsync(finalCapture.Finalize(
+			c.Writer.Status(),
+			finalCaptureOutcome,
+			finalCaptureInfo.UpstreamModelName,
+		))
+	}()
 
 	if relayFormat == types.RelayFormatOpenAIRealtime {
 		var err error
@@ -188,6 +208,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 	retryLimit := service.ImageRoutingRetryLimit(c, relayInfo.OriginModelName, common.RetryTimes)
+	var lastAttemptCapture *relaycapture.Session
 
 	for ; retryParam.GetRetry() <= retryLimit; retryParam.IncreaseRetry() {
 		relayInfo.RetryIndex = retryParam.GetRetry()
@@ -210,6 +231,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
+		attemptCapture := newRelayCaptureSession(c, channel, relayInfo, bodyStorage)
+		captureWriter.SetSession(attemptCapture)
 
 		switch relayFormat {
 		case types.RelayFormatOpenAIRealtime:
@@ -224,8 +247,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		if newAPIError == nil {
 			relayInfo.LastError = nil
+			finalCapture = attemptCapture
+			finalCaptureInfo = relayInfo
+			finalCaptureOutcome = "success"
 			return
 		}
+		captureWriter.SetSession(nil)
+		lastAttemptCapture = attemptCapture
 
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
@@ -243,6 +271,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		logger.LogInfo(c, retryLogStr)
 	}
 	if newAPIError != nil {
+		if lastAttemptCapture != nil {
+			finalCapture = lastAttemptCapture
+			finalCaptureInfo = relayInfo
+			finalCaptureOutcome = "error"
+			captureWriter.SetSession(lastAttemptCapture)
+		}
 		gopool.Go(func() {
 			perfmetrics.RecordRelaySample(relayInfo, false, 0)
 		})
@@ -260,6 +294,42 @@ func addUsedChannel(c *gin.Context, channelId int) {
 	useChannel := c.GetStringSlice("use_channel")
 	useChannel = append(useChannel, fmt.Sprintf("%d", channelId))
 	c.Set("use_channel", useChannel)
+}
+
+func newRelayCaptureSession(c *gin.Context, channel *model.Channel, info *relaycommon.RelayInfo, storage common.BodyStorage) *relaycapture.Session {
+	if c == nil || c.Request == nil || channel == nil || info == nil || !relaycapture.IsConfigured() {
+		return nil
+	}
+	settings, ok := common.GetContextKeyType[dto.ChannelOtherSettings](c, constant.ContextKeyChannelOtherSetting)
+	if !ok {
+		settings = channel.GetOtherSettings()
+	}
+	if !settings.RelayCapture.Matches(c.Request.Method, c.Request.URL.Path) {
+		return nil
+	}
+
+	requestSize := storage.Size()
+	var requestBody []byte
+	if requestSize <= relaycapture.MaxTextPayloadBytes() {
+		body, err := storage.Bytes()
+		if err != nil {
+			logger.LogError(c, "read relay capture request body failed: "+err.Error())
+			return nil
+		}
+		requestBody = body
+	}
+	return relaycapture.NewSession(relaycapture.Metadata{
+		ChannelID:   channel.Id,
+		ChannelName: channel.Name,
+		Protocol:    dto.RelayCaptureProtocolForPath(c.Request.URL.Path),
+		RequestID:   c.GetString(common.RequestIdKey),
+		Method:      c.Request.Method,
+		Path:        c.Request.URL.Path,
+		UserID:      info.UserId,
+		TokenID:     info.TokenId,
+		Model:       info.OriginModelName,
+		RetryIndex:  info.RetryIndex,
+	}, c.Request.Header, c.Request.Header.Get("Content-Type"), requestBody, requestSize, info.IsStream)
 }
 
 func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {

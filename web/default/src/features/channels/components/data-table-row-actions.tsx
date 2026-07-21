@@ -34,8 +34,10 @@ import {
   Trash2,
   RefreshCw,
   Loader2,
+  FileText,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { useAuthStore } from '@/stores/auth-store'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -51,6 +53,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { USER_ROLE } from '@/features/users/constants'
 import { MODEL_FETCHABLE_TYPES } from '../constants'
 import {
   channelsQueryKeys,
@@ -76,6 +79,8 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
   const [isTogglingStatus, setIsTogglingStatus] = useState(false)
+  const isRoot =
+    useAuthStore((state) => state.auth.user?.role) === USER_ROLE.ROOT
 
   const isEnabled = isChannelEnabled(channel)
   const isMultiKey = isMultiKeyChannel(channel)
@@ -94,13 +99,9 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     e.stopPropagation()
     setIsTesting(true)
     try {
-      await handleTestChannel(
-        channel.id,
-        { channelName: channel.name },
-        () => {
-          queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
-        }
-      )
+      await handleTestChannel(channel.id, { channelName: channel.name }, () => {
+        queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+      })
     } finally {
       setIsTesting(false)
     }
@@ -129,6 +130,11 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const handleManageKeys = () => {
     setCurrentRow(channel)
     setOpen('multi-key-manage')
+  }
+
+  const handleRelayCapture = () => {
+    setCurrentRow(channel)
+    setOpen('relay-capture')
   }
 
   const handleToggleStatus = async (
@@ -294,6 +300,15 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
               {t('Manage Keys')}
               <DropdownMenuShortcut>
                 <Key size={16} />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          )}
+
+          {isRoot && (
+            <DropdownMenuItem onClick={handleRelayCapture}>
+              {t('Relay Capture')}
+              <DropdownMenuShortcut>
+                <FileText size={16} />
               </DropdownMenuShortcut>
             </DropdownMenuItem>
           )}

@@ -53,6 +53,8 @@ var auditContentTemplates = map[string]string{
 	"channel.routing_channel_settings_update": "Updated routing channel settings for channel ${channel_id} (priority: ${priority}, weight: ${weight})",
 	"channel.image_routing_config_update":     "Updated image routing configuration for ${model} (${size_count} sizes, ${rule_count} rules, revision ${revision})",
 	"channel.image_routing_policy_update":     "Updated image routing policy for ${model} (strict: ${strict}, default size: ${default_size}, revision ${revision})",
+	"channel.relay_capture_update":            "Updated relay capture policy for channel ${id} (enabled: ${enabled})",
+	"relay_capture.delete_before":             "Deleted relay captures before ${before} (${count} artifacts)",
 
 	"redemption.create": "Created ${count} redemption codes named ${name} (${quota} each)",
 }
