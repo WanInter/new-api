@@ -413,6 +413,8 @@ export default function ModelPricingRules() {
             />
           )}
           <Form.Select
+            // Semi Select retains its initial empty option state for controlled allowCreate fields.
+            key={modelOptions.map((option) => option.value).join('|')}
             field='model'
             label={t('模型')}
             placeholder={t('搜索模型...')}
