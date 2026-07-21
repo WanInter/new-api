@@ -111,6 +111,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	other["cache_ratio"] = cacheRatio
 	other["model_price"] = modelPrice
 	other["user_group_ratio"] = userGroupRatio
+	appendModelPricingRuleInfo(relayInfo, other)
 	other["frt"] = float64(relayInfo.FirstResponseTime.UnixMilli() - relayInfo.StartTime.UnixMilli())
 	if relayInfo.ReasoningEffort != "" {
 		other["reasoning_effort"] = relayInfo.ReasoningEffort
@@ -330,8 +331,21 @@ func GenerateMjOtherInfo(relayInfo *relaycommon.RelayInfo, priceData types.Price
 	if priceData.GroupRatioInfo.HasSpecialRatio {
 		other["user_group_ratio"] = priceData.GroupRatioInfo.GroupSpecialRatio
 	}
+	appendModelPricingRuleInfo(relayInfo, other)
 	appendRequestPath(nil, relayInfo, other)
 	return other
+}
+
+func appendModelPricingRuleInfo(relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {
+	if relayInfo == nil || other == nil {
+		return
+	}
+	ratioInfo := relayInfo.PriceData.GroupRatioInfo
+	if ratioInfo.PricingRuleId == 0 {
+		return
+	}
+	other["pricing_rule_id"] = ratioInfo.PricingRuleId
+	other["pricing_rule_source"] = ratioInfo.PricingRuleSource
 }
 
 // InjectTieredBillingInfo overlays tiered billing fields onto an existing

@@ -257,6 +257,7 @@ func migrateDB() error {
 
 	err := DB.AutoMigrate(
 		&Channel{},
+		&ModelPricingRule{},
 		&VideoRoutingPolicy{},
 		&VideoRoutingCapabilityRule{},
 		&ImageRoutingPolicy{},
@@ -311,6 +312,7 @@ func migrateDBFast() error {
 		name  string
 	}{
 		{&Channel{}, "Channel"},
+		{&ModelPricingRule{}, "ModelPricingRule"},
 		{&VideoRoutingPolicy{}, "VideoRoutingPolicy"},
 		{&VideoRoutingCapabilityRule{}, "VideoRoutingCapabilityRule"},
 		{&ImageRoutingPolicy{}, "ImageRoutingPolicy"},

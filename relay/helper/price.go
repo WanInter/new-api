@@ -35,11 +35,20 @@ func modelPriceNotConfiguredError(modelName string, userId int) error {
 // https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration
 const claudeCacheCreation1hMultiplier = 6 / 3.75
 
+func syncTieredBillingGroupRatio(relayInfo *relaycommon.RelayInfo, ratioInfo types.GroupRatioInfo) types.GroupRatioInfo {
+	if snapshot := relayInfo.TieredBillingSnapshot; snapshot != nil {
+		snapshot.GroupRatio = ratioInfo.GroupRatio
+		snapshot.EstimatedQuotaAfterGroup = billingexpr.QuotaRound(snapshot.EstimatedQuotaBeforeGroup * ratioInfo.GroupRatio)
+	}
+	return ratioInfo
+}
+
 // HandleGroupRatio checks for "auto_group" in the context and updates the group ratio and relayInfo.UsingGroup if present
 func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.GroupRatioInfo {
 	groupRatioInfo := types.GroupRatioInfo{
 		GroupRatio:        1.0, // default ratio
 		GroupSpecialRatio: -1,
+		Resolved:          true,
 	}
 
 	// check auto group
@@ -47,6 +56,14 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 	if exists {
 		logger.LogDebug(ctx, "final group: %s", autoGroup)
 		relayInfo.UsingGroup = autoGroup.(string)
+	}
+	if rule, ok := model.ResolveModelPricingRule(relayInfo.UserId, relayInfo.UserGroup, relayInfo.OriginModelName, relayInfo.UsingGroup); ok {
+		groupRatioInfo.GroupRatio = rule.Ratio
+		groupRatioInfo.GroupSpecialRatio = rule.Ratio
+		groupRatioInfo.HasSpecialRatio = true
+		groupRatioInfo.PricingRuleId = rule.Id
+		groupRatioInfo.PricingRuleSource = "model_pricing_rule"
+		return syncTieredBillingGroupRatio(relayInfo, groupRatioInfo)
 	}
 
 	// check user group special ratio
@@ -61,7 +78,7 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 		groupRatioInfo.GroupRatio = ratio_setting.GetGroupRatio(relayInfo.UsingGroup)
 	}
 
-	return groupRatioInfo
+	return syncTieredBillingGroupRatio(relayInfo, groupRatioInfo)
 }
 
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (types.PriceData, error) {

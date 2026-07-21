@@ -98,6 +98,13 @@ func main() {
 
 		go model.SyncChannelCache(common.SyncFrequency)
 	}
+	if err := model.ReloadModelPricingRuleCache(); err != nil {
+		if common.IsMasterNode || !errors.Is(err, model.ErrModelPricingRuleTablesUnavailable) {
+			common.FatalLog("failed to initialize model pricing rule cache: " + err.Error())
+		}
+		common.SysLog("model pricing rule table is not available yet; cache will be loaded after migration")
+	}
+	go model.SyncModelPricingRuleCache(common.SyncFrequency)
 	if err := service.ReloadVideoRoutingRuleCache(); err != nil {
 		if common.IsMasterNode || !errors.Is(err, service.ErrVideoRoutingRuleTablesUnavailable) {
 			common.FatalLog("failed to initialize video routing rule cache: " + err.Error())

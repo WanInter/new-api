@@ -2,12 +2,15 @@ package helper
 
 import (
 	"bytes"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -15,10 +18,66 @@ import (
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"gorm.io/gorm"
 )
+
+func TestHandleGroupRatioUsesPreciseRuleAfterAutoGroupSelection(t *testing.T) {
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.ModelPricingRule{}))
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		_ = model.DeleteModelPricingRule(1)
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		sqlDB, dbErr := db.DB()
+		if dbErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	require.NoError(t, db.Create(&model.User{Id: 17, Username: "pricing-test"}).Error)
+	rule := &model.ModelPricingRule{
+		SubjectType:  model.ModelPricingRuleSubjectUser,
+		SubjectValue: "17",
+		Model:        "seedance2.0",
+		UsingGroup:   "creative-video",
+		Ratio:        0.9,
+		Enabled:      true,
+	}
+	require.NoError(t, model.CreateModelPricingRule(rule))
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("auto_group", "creative-video")
+	info := &relaycommon.RelayInfo{
+		UserId:          17,
+		UserGroup:       "vip_9折",
+		OriginModelName: "seedance2.0",
+		UsingGroup:      "auto",
+		TieredBillingSnapshot: &billingexpr.BillingSnapshot{
+			GroupRatio:                1.25,
+			EstimatedQuotaBeforeGroup: 100,
+			EstimatedQuotaAfterGroup:  125,
+		},
+	}
+
+	ratioInfo := HandleGroupRatio(ctx, info)
+	assert.Equal(t, "creative-video", info.UsingGroup)
+	assert.Equal(t, 0.9, ratioInfo.GroupRatio)
+	assert.True(t, ratioInfo.HasSpecialRatio)
+	assert.Equal(t, rule.Id, ratioInfo.PricingRuleId)
+	assert.Equal(t, "model_pricing_rule", ratioInfo.PricingRuleSource)
+	assert.Equal(t, 0.9, info.TieredBillingSnapshot.GroupRatio)
+	assert.Equal(t, 90, info.TieredBillingSnapshot.EstimatedQuotaAfterGroup)
+}
 
 func TestModelPriceHelperTieredUsesPreloadedRequestInput(t *testing.T) {
 	gin.SetMode(gin.TestMode)

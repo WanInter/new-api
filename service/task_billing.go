@@ -46,6 +46,10 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	if info.PriceData.GroupRatioInfo.HasSpecialRatio {
 		other["user_group_ratio"] = info.PriceData.GroupRatioInfo.GroupSpecialRatio
 	}
+	if info.PriceData.GroupRatioInfo.PricingRuleId != 0 {
+		other["pricing_rule_id"] = info.PriceData.GroupRatioInfo.PricingRuleId
+		other["pricing_rule_source"] = info.PriceData.GroupRatioInfo.PricingRuleSource
+	}
 	if info.IsModelMapped {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = info.UpstreamModelName
@@ -125,6 +129,10 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 			other["model_ratio"] = bc.ModelRatio
 		}
 		other["group_ratio"] = bc.GroupRatio
+		if bc.PricingRuleId != 0 {
+			other["pricing_rule_id"] = bc.PricingRuleId
+			other["pricing_rule_source"] = bc.PricingRuleSource
+		}
 		if len(bc.OtherRatios) > 0 {
 			for k, v := range bc.OtherRatios {
 				other[k] = v
@@ -355,26 +363,30 @@ func calculateTaskQuotaByTokens(task *model.Task, totalTokens int) (int, string,
 		return 0, "", false
 	}
 
-	// 获取用户和组的倍率信息
-	group := task.Group
-	if group == "" {
-		user, err := model.GetUserById(task.UserId, false)
-		if err == nil {
-			group = user.Group
-		}
-	}
-	if group == "" {
-		return 0, "", false
-	}
-
-	groupRatio := ratio_setting.GetGroupRatio(group)
-	userGroupRatio, hasUserGroupRatio := ratio_setting.GetGroupGroupRatio(group, group)
-
+	// Task billing must keep the ratio selected when the task was submitted.
+	// Re-resolving a user/model rule here would retroactively change an
+	// in-flight task after an administrator edits its pricing policy.
 	var finalGroupRatio float64
-	if hasUserGroupRatio {
-		finalGroupRatio = userGroupRatio
+	if bc := task.PrivateData.BillingContext; bc != nil {
+		finalGroupRatio = bc.GroupRatio
 	} else {
-		finalGroupRatio = groupRatio
+		// Tasks created before billing snapshots existed retain the prior lookup
+		// semantics for their eventual settlement.
+		group := task.Group
+		if group == "" {
+			user, err := model.GetUserById(task.UserId, false)
+			if err == nil {
+				group = user.Group
+			}
+		}
+		if group == "" {
+			return 0, "", false
+		}
+		if userGroupRatio, ok := ratio_setting.GetGroupGroupRatio(group, group); ok {
+			finalGroupRatio = userGroupRatio
+		} else {
+			finalGroupRatio = ratio_setting.GetGroupRatio(group)
+		}
 	}
 
 	// 计算 OtherRatios 乘积（视频折扣、时长等）

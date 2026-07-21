@@ -22,6 +22,7 @@ import { Card, Spin, Tabs } from '@douyinfe/semi-ui';
 import { useTranslation } from 'react-i18next';
 
 import ModelPricingCombined from '../../pages/Setting/Ratio/ModelPricingCombined';
+import ModelPricingRules from '../../pages/Setting/Ratio/ModelPricingRules';
 import GroupRatioSettings from '../../pages/Setting/Ratio/GroupRatioSettings';
 import ModelRatioNotSetEditor from '../../pages/Setting/Ratio/ModelRationNotSetEditor';
 import UpstreamRatioSync from '../../pages/Setting/Ratio/UpstreamRatioSync';
@@ -99,6 +100,9 @@ const RatioSetting = () => {
         <Tabs type='card' defaultActiveKey='pricing'>
           <Tabs.TabPane tab={t('模型定价设置')} itemKey='pricing'>
             <ModelPricingCombined options={inputs} refresh={onRefresh} />
+          </Tabs.TabPane>
+          <Tabs.TabPane tab={t('精确模型计费')} itemKey='model_pricing_rules'>
+            <ModelPricingRules />
           </Tabs.TabPane>
           <Tabs.TabPane tab={t('分组相关设置')} itemKey='group'>
             <GroupRatioSettings options={inputs} refresh={onRefresh} />

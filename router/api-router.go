@@ -210,6 +210,14 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.POST("/waffo-pancake/subscription-product", controller.CreateWaffoPancakeSubscriptionProduct)
 			optionRoute.GET("/waffo-pancake/subscription-product-options", controller.ListWaffoPancakeSubscriptionProductOptions)
 		}
+		modelPricingRuleRoute := apiRouter.Group("/model-pricing-rules")
+		modelPricingRuleRoute.Use(middleware.RootAuth())
+		{
+			modelPricingRuleRoute.GET("/", controller.GetModelPricingRules)
+			modelPricingRuleRoute.POST("/", controller.CreateModelPricingRule)
+			modelPricingRuleRoute.PUT("/:id", controller.UpdateModelPricingRule)
+			modelPricingRuleRoute.DELETE("/:id", controller.DeleteModelPricingRule)
+		}
 
 		// Custom OAuth provider management (root only)
 		customOAuthRoute := apiRouter.Group("/custom-oauth-provider")
