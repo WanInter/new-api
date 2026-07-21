@@ -479,7 +479,7 @@ func verifyTaskResultRehostStorage(ctx context.Context, cfg taskResultRehostConf
 	objectKey := path.Join(cfg.Prefix, "connection-tests", random+".txt")
 	content := []byte("task result storage connection test")
 	started := time.Now()
-	if err = cfg.upload(ctx, objectKey, bytes.NewReader(content), "text/plain"); err != nil {
+	if err = cfg.upload(ctx, objectKey, bytes.NewReader(content), "text/plain", int64(len(content))); err != nil {
 		return TaskResultRehostConnectionResult{}, fmt.Errorf("upload test object: %w", err)
 	}
 	result := TaskResultRehostConnectionResult{Uploaded: true}

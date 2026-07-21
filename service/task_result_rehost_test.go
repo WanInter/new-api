@@ -139,6 +139,41 @@ func TestS3UploadUsesPathStyleSignedRequest(t *testing.T) {
 	require.True(t, strings.HasPrefix(captured.Header.Get("Authorization"), "AWS4-HMAC-SHA256 Credential=secret-id/"))
 }
 
+func TestTaskResultRehostUploadSetsContentLength(t *testing.T) {
+	var captured *http.Request
+	httpClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		captured = req.Clone(req.Context())
+		_, err := io.ReadAll(req.Body)
+		require.NoError(t, err)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("")),
+			Request:    req,
+		}, nil
+	})}
+
+	cfg := taskResultRehostConfig{
+		Backend:         taskResultRehostBackendS3,
+		UploadEndpoint:  "https://r2.example.com",
+		Bucket:          "media",
+		Region:          "auto",
+		UsePathStyle:    true,
+		AccessKeyID:     "test-access-id",
+		AccessKeySecret: "test-access-secret",
+	}
+	body := &limitedReadCloser{
+		Reader:   strings.NewReader("video"),
+		Closer:   io.NopCloser(strings.NewReader("")),
+		maxBytes: 1024,
+	}
+	t.Cleanup(func() { require.NoError(t, body.Close()) })
+
+	require.NoError(t, cfg.uploadWithClient(context.Background(), "generated/newapi/videos/result.mp4", body, "video/mp4", int64(len("video")), cfg.newObjectStorageClient(httpClient)))
+	require.NotNil(t, captured)
+	require.Equal(t, int64(5), captured.ContentLength)
+}
+
 func TestIDriveUsesPathStylePresignedObjectURL(t *testing.T) {
 	cfg := taskResultRehostConfig{
 		Backend:         taskResultRehostBackendIDrive,

@@ -89,14 +89,14 @@ func RehostTaskResultURL(ctx context.Context, task *model.Task, rawURL string, p
 	if strings.TrimSpace(downloadProxy) == "" {
 		downloadProxy = proxy
 	}
-	body, contentType, ext, err := downloadRehostSource(ctx, rawURL, downloadProxy, cfg.MaxBytes)
+	body, contentType, ext, contentLength, err := downloadRehostSource(ctx, rawURL, downloadProxy, cfg.MaxBytes)
 	if err != nil {
 		return "", err
 	}
 	defer body.Close()
 
 	objectKey := cfg.objectKey(task, rawURL, ext)
-	if err := cfg.upload(ctx, objectKey, body, contentType); err != nil {
+	if err := cfg.upload(ctx, objectKey, body, contentType, contentLength); err != nil {
 		return "", err
 	}
 	objectURL, err := cfg.objectURL(ctx, objectKey)
@@ -132,7 +132,7 @@ func RehostTaskResultDataURL(ctx context.Context, task *model.Task, dataURL stri
 
 	cfg = cfg.withDataURLPrefix(task)
 	objectKey := cfg.objectKey(task, dataURL, ext)
-	if err := cfg.upload(ctx, objectKey, bytes.NewReader(body), contentType); err != nil {
+	if err := cfg.upload(ctx, objectKey, bytes.NewReader(body), contentType, int64(len(body))); err != nil {
 		return "", err
 	}
 	objectURL, err := cfg.objectURL(ctx, objectKey)
@@ -284,34 +284,34 @@ func (c taskResultRehostConfig) validate() error {
 	return nil
 }
 
-func downloadRehostSource(ctx context.Context, rawURL, proxy string, maxBytes int64) (io.ReadCloser, string, string, error) {
+func downloadRehostSource(ctx context.Context, rawURL, proxy string, maxBytes int64) (io.ReadCloser, string, string, int64, error) {
 	client, err := GetHttpClientWithProxy(proxy)
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", "", 0, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", "", 0, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", "", 0, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer resp.Body.Close()
 		preview, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return nil, "", "", fmt.Errorf("download source failed status=%d body=%s", resp.StatusCode, string(preview))
+		return nil, "", "", 0, fmt.Errorf("download source failed status=%d body=%s", resp.StatusCode, string(preview))
 	}
 	if resp.ContentLength > maxBytes {
 		defer resp.Body.Close()
-		return nil, "", "", fmt.Errorf("download source too large: %d > %d", resp.ContentLength, maxBytes)
+		return nil, "", "", 0, fmt.Errorf("download source too large: %d > %d", resp.ContentLength, maxBytes)
 	}
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "video/mp4"
 	}
 	ext := extensionFromContentTypeOrURL(contentType, rawURL)
-	return &limitedReadCloser{Reader: io.LimitReader(resp.Body, maxBytes+1), Closer: resp.Body, maxBytes: maxBytes}, contentType, ext, nil
+	return &limitedReadCloser{Reader: io.LimitReader(resp.Body, maxBytes+1), Closer: resp.Body, maxBytes: maxBytes}, contentType, ext, resp.ContentLength, nil
 }
 
 type limitedReadCloser struct {
@@ -406,14 +406,21 @@ func sanitizeObjectName(value string) string {
 	return b.String()
 }
 
-func (c taskResultRehostConfig) upload(ctx context.Context, objectKey string, body io.Reader, contentType string) error {
-	client := c.newObjectStorageClient(nil)
-	_, err := client.PutObject(ctx, &s3.PutObjectInput{
+func (c taskResultRehostConfig) upload(ctx context.Context, objectKey string, body io.Reader, contentType string, contentLength int64) error {
+	return c.uploadWithClient(ctx, objectKey, body, contentType, contentLength, c.newObjectStorageClient(nil))
+}
+
+func (c taskResultRehostConfig) uploadWithClient(ctx context.Context, objectKey string, body io.Reader, contentType string, contentLength int64, client *s3.Client) error {
+	input := &s3.PutObjectInput{
 		Bucket:      ptr.String(c.Bucket),
 		Key:         ptr.String(objectKey),
 		Body:        body,
 		ContentType: ptr.String(contentType),
-	})
+	}
+	if contentLength >= 0 {
+		input.ContentLength = ptr.Int64(contentLength)
+	}
+	_, err := client.PutObject(ctx, input)
 	return err
 }
 
