@@ -29,9 +29,11 @@ export type ComboboxInputOption = {
 }
 
 interface ComboboxInputProps {
+  'aria-invalid'?: React.AriaAttributes['aria-invalid']
   options: ComboboxInputOption[]
   value?: string
   onValueChange: (value: string) => void
+  onSearchValueChange?: (value: string) => void
   placeholder?: string
   emptyText?: string
   className?: string
@@ -40,9 +42,11 @@ interface ComboboxInputProps {
 }
 
 export function ComboboxInput({
+  'aria-invalid': ariaInvalid,
   options,
   value = '',
   onValueChange,
+  onSearchValueChange,
   placeholder = 'Select or type...',
   emptyText = 'No option found.',
   className,
@@ -161,6 +165,7 @@ export function ComboboxInput({
         id={id}
         type='text'
         role='combobox'
+        aria-invalid={ariaInvalid}
         aria-expanded={open}
         aria-haspopup='listbox'
         aria-autocomplete='list'
@@ -170,13 +175,17 @@ export function ComboboxInput({
         onChange={(e) => {
           const nextValue = e.target.value
           setSearchValue(nextValue)
+          onSearchValueChange?.(nextValue)
           if (allowCustomValue) {
             onValueChange(nextValue)
           }
           if (!open) setOpen(true)
         }}
         onFocus={() => {
-          setSearchValue(allowCustomValue && !selectedOption ? value : '')
+          const nextSearchValue =
+            allowCustomValue && !selectedOption ? value : ''
+          setSearchValue(nextSearchValue)
+          onSearchValueChange?.(nextSearchValue)
           setOpen(true)
         }}
         onKeyDown={handleKeyDown}

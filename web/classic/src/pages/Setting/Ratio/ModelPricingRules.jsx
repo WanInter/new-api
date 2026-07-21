@@ -13,9 +13,17 @@ GNU Affero General Public License for more details.
 
 You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   Button,
   Form,
@@ -25,7 +33,12 @@ import {
   Tag,
   Tooltip,
 } from '@douyinfe/semi-ui';
-import { IconDelete, IconEdit, IconPlus } from '@douyinfe/semi-icons';
+import {
+  IconDelete,
+  IconEdit,
+  IconHelpCircle,
+  IconPlus,
+} from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
 import { API, showError, showSuccess } from '../../../helpers';
 
@@ -38,6 +51,16 @@ const EMPTY_RULE = {
   enabled: true,
 };
 
+const replaceOptions = (current, incoming, selectedValue) => {
+  const selected =
+    incoming.find((option) => option.value === selectedValue) ||
+    current.find((option) => option.value === selectedValue);
+  if (!selected || incoming.some((option) => option.value === selected.value)) {
+    return incoming;
+  }
+  return [selected, ...incoming];
+};
+
 export default function ModelPricingRules() {
   const { t } = useTranslation();
   const [rules, setRules] = useState([]);
@@ -46,6 +69,14 @@ export default function ModelPricingRules() {
   const [modalVisible, setModalVisible] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [draft, setDraft] = useState(EMPTY_RULE);
+  const [userOptions, setUserOptions] = useState([]);
+  const [modelOptions, setModelOptions] = useState([]);
+  const [userOptionsLoading, setUserOptionsLoading] = useState(false);
+  const [modelOptionsLoading, setModelOptionsLoading] = useState(false);
+  const userSearchTimer = useRef(null);
+  const modelSearchTimer = useRef(null);
+  const userRequestId = useRef(0);
+  const modelRequestId = useRef(0);
 
   const loadRules = useCallback(async () => {
     setLoading(true);
@@ -67,9 +98,107 @@ export default function ModelPricingRules() {
     loadRules();
   }, [loadRules]);
 
+  useEffect(
+    () => () => {
+      clearTimeout(userSearchTimer.current);
+      clearTimeout(modelSearchTimer.current);
+      userRequestId.current += 1;
+      modelRequestId.current += 1;
+    },
+    [],
+  );
+
+  const loadUserOptions = useCallback(
+    async (keyword = '', selectedValue = '') => {
+      const requestId = ++userRequestId.current;
+      setUserOptionsLoading(true);
+      try {
+        const res = await API.get('/api/user/search', {
+          params: { keyword, group: '', status: 1, p: 1, page_size: 100 },
+        });
+        if (!res.data.success) {
+          showError(res.data.message);
+          return;
+        }
+        const options = (res.data.data?.items || []).map((user) => ({
+          value: String(user.id),
+          label: `${user.username} (#${user.id})`,
+        }));
+        if (requestId === userRequestId.current) {
+          setUserOptions((current) =>
+            replaceOptions(current, options, selectedValue),
+          );
+        }
+      } catch (error) {
+        if (requestId === userRequestId.current) {
+          showError(t('加载用户失败'));
+        }
+      } finally {
+        if (requestId === userRequestId.current) {
+          setUserOptionsLoading(false);
+        }
+      }
+    },
+    [t],
+  );
+
+  const loadModelOptions = useCallback(
+    async (keyword = '', selectedValue = '') => {
+      const requestId = ++modelRequestId.current;
+      setModelOptionsLoading(true);
+      try {
+        const res = await API.get('/api/models/search', {
+          params: { keyword, p: 1, page_size: 100 },
+        });
+        if (!res.data.success) {
+          showError(res.data.message);
+          return;
+        }
+        const options = (res.data.data?.items || []).map((model) => ({
+          value: model.model_name,
+          label: model.model_name,
+        }));
+        if (requestId === modelRequestId.current) {
+          setModelOptions((current) =>
+            replaceOptions(current, options, selectedValue),
+          );
+        }
+      } catch (error) {
+        if (requestId === modelRequestId.current) {
+          showError(t('加载模型失败'));
+        }
+      } finally {
+        if (requestId === modelRequestId.current) {
+          setModelOptionsLoading(false);
+        }
+      }
+    },
+    [t],
+  );
+
+  const searchUsers = (keyword) => {
+    clearTimeout(userSearchTimer.current);
+    userSearchTimer.current = setTimeout(
+      () => loadUserOptions(keyword.trim(), draft.subject_value),
+      300,
+    );
+  };
+
+  const searchModels = (keyword) => {
+    clearTimeout(modelSearchTimer.current);
+    modelSearchTimer.current = setTimeout(
+      () => loadModelOptions(keyword.trim(), draft.model),
+      300,
+    );
+  };
+
   const openCreate = () => {
     setDraft(EMPTY_RULE);
+    setUserOptions([]);
+    setModelOptions([]);
     setModalVisible(true);
+    loadUserOptions();
+    loadModelOptions();
   };
 
   const openEdit = (rule) => {
@@ -82,7 +211,14 @@ export default function ModelPricingRules() {
       ratio: rule.ratio,
       enabled: rule.enabled,
     });
+    setUserOptions([]);
+    setModelOptions([]);
     setModalVisible(true);
+    loadUserOptions(
+      rule.subject_type === 'user' ? rule.subject_value : '',
+      rule.subject_type === 'user' ? rule.subject_value : '',
+    );
+    loadModelOptions(rule.model, rule.model);
   };
 
   const saveRule = async () => {
@@ -238,6 +374,7 @@ export default function ModelPricingRules() {
           <Form.Select
             field='subject_type'
             label={t('主体类型')}
+            value={draft.subject_type}
             optionList={[
               { value: 'user', label: t('用户') },
               { value: 'user_group', label: t('用户组') },
@@ -246,25 +383,70 @@ export default function ModelPricingRules() {
               setDraft((current) => ({ ...current, subject_type: value }))
             }
           />
-          <Form.Input
-            field='subject_value'
-            label={draft.subject_type === 'user' ? t('用户 ID') : t('用户组')}
-            value={draft.subject_value}
-            onChange={(value) =>
-              setDraft((current) => ({ ...current, subject_value: value }))
-            }
-          />
-          <Form.Input
+          {draft.subject_type === 'user' ? (
+            <Form.Select
+              field='subject_value'
+              label={t('用户 ID')}
+              placeholder={t('搜索用户名或 ID')}
+              searchPlaceholder={t('搜索用户名或 ID')}
+              filter
+              remote
+              optionList={userOptions}
+              loading={userOptionsLoading}
+              emptyContent={t('未找到用户')}
+              value={draft.subject_value || undefined}
+              onSearch={searchUsers}
+              onChange={(value) =>
+                setDraft((current) => ({
+                  ...current,
+                  subject_value: String(value || ''),
+                }))
+              }
+              style={{ width: '100%' }}
+            />
+          ) : (
+            <Form.Input
+              field='subject_value'
+              label={t('用户组')}
+              value={draft.subject_value}
+              onChange={(value) =>
+                setDraft((current) => ({ ...current, subject_value: value }))
+              }
+            />
+          )}
+          <Form.Select
             field='model'
             label={t('模型')}
-            value={draft.model}
+            placeholder={t('搜索模型...')}
+            searchPlaceholder={t('搜索模型...')}
+            filter
+            remote
+            allowCreate
+            optionList={modelOptions}
+            loading={modelOptionsLoading}
+            emptyContent={t('未找到模型')}
+            value={draft.model || undefined}
+            onSearch={searchModels}
             onChange={(value) =>
-              setDraft((current) => ({ ...current, model: value }))
+              setDraft((current) => ({
+                ...current,
+                model: String(value || ''),
+              }))
             }
+            style={{ width: '100%' }}
           />
           <Form.Input
             field='using_group'
-            label={t('路由分组')}
+            label={
+              <Space spacing={4}>
+                <span>{t('路由分组')}</span>
+                <Tooltip
+                  content={t('请求最终实际命中的渠道分组；留空表示任意分组。')}
+                >
+                  <IconHelpCircle className='cursor-help text-gray-400' />
+                </Tooltip>
+              </Space>
+            }
             value={draft.using_group}
             onChange={(value) =>
               setDraft((current) => ({ ...current, using_group: value }))

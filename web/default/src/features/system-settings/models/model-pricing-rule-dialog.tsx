@@ -14,17 +14,30 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import * as z from 'zod'
 import { type Resolver, useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useQuery } from '@tanstack/react-query'
+import { useDebounce } from '@/hooks'
+import { InformationCircleIcon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { Dialog } from '@/components/dialog'
+import { searchModels } from '@/features/models/api'
+import { searchUsers } from '@/features/users/api'
 import type {
   ModelPricingRule,
   ModelPricingRulePayload,
@@ -32,6 +45,21 @@ import type {
 } from './model-pricing-rules-types'
 
 const FORM_ID = 'model-pricing-rule-form'
+const SELECTOR_PAGE_SIZE = 100
+
+type SelectorOption = {
+  value: string
+  label: string
+}
+
+function mergeSelectorOptions(
+  current: SelectorOption[],
+  incoming: SelectorOption[]
+): SelectorOption[] {
+  const options = new Map(current.map((option) => [option.value, option]))
+  incoming.forEach((option) => options.set(option.value, option))
+  return Array.from(options.values())
+}
 
 type ModelPricingRuleFormValues = {
   subject_type: ModelPricingRuleSubjectType
@@ -75,6 +103,12 @@ function buildDefaultValues(
 
 export function ModelPricingRuleDialog(props: ModelPricingRuleDialogProps) {
   const { t } = useTranslation()
+  const [userSearchValue, setUserSearchValue] = useState('')
+  const [modelSearchValue, setModelSearchValue] = useState('')
+  const [userOptions, setUserOptions] = useState<SelectorOption[]>([])
+  const [modelOptions, setModelOptions] = useState<SelectorOption[]>([])
+  const debouncedUserSearch = useDebounce(userSearchValue, 300)
+  const debouncedModelSearch = useDebounce(modelSearchValue, 300)
   const schema = useMemo(
     () =>
       z.object({
@@ -98,11 +132,68 @@ export function ModelPricingRuleDialog(props: ModelPricingRuleDialogProps) {
   })
 
   useEffect(() => {
-    if (props.open) form.reset(buildDefaultValues(props.rule))
+    if (!props.open) return
+    form.reset(buildDefaultValues(props.rule))
+    setUserSearchValue(
+      props.rule?.subject_type === 'user' ? props.rule.subject_value : ''
+    )
+    setModelSearchValue(props.rule?.model ?? '')
+    setUserOptions([])
+    setModelOptions([])
   }, [form, props.open, props.rule])
 
   const subjectType = form.watch('subject_type')
+  const subjectValue = form.watch('subject_value')
+  const model = form.watch('model')
   const enabled = form.watch('enabled')
+  const userOptionsQuery = useQuery({
+    queryKey: ['model-pricing-rule-user-options', debouncedUserSearch],
+    queryFn: async () => {
+      const result = await searchUsers({
+        keyword: debouncedUserSearch,
+        group: '',
+        status: '1',
+        p: 1,
+        page_size: SELECTOR_PAGE_SIZE,
+      })
+      return result.success ? (result.data?.items ?? []) : []
+    },
+    enabled: props.open && subjectType === 'user',
+    staleTime: 30_000,
+  })
+  const modelOptionsQuery = useQuery({
+    queryKey: ['model-pricing-rule-model-options', debouncedModelSearch],
+    queryFn: async () => {
+      const result = await searchModels({
+        keyword: debouncedModelSearch,
+        p: 1,
+        page_size: SELECTOR_PAGE_SIZE,
+      })
+      return result.success ? (result.data?.items ?? []) : []
+    },
+    enabled: props.open,
+    staleTime: 30_000,
+  })
+
+  useEffect(() => {
+    const options = (userOptionsQuery.data ?? []).map((user) => ({
+      value: String(user.id),
+      label: `${user.username} (#${user.id})`,
+    }))
+    if (options.length > 0) {
+      setUserOptions((current) => mergeSelectorOptions(current, options))
+    }
+  }, [userOptionsQuery.data])
+
+  useEffect(() => {
+    const options = (modelOptionsQuery.data ?? []).map((item) => ({
+      value: item.model_name,
+      label: item.model_name,
+    }))
+    if (options.length > 0) {
+      setModelOptions((current) => mergeSelectorOptions(current, options))
+    }
+  }, [modelOptionsQuery.data])
 
   const onSubmit = async (values: ModelPricingRuleFormValues) => {
     const saved = await props.onSave({
@@ -161,11 +252,30 @@ export function ModelPricingRuleDialog(props: ModelPricingRuleDialogProps) {
           <Label htmlFor='model-pricing-rule-subject-value'>
             {subjectType === 'user' ? t('User ID') : t('User Group')}
           </Label>
-          <Input
-            id='model-pricing-rule-subject-value'
-            aria-invalid={!!form.formState.errors.subject_value}
-            {...form.register('subject_value')}
-          />
+          {subjectType === 'user' ? (
+            <Combobox
+              id='model-pricing-rule-subject-value'
+              aria-invalid={!!form.formState.errors.subject_value}
+              options={userOptions}
+              value={subjectValue}
+              onValueChange={(value) =>
+                form.setValue('subject_value', value ?? '', {
+                  shouldDirty: true,
+                  shouldValidate: true,
+                })
+              }
+              onSearchValueChange={setUserSearchValue}
+              searchPlaceholder={t('Search username or ID')}
+              emptyText={t('No users found')}
+              className='w-full'
+            />
+          ) : (
+            <Input
+              id='model-pricing-rule-subject-value'
+              aria-invalid={!!form.formState.errors.subject_value}
+              {...form.register('subject_value')}
+            />
+          )}
           {form.formState.errors.subject_value?.message ? (
             <p className='text-destructive text-xs'>
               {form.formState.errors.subject_value.message}
@@ -174,10 +284,22 @@ export function ModelPricingRuleDialog(props: ModelPricingRuleDialogProps) {
         </div>
         <div className='grid gap-2'>
           <Label htmlFor='model-pricing-rule-model'>{t('Model')}</Label>
-          <Input
+          <Combobox
             id='model-pricing-rule-model'
             aria-invalid={!!form.formState.errors.model}
-            {...form.register('model')}
+            options={modelOptions}
+            value={model}
+            onValueChange={(value) =>
+              form.setValue('model', value ?? '', {
+                shouldDirty: true,
+                shouldValidate: true,
+              })
+            }
+            onSearchValueChange={setModelSearchValue}
+            searchPlaceholder={t('Select or enter model name')}
+            emptyText={t('No models found')}
+            allowCustomValue
+            className='w-full'
           />
           {form.formState.errors.model?.message ? (
             <p className='text-destructive text-xs'>
@@ -186,9 +308,35 @@ export function ModelPricingRuleDialog(props: ModelPricingRuleDialogProps) {
           ) : null}
         </div>
         <div className='grid gap-2'>
-          <Label htmlFor='model-pricing-rule-routing-group'>
-            {t('Routing Group')}
-          </Label>
+          <div className='flex items-center gap-1.5'>
+            <Label htmlFor='model-pricing-rule-routing-group'>
+              {t('Routing Group')}
+            </Label>
+            <TooltipProvider delay={200}>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type='button'
+                      className='text-muted-foreground hover:text-foreground inline-flex size-5 items-center justify-center'
+                      aria-label={t('Routing Group')}
+                    />
+                  }
+                >
+                  <HugeiconsIcon
+                    icon={InformationCircleIcon}
+                    strokeWidth={2}
+                    className='size-4'
+                  />
+                </TooltipTrigger>
+                <TooltipContent>
+                  {t(
+                    'The channel group actually selected for the request; leave blank to match any group.'
+                  )}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
           <Input
             id='model-pricing-rule-routing-group'
             {...form.register('using_group')}

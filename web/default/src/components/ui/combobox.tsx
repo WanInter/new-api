@@ -38,9 +38,11 @@ import {
 } from '@/components/ui/input-group'
 
 type LegacyComboboxProps = {
+  'aria-invalid'?: React.AriaAttributes['aria-invalid']
   options: ComboboxInputOption[]
   value?: string
   onValueChange?: (value: string | null) => void
+  onSearchValueChange?: (value: string) => void
   placeholder?: string
   searchPlaceholder?: string
   emptyText?: string
@@ -61,10 +63,12 @@ function Combobox(
   if ('options' in props) {
     return (
       <LegacyComboboxInput
+        aria-invalid={props['aria-invalid']}
         id={props.id}
         options={props.options}
         value={props.value ?? ''}
         onValueChange={(value) => props.onValueChange?.(value)}
+        onSearchValueChange={props.onSearchValueChange}
         placeholder={props.searchPlaceholder ?? props.placeholder}
         emptyText={props.emptyText}
         className={props.className}
