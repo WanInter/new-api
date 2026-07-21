@@ -1021,6 +1021,15 @@ func (channel *Channel) ValidateSettings() error {
 			return fmt.Errorf("advanced_custom is required")
 		}
 	}
+	if channel.Type == constant.ChannelTypeSeventhFrame {
+		_, upstreamChannel, err := dto.ParseSeventhFrameBaseURL(channel.GetBaseURL())
+		if err != nil {
+			return err
+		}
+		if !dto.IsValidSeventhFrameChannel(upstreamChannel) {
+			return fmt.Errorf("channel query parameter must be between channel1 and channel17")
+		}
+	}
 	if channelOtherSettings.AdvancedCustom != nil {
 		if err := channelOtherSettings.AdvancedCustom.Validate(); err != nil {
 			return err

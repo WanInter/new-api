@@ -13,6 +13,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -467,7 +468,11 @@ func updateChannelByteforBalance(channel *model.Channel) (float64, error) {
 }
 
 func updateChannelSeventhFrameBalance(channel *model.Channel) (float64, error) {
-	url := fmt.Sprintf("%s/usage?channel=channel14", strings.TrimRight(channel.GetBaseURL(), "/"))
+	baseURL, upstreamChannel, err := dto.ParseSeventhFrameBaseURL(channel.GetBaseURL())
+	if err != nil {
+		return 0, err
+	}
+	url := fmt.Sprintf("%s/usage?channel=%s", baseURL, neturl.QueryEscape(upstreamChannel))
 	body, err := GetResponseBody(http.MethodGet, url, channel, GetAuthHeader(channel.Key))
 	if err != nil {
 		return 0, err

@@ -34,11 +34,11 @@ const (
 
 	filesPath            = "/files"
 	videoGenerationsPath = "/video/generations"
-	upstreamChannel      = "channel14"
 )
 
 var ModelList = []string{
 	"viraldance900--person-stripe--6c832bb1--voice-tone--a0c4ee78",
+	"seedance-2.0--person-stripe--6e9f7f9c--voice-tone--a7f8bf20",
 }
 
 type TaskAdaptor struct {
@@ -46,6 +46,7 @@ type TaskAdaptor struct {
 	apiKey  string
 	baseURL string
 	proxy   string
+	channel string
 }
 
 type generationRequest struct {
@@ -84,11 +85,17 @@ type assetReference struct {
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.apiKey = info.ApiKey
-	a.baseURL = strings.TrimRight(info.ChannelBaseUrl, "/")
+	baseURL, upstreamChannel, err := dto.ParseSeventhFrameBaseURL(info.ChannelBaseUrl)
+	if err != nil {
+		baseURL = ""
+		upstreamChannel = dto.DefaultSeventhFrameChannel
+	}
+	a.baseURL = baseURL
 	if a.baseURL == "" {
 		a.baseURL = DefaultBaseURL
 	}
 	a.proxy = info.ChannelSetting.Proxy
+	a.channel = upstreamChannel
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
@@ -201,7 +208,11 @@ func (a *TaskAdaptor) FetchTask(ctx context.Context, baseURL, key string, body m
 	if strings.TrimSpace(taskID) == "" {
 		return nil, fmt.Errorf("invalid task_id")
 	}
-	baseURL = strings.TrimRight(baseURL, "/")
+	var err error
+	baseURL, _, err = dto.ParseSeventhFrameBaseURL(baseURL)
+	if err != nil {
+		return nil, err
+	}
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
@@ -280,7 +291,7 @@ func (a *TaskAdaptor) buildGenerationRequest(ctx context.Context, req relaycommo
 		modelName = req.Model
 	}
 	payload := &generationRequest{
-		Channel:     upstreamChannel,
+		Channel:     a.channel,
 		Model:       modelName,
 		Prompt:      req.Prompt,
 		AspectRatio: requestAspectRatio(req),
