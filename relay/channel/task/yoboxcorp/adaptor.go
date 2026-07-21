@@ -86,14 +86,15 @@ type asyncTaskEnvelope struct {
 }
 
 type asyncTaskPayload struct {
-	ID         string   `json:"id"`
-	Status     string   `json:"status"`
-	VideoURL   string   `json:"video_url"`
-	Outputs    []string `json:"outputs"`
-	URL        string   `json:"url"`
-	Phase      string   `json:"phase"`
-	Error      any      `json:"error"`
-	FailReason string   `json:"fail_reason"`
+	ID         string        `json:"id"`
+	Status     string        `json:"status"`
+	VideoURL   string        `json:"video_url"`
+	Outputs    []string      `json:"outputs"`
+	URL        string        `json:"url"`
+	Phase      string        `json:"phase"`
+	Error      any           `json:"error"`
+	FailReason string        `json:"fail_reason"`
+	Task       *upstreamTask `json:"task"`
 }
 
 type assetRequest struct {
@@ -272,6 +273,9 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	var asyncResponse asyncTaskResponse
 	if err := common.Unmarshal(respBody, &asyncResponse); err != nil {
 		return nil, errors.Wrap(err, "unmarshal async task result failed")
+	}
+	if asyncResponse.Data.Data.Task != nil {
+		return taskInfoFromNativeTask(asyncResponse.Data.Data.Task)
 	}
 	rawStatus := firstNonEmpty(asyncResponse.Data.Status, asyncResponse.Status, asyncResponse.Data.Data.Status, asyncResponse.Data.Data.Phase, asyncResponse.Data.Phase)
 	status := mapTaskStatus(rawStatus)

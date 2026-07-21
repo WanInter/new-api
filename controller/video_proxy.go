@@ -237,9 +237,23 @@ func extractVideoURLFromMap(payload map[string]any) string {
 			}
 		}
 	}
+	if outputs, ok := payload["outputs"].([]any); ok {
+		for _, output := range outputs {
+			if url, ok := output.(string); ok && strings.TrimSpace(url) != "" {
+				return strings.TrimSpace(url)
+			}
+		}
+	}
 	if response, ok := payload["response"].(map[string]any); ok {
 		if url := extractVideoURLFromMap(response); url != "" {
 			return url
+		}
+	}
+	for _, key := range []string{"task", "data", "content"} {
+		if nested, ok := payload[key].(map[string]any); ok {
+			if url := extractVideoURLFromMap(nested); url != "" {
+				return url
+			}
 		}
 	}
 	return ""

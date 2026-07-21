@@ -3,6 +3,7 @@ package controller
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,4 +24,14 @@ func TestSameURLHostname(t *testing.T) {
 		"not a url",
 		"https://api.myaigc.shop",
 	))
+}
+
+func TestExtractVideoURLFromTaskDataReadsNestedYoboxCorpTask(t *testing.T) {
+	task := &model.Task{Data: []byte(`{
+		"data":{"data":{"task":{
+			"outputs":["https://example.com/result.mp4"]
+		}}}
+	}`)}
+
+	require.Equal(t, "https://example.com/result.mp4", extractVideoURLFromTaskData(task))
 }

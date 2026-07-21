@@ -280,6 +280,23 @@ func TestParseNativeTaskEnvelopeRemainsSupported(t *testing.T) {
 	assert.Equal(t, "https://example.com/native.mp4", result.Url)
 }
 
+func TestParseTaskResultReadsNestedYoboxCorpTask(t *testing.T) {
+	result, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{
+		"success":true,
+		"data":{"data":{"task":{
+			"id":"mvt_nested",
+			"status":"completed",
+			"outputs":["https://example.com/nested.mp4"]
+		}}}
+	}`))
+
+	require.NoError(t, err)
+	assert.Equal(t, "mvt_nested", result.TaskID)
+	assert.Equal(t, string(model.TaskStatusSuccess), result.Status)
+	assert.Equal(t, "https://example.com/nested.mp4", result.Url)
+	assert.Equal(t, "100%", result.Progress)
+}
+
 func TestConvertToOpenAIVideoIncludesStoredResultURL(t *testing.T) {
 	task := &model.Task{
 		TaskID:      "task_public",
