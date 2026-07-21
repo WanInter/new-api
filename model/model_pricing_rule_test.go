@@ -144,3 +144,88 @@ func TestModelPricingRulesValidateSubjectsAndMissingRecords(t *testing.T) {
 	err = DeleteModelPricingRule(999)
 	assert.True(t, errors.Is(err, ErrModelPricingRuleNotFound))
 }
+
+func TestGetModelPricingRulesIncludesUserSubjectName(t *testing.T) {
+	setupModelPricingRuleTestDB(t)
+	require.NoError(t, DB.Create(&User{Id: 17, Username: "pricing-test"}).Error)
+
+	userRule := &ModelPricingRule{
+		SubjectType:  ModelPricingRuleSubjectUser,
+		SubjectValue: "17",
+		Model:        "seedance2.0",
+		Ratio:        0.9,
+		Enabled:      true,
+	}
+	groupRule := &ModelPricingRule{
+		SubjectType:  ModelPricingRuleSubjectUserGroup,
+		SubjectValue: "vip_9折",
+		Model:        "seedance2.0-fast",
+		Ratio:        0.9,
+		Enabled:      true,
+	}
+	require.NoError(t, CreateModelPricingRule(userRule))
+	require.NoError(t, CreateModelPricingRule(groupRule))
+
+	rules, err := GetModelPricingRules()
+	require.NoError(t, err)
+	require.Len(t, rules, 2)
+	assert.Equal(t, "pricing-test", rules[0].SubjectName)
+	assert.Empty(t, rules[1].SubjectName)
+}
+
+func TestCreateModelPricingRulesCreatesAllOrNone(t *testing.T) {
+	setupModelPricingRuleTestDB(t)
+	require.NoError(t, DB.Create(&User{Id: 17, Username: "pricing-test"}).Error)
+
+	existingRule := &ModelPricingRule{
+		SubjectType:  ModelPricingRuleSubjectUser,
+		SubjectValue: "17",
+		Model:        "seedance2.0",
+		Ratio:        0.9,
+		Enabled:      true,
+	}
+	require.NoError(t, CreateModelPricingRule(existingRule))
+
+	createdRules := []*ModelPricingRule{
+		{
+			SubjectType:  ModelPricingRuleSubjectUser,
+			SubjectValue: "17",
+			Model:        "seedance2.0-fast",
+			Ratio:        0.9,
+			Enabled:      true,
+		},
+		{
+			SubjectType:  ModelPricingRuleSubjectUser,
+			SubjectValue: "17",
+			Model:        "seedance2.0-S",
+			Ratio:        0.9,
+			Enabled:      true,
+		},
+	}
+	require.NoError(t, CreateModelPricingRules(createdRules))
+	assert.Positive(t, createdRules[0].Id)
+	assert.Positive(t, createdRules[1].Id)
+
+	conflictingRules := []*ModelPricingRule{
+		{
+			SubjectType:  ModelPricingRuleSubjectUser,
+			SubjectValue: "17",
+			Model:        "seedance2.0-fast-S",
+			Ratio:        0.9,
+			Enabled:      true,
+		},
+		{
+			SubjectType:  ModelPricingRuleSubjectUser,
+			SubjectValue: "17",
+			Model:        "seedance2.0",
+			Ratio:        0.9,
+			Enabled:      true,
+		},
+	}
+	err := CreateModelPricingRules(conflictingRules)
+	assert.True(t, errors.Is(err, ErrModelPricingRuleConflict))
+
+	var count int64
+	require.NoError(t, DB.Model(&ModelPricingRule{}).Count(&count).Error)
+	assert.EqualValues(t, 3, count)
+}

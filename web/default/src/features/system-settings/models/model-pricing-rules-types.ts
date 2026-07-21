@@ -21,6 +21,7 @@ export type ModelPricingRule = {
   id: number
   subject_type: ModelPricingRuleSubjectType
   subject_value: string
+  subject_name?: string
   model: string
   using_group: string
   ratio: number
@@ -29,10 +30,15 @@ export type ModelPricingRule = {
   updated_at: number
 }
 
-export type ModelPricingRulePayload = Omit<
-  ModelPricingRule,
-  'id' | 'created_at' | 'updated_at'
->
+export type ModelPricingRulePayload = {
+  subject_type: ModelPricingRuleSubjectType
+  subject_value: string
+  model: string
+  models?: string[]
+  using_group: string
+  ratio: number
+  enabled: boolean
+}
 
 export type ModelPricingRulesResponse = {
   success: boolean
@@ -43,5 +49,5 @@ export type ModelPricingRulesResponse = {
 export type ModelPricingRuleResponse = {
   success: boolean
   message: string
-  data: ModelPricingRule
+  data: ModelPricingRule | ModelPricingRule[]
 }

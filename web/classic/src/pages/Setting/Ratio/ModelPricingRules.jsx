@@ -46,6 +46,7 @@ const EMPTY_RULE = {
   subject_type: 'user',
   subject_value: '',
   model: '',
+  models: [],
   using_group: '',
   ratio: 1,
   enabled: true,
@@ -253,6 +254,7 @@ export default function ModelPricingRules() {
       subject_type: rule.subject_type,
       subject_value: rule.subject_value,
       model: rule.model,
+      models: [],
       using_group: rule.using_group || '',
       ratio: rule.ratio,
       enabled: rule.enabled,
@@ -273,7 +275,16 @@ export default function ModelPricingRules() {
 
   const saveRule = async () => {
     const subjectValue = String(draft.subject_value || '').trim();
-    const model = String(draft.model || '').trim();
+    const models = draft.id
+      ? [String(draft.model || '').trim()]
+      : Array.from(
+          new Set(
+            (draft.models || [])
+              .map((model) => String(model || '').trim())
+              .filter(Boolean),
+          ),
+        );
+    const model = models[0] || '';
     const usingGroup = String(draft.using_group || '').trim();
     const ratio = Number(draft.ratio);
     if (!subjectValue || !model || !Number.isFinite(ratio) || ratio < 0) {
@@ -285,6 +296,7 @@ export default function ModelPricingRules() {
       subject_type: draft.subject_type,
       subject_value: subjectValue,
       model,
+      models: draft.id ? undefined : models,
       using_group: usingGroup,
       ratio,
       enabled: !!draft.enabled,
@@ -339,7 +351,11 @@ export default function ModelPricingRules() {
             <Tag color={record.subject_type === 'user' ? 'blue' : 'violet'}>
               {record.subject_type === 'user' ? t('用户') : t('用户组')}
             </Tag>
-            <span>{value}</span>
+            <span>
+              {record.subject_type === 'user' && record.subject_name
+                ? `${record.subject_name} (#${value})`
+                : value}
+            </span>
           </Space>
         ),
       },
@@ -471,27 +487,54 @@ export default function ModelPricingRules() {
               }
             />
           )}
-          <Form.Select
-            // Semi Select retains its initial empty option state for controlled allowCreate fields.
-            key={modelOptions.map((option) => option.value).join('|')}
-            field='model'
-            label={t('模型')}
-            placeholder={t('搜索模型...')}
-            searchPlaceholder={t('搜索模型...')}
-            filter
-            allowCreate
-            optionList={modelOptions}
-            loading={modelOptionsLoading}
-            emptyContent={t('未找到模型')}
-            value={draft.model || undefined}
-            onChange={(value) =>
-              setDraft((current) => ({
-                ...current,
-                model: String(value || ''),
-              }))
-            }
-            style={{ width: '100%' }}
-          />
+          {draft.id ? (
+            <Form.Select
+              // Semi Select retains its initial empty option state for controlled allowCreate fields.
+              key={modelOptions.map((option) => option.value).join('|')}
+              field='model'
+              label={t('模型')}
+              placeholder={t('搜索模型...')}
+              searchPlaceholder={t('搜索模型...')}
+              filter
+              allowCreate
+              optionList={modelOptions}
+              loading={modelOptionsLoading}
+              emptyContent={t('未找到模型')}
+              value={draft.model || undefined}
+              onChange={(value) =>
+                setDraft((current) => ({
+                  ...current,
+                  model: String(value || ''),
+                }))
+              }
+              style={{ width: '100%' }}
+            />
+          ) : (
+            <Form.Select
+              // Recreate after async options load so Semi observes multi-select options.
+              key={modelOptions.map((option) => option.value).join('|')}
+              field='models'
+              label={t('模型')}
+              placeholder={t('搜索模型...')}
+              searchPlaceholder={t('搜索模型...')}
+              filter
+              multiple
+              allowCreate
+              optionList={modelOptions}
+              loading={modelOptionsLoading}
+              emptyContent={t('未找到模型')}
+              value={draft.models}
+              onChange={(value) =>
+                setDraft((current) => ({
+                  ...current,
+                  models: Array.isArray(value)
+                    ? value.map((model) => String(model || ''))
+                    : [],
+                }))
+              }
+              style={{ width: '100%' }}
+            />
+          )}
           <Form.Input
             field='using_group'
             label={

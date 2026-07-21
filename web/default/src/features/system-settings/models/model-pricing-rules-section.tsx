@@ -45,6 +45,13 @@ import type {
 
 const MODEL_PRICING_RULES_QUERY_KEY = ['model-pricing-rules'] as const
 
+function getSubjectLabel(rule: ModelPricingRule): string {
+  if (rule.subject_type === 'user' && rule.subject_name) {
+    return `${rule.subject_name} (#${rule.subject_value})`
+  }
+  return rule.subject_value
+}
+
 function getErrorMessage(error: unknown, fallback: string): string {
   if (typeof error === 'object' && error !== null && 'response' in error) {
     const response = error.response as { data?: { message?: string } }
@@ -142,9 +149,7 @@ export function ModelPricingRulesSection() {
               variant={rule.subject_type === 'user' ? 'info' : 'purple'}
               copyable={false}
             />
-            <span className='truncate font-mono text-sm'>
-              {rule.subject_value}
-            </span>
+            <span className='truncate text-sm'>{getSubjectLabel(rule)}</span>
           </div>
         ),
       },

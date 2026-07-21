@@ -16,9 +16,35 @@ type modelPricingRuleRequest struct {
 	SubjectType  string   `json:"subject_type"`
 	SubjectValue string   `json:"subject_value"`
 	Model        string   `json:"model"`
+	Models       []string `json:"models"`
 	UsingGroup   string   `json:"using_group"`
 	Ratio        *float64 `json:"ratio"`
 	Enabled      *bool    `json:"enabled"`
+}
+
+func modelPricingRulesFromRequest(request modelPricingRuleRequest) ([]*model.ModelPricingRule, error) {
+	if request.Models == nil {
+		rule, err := modelPricingRuleFromRequest(request)
+		if err != nil {
+			return nil, err
+		}
+		return []*model.ModelPricingRule{&rule}, nil
+	}
+	if len(request.Models) == 0 {
+		return nil, errors.New("models is required")
+	}
+
+	rules := make([]*model.ModelPricingRule, 0, len(request.Models))
+	for _, modelName := range request.Models {
+		requestWithModel := request
+		requestWithModel.Model = modelName
+		rule, err := modelPricingRuleFromRequest(requestWithModel)
+		if err != nil {
+			return nil, err
+		}
+		rules = append(rules, &rule)
+	}
+	return rules, nil
 }
 
 func modelPricingRuleFromRequest(request modelPricingRuleRequest) (model.ModelPricingRule, error) {
@@ -54,17 +80,23 @@ func CreateModelPricingRule(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid request"})
 		return
 	}
-	rule, err := modelPricingRuleFromRequest(request)
+	rules, err := modelPricingRulesFromRequest(request)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "ratio is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
 		return
 	}
-	if err := model.CreateModelPricingRule(&rule); err != nil {
+	if err := model.CreateModelPricingRules(rules); err != nil {
 		respondModelPricingRuleWriteError(c, err)
 		return
 	}
-	recordManageAudit(c, "model_pricing_rule.create", modelPricingRuleAuditParams(rule))
-	common.ApiSuccess(c, rule)
+	for _, rule := range rules {
+		recordManageAudit(c, "model_pricing_rule.create", modelPricingRuleAuditParams(*rule))
+	}
+	if len(rules) == 1 {
+		common.ApiSuccess(c, rules[0])
+		return
+	}
+	common.ApiSuccess(c, rules)
 }
 
 func UpdateModelPricingRule(c *gin.Context) {
@@ -76,6 +108,10 @@ func UpdateModelPricingRule(c *gin.Context) {
 	var request modelPricingRuleRequest
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "invalid request"})
+		return
+	}
+	if request.Models != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "models is only supported when creating rules"})
 		return
 	}
 	rule, err := modelPricingRuleFromRequest(request)

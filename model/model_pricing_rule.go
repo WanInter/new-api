@@ -31,6 +31,7 @@ type ModelPricingRule struct {
 	Id           int     `json:"id"`
 	SubjectType  string  `json:"subject_type" gorm:"type:varchar(16);not null;uniqueIndex:idx_model_pricing_rule_scope,priority:1"`
 	SubjectValue string  `json:"subject_value" gorm:"type:varchar(64);not null;uniqueIndex:idx_model_pricing_rule_scope,priority:2"`
+	SubjectName  string  `json:"subject_name,omitempty" gorm:"-"`
 	Model        string  `json:"model" gorm:"type:varchar(255);not null;uniqueIndex:idx_model_pricing_rule_scope,priority:3"`
 	UsingGroup   string  `json:"using_group" gorm:"type:varchar(64);not null;default:'';uniqueIndex:idx_model_pricing_rule_scope,priority:4"`
 	Ratio        float64 `json:"ratio"`
@@ -169,13 +170,55 @@ func GetModelPricingRules() ([]ModelPricingRule, error) {
 		return nil, ErrModelPricingRuleTablesUnavailable
 	}
 	var rules []ModelPricingRule
-	err := DB.Order("subject_type asc, subject_value asc, model asc, using_group asc").Find(&rules).Error
-	return rules, err
+	if err := DB.Order("subject_type asc, subject_value asc, model asc, using_group asc").Find(&rules).Error; err != nil {
+		return nil, err
+	}
+	if err := populateModelPricingRuleSubjectNames(rules); err != nil {
+		return nil, err
+	}
+	return rules, nil
 }
 
-func ensureModelPricingRuleScopeAvailable(rule *ModelPricingRule) error {
+func populateModelPricingRuleSubjectNames(rules []ModelPricingRule) error {
+	userIDs := make([]int, 0)
+	seenUserIDs := make(map[int]struct{})
+	for _, rule := range rules {
+		if rule.SubjectType != ModelPricingRuleSubjectUser {
+			continue
+		}
+		userID, err := strconv.Atoi(rule.SubjectValue)
+		if err != nil || userID <= 0 {
+			continue
+		}
+		if _, exists := seenUserIDs[userID]; exists {
+			continue
+		}
+		seenUserIDs[userID] = struct{}{}
+		userIDs = append(userIDs, userID)
+	}
+	if len(userIDs) == 0 {
+		return nil
+	}
+
+	var users []User
+	if err := DB.Select("id, username").Where("id IN ?", userIDs).Find(&users).Error; err != nil {
+		return err
+	}
+	usernames := make(map[string]string, len(users))
+	for _, user := range users {
+		usernames[strconv.Itoa(user.Id)] = user.Username
+	}
+	for i := range rules {
+		if rules[i].SubjectType == ModelPricingRuleSubjectUser {
+			rules[i].SubjectName = usernames[rules[i].SubjectValue]
+		}
+	}
+	return nil
+}
+
+func ensureModelPricingRuleScopeAvailableWithDB(db *gorm.DB, rule *ModelPricingRule) error {
 	var existing ModelPricingRule
-	query := DB.Where("subject_type = ? AND subject_value = ? AND model = ? AND using_group = ?",
+	query := db.Where("subject_type = ? AND subject_value = ? AND model = ? AND using_group = ?",
 		rule.SubjectType, rule.SubjectValue, rule.Model, rule.UsingGroup)
 	if rule.Id > 0 {
 		query = query.Where("id <> ?", rule.Id)
@@ -190,6 +233,10 @@ func ensureModelPricingRuleScopeAvailable(rule *ModelPricingRule) error {
 	return ErrModelPricingRuleConflict
 }
 
+func ensureModelPricingRuleScopeAvailable(rule *ModelPricingRule) error {
+	return ensureModelPricingRuleScopeAvailableWithDB(DB, rule)
+}
+
 func normalizeModelPricingRuleWriteError(err error) error {
 	if err != nil && strings.Contains(strings.ToLower(err.Error()), "unique") {
 		return ErrModelPricingRuleConflict
@@ -198,16 +245,42 @@ func normalizeModelPricingRuleWriteError(err error) error {
 }
 
 func CreateModelPricingRule(rule *ModelPricingRule) error {
-	if err := validateModelPricingRule(rule); err != nil {
-		return err
+	return CreateModelPricingRules([]*ModelPricingRule{rule})
+}
+
+// CreateModelPricingRules atomically creates one rule per model selection.
+func CreateModelPricingRules(rules []*ModelPricingRule) error {
+	if len(rules) == 0 {
+		return errors.New("at least one model pricing rule is required")
 	}
-	if err := validateModelPricingRuleSubject(rule); err != nil {
-		return err
+
+	seenScopes := make(map[string]struct{}, len(rules))
+	for _, rule := range rules {
+		if err := validateModelPricingRule(rule); err != nil {
+			return err
+		}
+		if err := validateModelPricingRuleSubject(rule); err != nil {
+			return err
+		}
+		scope := strings.Join([]string{rule.SubjectType, rule.SubjectValue, rule.Model, rule.UsingGroup}, "\x00")
+		if _, exists := seenScopes[scope]; exists {
+			return ErrModelPricingRuleConflict
+		}
+		seenScopes[scope] = struct{}{}
 	}
-	if err := ensureModelPricingRuleScopeAvailable(rule); err != nil {
-		return err
-	}
-	if err := DB.Create(rule).Error; err != nil {
+
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		for _, rule := range rules {
+			if err := ensureModelPricingRuleScopeAvailableWithDB(tx, rule); err != nil {
+				return err
+			}
+			if err := tx.Create(rule).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return normalizeModelPricingRuleWriteError(err)
 	}
 	return ReloadModelPricingRuleCache()

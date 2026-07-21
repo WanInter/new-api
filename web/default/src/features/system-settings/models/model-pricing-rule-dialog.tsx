@@ -27,6 +27,7 @@ import { Button } from '@/components/ui/button'
 import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { MultiSelect } from '@/components/multi-select'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -65,6 +66,7 @@ type ModelPricingRuleFormValues = {
   subject_type: ModelPricingRuleSubjectType
   subject_value: string
   model: string
+  models: string[]
   using_group: string
   ratio: number
   enabled: boolean
@@ -86,6 +88,7 @@ function buildDefaultValues(
       subject_type: rule.subject_type,
       subject_value: rule.subject_value,
       model: rule.model,
+      models: [],
       using_group: rule.using_group,
       ratio: rule.ratio,
       enabled: rule.enabled,
@@ -95,6 +98,7 @@ function buildDefaultValues(
     subject_type: 'user',
     subject_value: '',
     model: '',
+    models: [],
     using_group: '',
     ratio: 1,
     enabled: true,
@@ -103,23 +107,37 @@ function buildDefaultValues(
 
 export function ModelPricingRuleDialog(props: ModelPricingRuleDialogProps) {
   const { t } = useTranslation()
+  const isEditing = props.rule !== null
   const [userSearchValue, setUserSearchValue] = useState('')
   const [userOptions, setUserOptions] = useState<SelectorOption[]>([])
   const debouncedUserSearch = useDebounce(userSearchValue, 300)
   const schema = useMemo(
     () =>
-      z.object({
-        subject_type: z.enum(['user', 'user_group']),
-        subject_value: z.string().trim().min(1, t('Value is required')),
-        model: z.string().trim().min(1, t('Value is required')),
-        using_group: z.string(),
-        ratio: z.coerce
-          .number()
-          .finite(t('Ratio must be a non-negative number'))
-          .min(0, t('Ratio must be a non-negative number')),
-        enabled: z.boolean(),
-      }),
-    [t]
+      z
+        .object({
+          subject_type: z.enum(['user', 'user_group']),
+          subject_value: z.string().trim().min(1, t('Value is required')),
+          model: z.string(),
+          models: z.array(z.string()),
+          using_group: z.string(),
+          ratio: z.coerce
+            .number()
+            .finite(t('Ratio must be a non-negative number'))
+            .min(0, t('Ratio must be a non-negative number')),
+          enabled: z.boolean(),
+        })
+        .superRefine((values, context) => {
+          const hasModel = isEditing
+            ? Boolean(values.model.trim())
+            : values.models.some((modelName) => modelName.trim())
+          if (hasModel) return
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: t('Value is required'),
+            path: [isEditing ? 'model' : 'models'],
+          })
+        }),
+    [isEditing, t]
   )
   const form = useForm<ModelPricingRuleFormValues>({
     resolver: zodResolver(
@@ -140,6 +158,7 @@ export function ModelPricingRuleDialog(props: ModelPricingRuleDialogProps) {
   const subjectType = form.watch('subject_type')
   const subjectValue = form.watch('subject_value')
   const model = form.watch('model')
+  const models = form.watch('models')
   const enabled = form.watch('enabled')
   const userOptionsQuery = useQuery({
     queryKey: ['model-pricing-rule-user-options', debouncedUserSearch],
@@ -222,10 +241,18 @@ export function ModelPricingRuleDialog(props: ModelPricingRuleDialogProps) {
   }, [subjectType, subjectValue, userGroupOptionsQuery.data])
 
   const onSubmit = async (values: ModelPricingRuleFormValues) => {
+    const selectedModels = isEditing
+      ? [values.model.trim()]
+      : Array.from(
+          new Set(
+            values.models.map((modelName) => modelName.trim()).filter(Boolean)
+          )
+        )
     const saved = await props.onSave({
       subject_type: values.subject_type,
       subject_value: values.subject_value.trim(),
-      model: values.model.trim(),
+      model: selectedModels[0] ?? '',
+      models: isEditing ? undefined : selectedModels,
       using_group: values.using_group.trim(),
       ratio: Number(values.ratio),
       enabled: values.enabled,
@@ -324,29 +351,55 @@ export function ModelPricingRuleDialog(props: ModelPricingRuleDialogProps) {
         </div>
         <div className='grid gap-2'>
           <Label htmlFor='model-pricing-rule-model'>{t('Model')}</Label>
-          <Combobox
-            id='model-pricing-rule-model'
-            aria-invalid={!!form.formState.errors.model}
-            options={modelOptions}
-            value={model}
-            onValueChange={(value) =>
-              form.setValue('model', value ?? '', {
-                shouldDirty: true,
-                shouldValidate: true,
-              })
-            }
-            searchPlaceholder={t('Select or enter model name')}
-            emptyText={
-              modelOptionsQuery.isLoading
-                ? t('Loading...')
-                : t('No models found')
-            }
-            allowCustomValue
-            className='w-full'
-          />
-          {form.formState.errors.model?.message ? (
+          {isEditing ? (
+            <Combobox
+              id='model-pricing-rule-model'
+              aria-invalid={!!form.formState.errors.model}
+              options={modelOptions}
+              value={model}
+              onValueChange={(value) =>
+                form.setValue('model', value ?? '', {
+                  shouldDirty: true,
+                  shouldValidate: true,
+                })
+              }
+              searchPlaceholder={t('Select or enter model name')}
+              emptyText={
+                modelOptionsQuery.isLoading
+                  ? t('Loading...')
+                  : t('No models found')
+              }
+              allowCustomValue
+              className='w-full'
+            />
+          ) : (
+            <MultiSelect
+              id='model-pricing-rule-model'
+              options={modelOptions}
+              selected={models}
+              onChange={(values) =>
+                form.setValue('models', values, {
+                  shouldDirty: true,
+                  shouldValidate: true,
+                })
+              }
+              placeholder={t('Select or enter model name')}
+              emptyText={
+                modelOptionsQuery.isLoading
+                  ? t('Loading...')
+                  : t('No models found')
+              }
+              allowCreate
+              maxVisibleChips={4}
+            />
+          )}
+          {(isEditing
+            ? form.formState.errors.model?.message
+            : form.formState.errors.models?.message) ? (
             <p className='text-destructive text-xs'>
-              {form.formState.errors.model.message}
+              {isEditing
+                ? form.formState.errors.model?.message
+                : form.formState.errors.models?.message}
             </p>
           ) : null}
         </div>
