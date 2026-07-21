@@ -36,7 +36,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { Dialog } from '@/components/dialog'
-import { searchModels } from '@/features/models/api'
+import { getEnabledModels } from '@/features/channels/api'
 import { searchUsers } from '@/features/users/api'
 import type {
   ModelPricingRule,
@@ -104,11 +104,8 @@ function buildDefaultValues(
 export function ModelPricingRuleDialog(props: ModelPricingRuleDialogProps) {
   const { t } = useTranslation()
   const [userSearchValue, setUserSearchValue] = useState('')
-  const [modelSearchValue, setModelSearchValue] = useState('')
   const [userOptions, setUserOptions] = useState<SelectorOption[]>([])
-  const [modelOptions, setModelOptions] = useState<SelectorOption[]>([])
   const debouncedUserSearch = useDebounce(userSearchValue, 300)
-  const debouncedModelSearch = useDebounce(modelSearchValue, 300)
   const schema = useMemo(
     () =>
       z.object({
@@ -137,9 +134,7 @@ export function ModelPricingRuleDialog(props: ModelPricingRuleDialogProps) {
     setUserSearchValue(
       props.rule?.subject_type === 'user' ? props.rule.subject_value : ''
     )
-    setModelSearchValue(props.rule?.model ?? '')
     setUserOptions([])
-    setModelOptions([])
   }, [form, props.open, props.rule])
 
   const subjectType = form.watch('subject_type')
@@ -162,14 +157,10 @@ export function ModelPricingRuleDialog(props: ModelPricingRuleDialogProps) {
     staleTime: 30_000,
   })
   const modelOptionsQuery = useQuery({
-    queryKey: ['model-pricing-rule-model-options', debouncedModelSearch],
+    queryKey: ['model-pricing-rule-model-options'],
     queryFn: async () => {
-      const result = await searchModels({
-        keyword: debouncedModelSearch,
-        p: 1,
-        page_size: SELECTOR_PAGE_SIZE,
-      })
-      return result.success ? (result.data?.items ?? []) : []
+      const result = await getEnabledModels()
+      return result.success ? (result.data ?? []) : []
     },
     enabled: props.open,
     staleTime: 30_000,
@@ -185,15 +176,21 @@ export function ModelPricingRuleDialog(props: ModelPricingRuleDialogProps) {
     }
   }, [userOptionsQuery.data])
 
-  useEffect(() => {
-    const options = (modelOptionsQuery.data ?? []).map((item) => ({
-      value: item.model_name,
-      label: item.model_name,
-    }))
-    if (options.length > 0) {
-      setModelOptions((current) => mergeSelectorOptions(current, options))
+  const modelOptions = useMemo(() => {
+    const options = Array.from(
+      new Set(
+        (modelOptionsQuery.data ?? [])
+          .map((name) => name.trim())
+          .filter(Boolean)
+      )
+    )
+      .sort((left, right) => left.localeCompare(right))
+      .map((name) => ({ value: name, label: name }))
+    if (model && !options.some((option) => option.value === model)) {
+      return [{ value: model, label: model }, ...options]
     }
-  }, [modelOptionsQuery.data])
+    return options
+  }, [model, modelOptionsQuery.data])
 
   const onSubmit = async (values: ModelPricingRuleFormValues) => {
     const saved = await props.onSave({
@@ -295,9 +292,12 @@ export function ModelPricingRuleDialog(props: ModelPricingRuleDialogProps) {
                 shouldValidate: true,
               })
             }
-            onSearchValueChange={setModelSearchValue}
             searchPlaceholder={t('Select or enter model name')}
-            emptyText={t('No models found')}
+            emptyText={
+              modelOptionsQuery.isLoading
+                ? t('Loading...')
+                : t('No models found')
+            }
             allowCustomValue
             className='w-full'
           />
@@ -348,7 +348,7 @@ export function ModelPricingRuleDialog(props: ModelPricingRuleDialogProps) {
             id='model-pricing-rule-ratio'
             type='number'
             min={0}
-            step='0.000001'
+            step='0.01'
             aria-invalid={!!form.formState.errors.ratio}
             {...form.register('ratio', { valueAsNumber: true })}
           />

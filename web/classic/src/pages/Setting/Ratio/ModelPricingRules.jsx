@@ -74,7 +74,6 @@ export default function ModelPricingRules() {
   const [userOptionsLoading, setUserOptionsLoading] = useState(false);
   const [modelOptionsLoading, setModelOptionsLoading] = useState(false);
   const userSearchTimer = useRef(null);
-  const modelSearchTimer = useRef(null);
   const userRequestId = useRef(0);
   const modelRequestId = useRef(0);
 
@@ -101,7 +100,6 @@ export default function ModelPricingRules() {
   useEffect(
     () => () => {
       clearTimeout(userSearchTimer.current);
-      clearTimeout(modelSearchTimer.current);
       userRequestId.current += 1;
       modelRequestId.current += 1;
     },
@@ -143,25 +141,33 @@ export default function ModelPricingRules() {
   );
 
   const loadModelOptions = useCallback(
-    async (keyword = '', selectedValue = '') => {
+    async (selectedValue = '') => {
       const requestId = ++modelRequestId.current;
       setModelOptionsLoading(true);
       try {
-        const res = await API.get('/api/models/search', {
-          params: { keyword, p: 1, page_size: 100 },
-        });
+        const res = await API.get('/api/channel/models_enabled');
         if (!res.data.success) {
           showError(res.data.message);
           return;
         }
-        const options = (res.data.data?.items || []).map((model) => ({
-          value: model.model_name,
-          label: model.model_name,
-        }));
+        const options = Array.from(
+          new Set(
+            (res.data.data || [])
+              .map((model) => String(model || '').trim())
+              .filter(Boolean),
+          ),
+        )
+          .sort((left, right) => left.localeCompare(right))
+          .map((model) => ({ value: model, label: model }));
+        const selectedModel = String(selectedValue || '').trim();
+        if (
+          selectedModel &&
+          !options.some((option) => option.value === selectedModel)
+        ) {
+          options.unshift({ value: selectedModel, label: selectedModel });
+        }
         if (requestId === modelRequestId.current) {
-          setModelOptions((current) =>
-            replaceOptions(current, options, selectedValue),
-          );
+          setModelOptions(options);
         }
       } catch (error) {
         if (requestId === modelRequestId.current) {
@@ -180,14 +186,6 @@ export default function ModelPricingRules() {
     clearTimeout(userSearchTimer.current);
     userSearchTimer.current = setTimeout(
       () => loadUserOptions(keyword.trim(), draft.subject_value),
-      300,
-    );
-  };
-
-  const searchModels = (keyword) => {
-    clearTimeout(modelSearchTimer.current);
-    modelSearchTimer.current = setTimeout(
-      () => loadModelOptions(keyword.trim(), draft.model),
       300,
     );
   };
@@ -218,7 +216,7 @@ export default function ModelPricingRules() {
       rule.subject_type === 'user' ? rule.subject_value : '',
       rule.subject_type === 'user' ? rule.subject_value : '',
     );
-    loadModelOptions(rule.model, rule.model);
+    loadModelOptions(rule.model);
   };
 
   const saveRule = async () => {
@@ -420,13 +418,11 @@ export default function ModelPricingRules() {
             placeholder={t('搜索模型...')}
             searchPlaceholder={t('搜索模型...')}
             filter
-            remote
             allowCreate
             optionList={modelOptions}
             loading={modelOptionsLoading}
             emptyContent={t('未找到模型')}
             value={draft.model || undefined}
-            onSearch={searchModels}
             onChange={(value) =>
               setDraft((current) => ({
                 ...current,
@@ -456,7 +452,8 @@ export default function ModelPricingRules() {
             field='ratio'
             label={t('倍率')}
             min={0}
-            precision={6}
+            precision={2}
+            step={0.01}
             value={draft.ratio}
             onChange={(value) =>
               setDraft((current) => ({ ...current, ratio: value }))
