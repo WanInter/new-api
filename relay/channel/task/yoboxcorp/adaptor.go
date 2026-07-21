@@ -45,11 +45,17 @@ type generateResponse struct {
 }
 
 type upstreamTask struct {
-	ID      string   `json:"id"`
-	Status  string   `json:"status"`
-	Model   string   `json:"model"`
-	Outputs []string `json:"outputs"`
-	Error   any      `json:"error"`
+	ID      string    `json:"id"`
+	Status  string    `json:"status"`
+	Model   string    `json:"model"`
+	Outputs []string  `json:"outputs"`
+	Usage   taskUsage `json:"usage"`
+	Error   any       `json:"error"`
+}
+
+type taskUsage struct {
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
 type asyncSubmitResponse struct {
@@ -76,6 +82,7 @@ type asyncTaskEnvelope struct {
 	Progress   int              `json:"progress"`
 	FailReason string           `json:"fail_reason"`
 	Data       asyncTaskPayload `json:"data"`
+	Usage      taskUsage        `json:"usage"`
 
 	ID       string   `json:"id"`
 	VideoURL string   `json:"video_url"`
@@ -95,6 +102,7 @@ type asyncTaskPayload struct {
 	Error      any           `json:"error"`
 	FailReason string        `json:"fail_reason"`
 	Task       *upstreamTask `json:"task"`
+	Usage      taskUsage     `json:"usage"`
 }
 
 type assetRequest struct {
@@ -161,12 +169,21 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	return nil
 }
 
-func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) map[string]float64 {
+func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return nil
 	}
-	return map[string]float64{"seconds": float64(requestDuration(req))}
+
+	modelName := ""
+	if info != nil {
+		modelName = info.OriginModelName
+	}
+	multiplier := officialTokenPriceMultiplier(modelName, requestResolution(req), requestHasVideoInput(req))
+	if multiplier == 1 {
+		return nil
+	}
+	return map[string]float64{"official_token_price_multiplier": multiplier}
 }
 
 func (a *TaskAdaptor) BuildRequestURL(_ *relaycommon.RelayInfo) (string, error) {
@@ -291,6 +308,10 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	if status == model.TaskStatusSuccess {
 		result.Url = firstNonEmpty(asyncResponse.Data.Data.VideoURL, firstString(asyncResponse.Data.Data.Outputs), asyncResponse.Data.Data.URL, asyncResponse.Data.VideoURL, firstString(asyncResponse.Data.Outputs), asyncResponse.Data.URL)
 		result.Progress = taskcommon.ProgressComplete
+		result.CompletionTokens, result.TotalTokens = taskUsageTokens(
+			asyncResponse.Data.Data.Usage,
+			asyncResponse.Data.Usage,
+		)
 	}
 	if status == model.TaskStatusFailure {
 		result.Reason = firstNonEmpty(
@@ -325,6 +346,7 @@ func taskInfoFromNativeTask(task *upstreamTask) (*relaycommon.TaskInfo, error) {
 	if status == model.TaskStatusSuccess {
 		result.Url = firstString(task.Outputs)
 		result.Progress = taskcommon.ProgressComplete
+		result.CompletionTokens, result.TotalTokens = taskUsageTokens(task.Usage)
 	}
 	if status == model.TaskStatusFailure {
 		result.Reason = taskErrorMessage(task.Error)
@@ -656,6 +678,73 @@ func requestDuration(req relaycommon.TaskSubmitReq) int {
 		return value
 	}
 	return 4
+}
+
+func requestHasVideoInput(req relaycommon.TaskSubmitReq) bool {
+	if len(appendURLs(req.Videos, req.VideoURLs)) > 0 {
+		return true
+	}
+	for _, item := range req.Content {
+		if strings.EqualFold(strings.TrimSpace(item.Type), "video_url") && item.VideoURL != nil && strings.TrimSpace(item.VideoURL.URL) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// officialTokenPriceMultiplier normalizes every official rate to the video-input
+// 480p/720p rate configured as the model's ModelRatio.
+func officialTokenPriceMultiplier(modelName, resolution string, hasVideoInput bool) float64 {
+	resolution = strings.ToLower(strings.TrimSpace(resolution))
+	switch modelName {
+	case "dreamina-seedance-2-0-hc":
+		const baseRate = 4.3
+		if hasVideoInput {
+			switch resolution {
+			case "1080p":
+				return 4.7 / baseRate
+			case "4k":
+				return 2.4 / baseRate
+			default:
+				return 1
+			}
+		}
+		switch resolution {
+		case "1080p":
+			return 7.7 / baseRate
+		case "4k":
+			return 4.0 / baseRate
+		default:
+			return 7.0 / baseRate
+		}
+	case "dreamina-seedance-2-0-fast-hc":
+		if hasVideoInput {
+			return 1
+		}
+		return 5.6 / 3.3
+	case "dreamina-seedance-2-0-mini-hc":
+		if hasVideoInput {
+			return 1
+		}
+		return 3.5 / 2.1
+	default:
+		return 1
+	}
+}
+
+func taskUsageTokens(usages ...taskUsage) (completionTokens, totalTokens int) {
+	for _, usage := range usages {
+		if completionTokens == 0 && usage.CompletionTokens > 0 {
+			completionTokens = usage.CompletionTokens
+		}
+		if totalTokens == 0 && usage.TotalTokens > 0 {
+			totalTokens = usage.TotalTokens
+		}
+	}
+	if totalTokens == 0 {
+		totalTokens = completionTokens
+	}
+	return completionTokens, totalTokens
 }
 
 func requestResolution(req relaycommon.TaskSubmitReq) string {

@@ -222,6 +222,72 @@ func TestBuildGeneratePayloadDefaultsRequiredFields(t *testing.T) {
 	assert.Equal(t, false, payload["watermark"])
 }
 
+func TestEstimateBillingUsesOfficialTokenPriceMultiplier(t *testing.T) {
+	tests := []struct {
+		name       string
+		model      string
+		request    relaycommon.TaskSubmitReq
+		multiplier float64
+	}{
+		{
+			name:       "standard 720p without video",
+			model:      "dreamina-seedance-2-0-hc",
+			request:    relaycommon.TaskSubmitReq{Resolution: "720p"},
+			multiplier: 7.0 / 4.3,
+		},
+		{
+			name:       "standard 1080p with video",
+			model:      "dreamina-seedance-2-0-hc",
+			request:    relaycommon.TaskSubmitReq{Resolution: "1080p", Videos: []string{"asset://video"}},
+			multiplier: 4.7 / 4.3,
+		},
+		{
+			name:       "standard 4k without video",
+			model:      "dreamina-seedance-2-0-hc",
+			request:    relaycommon.TaskSubmitReq{Resolution: "4K"},
+			multiplier: 4.0 / 4.3,
+		},
+		{
+			name:       "fast without video",
+			model:      "dreamina-seedance-2-0-fast-hc",
+			request:    relaycommon.TaskSubmitReq{Resolution: "720p"},
+			multiplier: 5.6 / 3.3,
+		},
+		{
+			name:       "mini without video",
+			model:      "dreamina-seedance-2-0-mini-hc",
+			request:    relaycommon.TaskSubmitReq{Resolution: "480p"},
+			multiplier: 3.5 / 2.1,
+		},
+		{
+			name:  "standard content video at base rate",
+			model: "dreamina-seedance-2-0-hc",
+			request: relaycommon.TaskSubmitReq{
+				Resolution: "720p",
+				Content: []relaycommon.TaskContentItem{{
+					Type:     "video_url",
+					VideoURL: &relaycommon.TaskContentURL{URL: "asset://video"},
+				}},
+			},
+			multiplier: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Set("task_request", tt.request)
+
+			ratios := (&TaskAdaptor{}).EstimateBilling(c, &relaycommon.RelayInfo{OriginModelName: tt.model})
+			if tt.multiplier == 1 {
+				assert.Empty(t, ratios)
+				return
+			}
+			assert.InDelta(t, tt.multiplier, ratios["official_token_price_multiplier"], 0.000000001)
+		})
+	}
+}
+
 func TestDoResponseUsesAsyncTaskEnvelope(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -271,13 +337,15 @@ func TestParseTaskFailureExposesUpstreamError(t *testing.T) {
 	assert.Equal(t, "100%", result.Progress)
 }
 
-func TestParseNativeTaskEnvelopeRemainsSupported(t *testing.T) {
-	result, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{"task":{"id":"mvt_native","status":"completed","outputs":["https://example.com/native.mp4"]}}`))
+func TestParseNativeTaskEnvelopeReadsUsage(t *testing.T) {
+	result, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{"task":{"id":"mvt_native","status":"completed","outputs":["https://example.com/native.mp4"],"usage":{"completion_tokens":86400,"total_tokens":86400}}}`))
 
 	require.NoError(t, err)
 	assert.Equal(t, "mvt_native", result.TaskID)
 	assert.Equal(t, string(model.TaskStatusSuccess), result.Status)
 	assert.Equal(t, "https://example.com/native.mp4", result.Url)
+	assert.Equal(t, 86400, result.CompletionTokens)
+	assert.Equal(t, 86400, result.TotalTokens)
 }
 
 func TestParseTaskResultReadsNestedYoboxCorpTask(t *testing.T) {
@@ -285,8 +353,9 @@ func TestParseTaskResultReadsNestedYoboxCorpTask(t *testing.T) {
 		"success":true,
 		"data":{"data":{"task":{
 			"id":"mvt_nested",
-			"status":"completed",
-			"outputs":["https://example.com/nested.mp4"]
+				"status":"completed",
+				"outputs":["https://example.com/nested.mp4"],
+				"usage":{"completion_tokens":43200}
 		}}}
 	}`))
 
@@ -295,6 +364,8 @@ func TestParseTaskResultReadsNestedYoboxCorpTask(t *testing.T) {
 	assert.Equal(t, string(model.TaskStatusSuccess), result.Status)
 	assert.Equal(t, "https://example.com/nested.mp4", result.Url)
 	assert.Equal(t, "100%", result.Progress)
+	assert.Equal(t, 43200, result.CompletionTokens)
+	assert.Equal(t, 43200, result.TotalTokens)
 }
 
 func TestConvertToOpenAIVideoIncludesStoredResultURL(t *testing.T) {

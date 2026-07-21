@@ -356,9 +356,17 @@ func calculateTaskQuotaByTokens(task *model.Task, totalTokens int) (int, string,
 
 	modelName := taskModelName(task)
 
-	// 获取模型价格和倍率
-	modelRatio, hasRatioSetting, _ := ratio_setting.GetModelRatio(modelName)
-	// 只有配置了倍率(非固定价格)时才按 token 重新计费
+	// Keep the model ratio selected at submission time. Re-resolving it here
+	// would retroactively change an in-flight task after an administrator edits
+	// its pricing policy.
+	modelRatio := 0.0
+	hasRatioSetting := false
+	if bc := task.PrivateData.BillingContext; bc != nil && bc.ModelRatio > 0 {
+		modelRatio = bc.ModelRatio
+		hasRatioSetting = true
+	} else {
+		modelRatio, hasRatioSetting, _ = ratio_setting.GetModelRatio(modelName)
+	}
 	if !hasRatioSetting || modelRatio <= 0 {
 		return 0, "", false
 	}

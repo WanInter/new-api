@@ -142,6 +142,25 @@ func makeTask(userId, channelId, quota, tokenId int, billingSource string, subsc
 	}
 }
 
+func TestCalculateTaskQuotaByTokensUsesSubmittedModelRatio(t *testing.T) {
+	task := &model.Task{
+		Properties: model.Properties{OriginModelName: "snapshot-only-model"},
+		PrivateData: model.TaskPrivateData{
+			BillingContext: &model.TaskBillingContext{
+				ModelRatio:      2,
+				GroupRatio:      1,
+				OtherRatios:     map[string]float64{"official_token_price_multiplier": 1},
+				OriginModelName: "snapshot-only-model",
+			},
+		},
+	}
+
+	quota, _, ok := calculateTaskQuotaByTokens(task, 20000)
+
+	require.True(t, ok)
+	assert.Equal(t, 40000, quota)
+}
+
 // ---------------------------------------------------------------------------
 // Read-back helpers
 // ---------------------------------------------------------------------------
