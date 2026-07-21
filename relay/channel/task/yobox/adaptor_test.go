@@ -326,6 +326,32 @@ func TestParseTaskResultExtractsNestedFailureReason(t *testing.T) {
 	require.Equal(t, "100%", info.Progress)
 }
 
+func TestParseTaskResultExtractsNestedObjectFailureReason(t *testing.T) {
+	info, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{
+		"success": true,
+		"message": "",
+		"data": {
+			"task_id": "task_failed",
+			"status": "FAILURE",
+			"progress": 100,
+			"data": {
+				"status": "failed",
+				"phase": "failed",
+				"error": {
+					"code": "upstream_error",
+					"message": "reference video could not be processed"
+				}
+			}
+		}
+	}`))
+	require.NoError(t, err)
+
+	assert.Equal(t, "task_failed", info.TaskID)
+	assert.Equal(t, string(model.TaskStatusFailure), info.Status)
+	assert.Equal(t, "reference video could not be processed", info.Reason)
+	assert.Equal(t, "100%", info.Progress)
+}
+
 func TestParseTaskResultRejectsUnknownStatus(t *testing.T) {
 	info, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{"task_id":"task_unknown","status":"pausing"}`))
 

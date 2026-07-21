@@ -60,7 +60,7 @@ type yoboxTaskEnvelope struct {
 	URL      string   `json:"url"`
 	Seconds  int      `json:"seconds"`
 	Phase    string   `json:"phase"`
-	Error    string   `json:"error"`
+	Error    any      `json:"error"`
 }
 
 type yoboxTaskPayload struct {
@@ -73,7 +73,7 @@ type yoboxTaskPayload struct {
 	URL        string   `json:"url"`
 	Seconds    int      `json:"seconds"`
 	Phase      string   `json:"phase"`
-	Error      string   `json:"error"`
+	Error      any      `json:"error"`
 	FailReason string   `json:"fail_reason"`
 }
 
@@ -242,9 +242,33 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 	if status == model.TaskStatusFailure {
 		info.Progress = "100%"
-		info.Reason, _ = sanitizeYoboxFailureReason(firstNonEmpty(parsed.Data.FailReason, parsed.FailReason, parsed.Data.Data.FailReason, parsed.Data.Data.Error, parsed.Data.Data.Phase, parsed.Data.Error, parsed.Data.Phase, parsed.Message, "task failed"))
+		info.Reason, _ = sanitizeYoboxFailureReason(firstNonEmpty(
+			parsed.Data.FailReason,
+			parsed.FailReason,
+			parsed.Data.Data.FailReason,
+			yoboxTaskErrorMessage(parsed.Data.Data.Error),
+			parsed.Data.Data.Phase,
+			yoboxTaskErrorMessage(parsed.Data.Error),
+			parsed.Data.Phase,
+			parsed.Message,
+			"task failed",
+		))
 	}
 	return info, nil
+}
+
+func yoboxTaskErrorMessage(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case map[string]any:
+		for _, key := range []string{"message", "error", "detail", "reason", "code"} {
+			if message := yoboxTaskErrorMessage(typed[key]); message != "" {
+				return message
+			}
+		}
+	}
+	return ""
 }
 
 func sanitizeYoboxFailureReason(message string) (string, bool) {
