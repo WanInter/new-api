@@ -72,7 +72,7 @@ func TestBuildRequestBodyUploadsAssetsAndPreservesFileObjects(t *testing.T) {
 		OriginModelName: "Seedance-2.0-719",
 		ChannelMeta: &relaycommon.ChannelMeta{
 			ApiKey:            "upstream-key",
-			ChannelBaseUrl:    server.URL + "/api/v1",
+			ChannelBaseUrl:    server.URL + "/api/v1?channel=channel17",
 			UpstreamModelName: "viraldance900--person-stripe--6c832bb1--voice-tone--a0c4ee78",
 			IsModelMapped:     true,
 		},
@@ -89,7 +89,7 @@ func TestBuildRequestBodyUploadsAssetsAndPreservesFileObjects(t *testing.T) {
 
 	var payload generationRequest
 	require.NoError(t, common.Unmarshal(encoded, &payload))
-	assert.Equal(t, upstreamChannel, payload.Channel)
+	assert.Equal(t, "channel17", payload.Channel)
 	assert.Equal(t, "viraldance900--person-stripe--6c832bb1--voice-tone--a0c4ee78", payload.Model)
 	assert.Equal(t, "animate the references", payload.Prompt)
 	require.NotNil(t, payload.Duration)
@@ -106,6 +106,71 @@ func TestBuildRequestBodyUploadsAssetsAndPreservesFileObjects(t *testing.T) {
 		assert.Equal(t, "file", file["object"])
 		assert.Equal(t, map[string]any{"retained": true}, file["custom"])
 	}
+}
+
+func TestBuildGenerationRequestUsesConfiguredChannel(t *testing.T) {
+	testCases := []struct {
+		name               string
+		baseURL            string
+		wantChannel        string
+		wantRequestBaseURL string
+	}{
+		{
+			name:               "defaults to channel14",
+			baseURL:            "https://example.com/api/v1",
+			wantChannel:        dto.DefaultSeventhFrameChannel,
+			wantRequestBaseURL: "https://example.com/api/v1",
+		},
+		{
+			name:               "uses channel from base URL query",
+			baseURL:            "https://example.com/api/v1?channel=channel17",
+			wantChannel:        "channel17",
+			wantRequestBaseURL: "https://example.com/api/v1",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			info := &relaycommon.RelayInfo{
+				ChannelMeta: &relaycommon.ChannelMeta{
+					ChannelBaseUrl: testCase.baseURL,
+				},
+			}
+			adaptor := &TaskAdaptor{}
+			adaptor.Init(info)
+
+			payload, err := adaptor.buildGenerationRequest(context.Background(), relaycommon.TaskSubmitReq{
+				Prompt: "generate a video",
+			}, info)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.wantChannel, payload.Channel)
+			requestURL, err := adaptor.BuildRequestURL(info)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.wantRequestBaseURL+videoGenerationsPath, requestURL)
+		})
+	}
+}
+
+func TestFetchTaskStripsChannelQueryFromBaseURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/video/generations/task-123", r.URL.Path)
+		assert.Empty(t, r.URL.RawQuery)
+		assert.Equal(t, "Bearer upstream-key", r.Header.Get("Authorization"))
+		_, _ = w.Write([]byte(`{"generation":{"id":"task-123","status":"running"}}`))
+	}))
+	defer server.Close()
+
+	resp, err := (&TaskAdaptor{}).FetchTask(
+		context.Background(),
+		server.URL+"/api/v1?channel=channel17",
+		"upstream-key",
+		map[string]any{"task_id": "task-123"},
+		"",
+	)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 }
 
 func TestBuildRequestBodyUsesASCIIFilenameForUnicodeAssetURL(t *testing.T) {

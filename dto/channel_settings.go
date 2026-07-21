@@ -51,6 +51,47 @@ type ChannelOtherSettings struct {
 	VideoRouting                          *VideoRoutingConfig   `json:"video_routing,omitempty"`
 }
 
+const DefaultSeventhFrameChannel = "channel14"
+
+func ParseSeventhFrameBaseURL(rawBaseURL string) (string, string, error) {
+	rawBaseURL = strings.TrimSpace(rawBaseURL)
+	if rawBaseURL == "" {
+		return "", DefaultSeventhFrameChannel, nil
+	}
+
+	parsedURL, err := url.Parse(rawBaseURL)
+	if err != nil {
+		return "", "", fmt.Errorf("parse SeventhFrame base URL: %w", err)
+	}
+	upstreamChannel := strings.TrimSpace(parsedURL.Query().Get("channel"))
+	if upstreamChannel == "" {
+		upstreamChannel = DefaultSeventhFrameChannel
+	}
+	parsedURL.RawQuery = ""
+	parsedURL.ForceQuery = false
+	parsedURL.Fragment = ""
+	return strings.TrimRight(parsedURL.String(), "/"), upstreamChannel, nil
+}
+
+func IsValidSeventhFrameChannel(channel string) bool {
+	channel = strings.TrimSpace(channel)
+	if !strings.HasPrefix(channel, "channel") {
+		return false
+	}
+	value := strings.TrimPrefix(channel, "channel")
+	if value == "" || (len(value) > 1 && value[0] == '0') {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	var number int
+	_, err := fmt.Sscanf(value, "%d", &number)
+	return err == nil && number >= 1 && number <= 17
+}
+
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {
 	if s == nil || s.OpenRouterEnterprise == nil {
 		return false
