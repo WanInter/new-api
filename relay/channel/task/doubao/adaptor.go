@@ -385,9 +385,9 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	if req.Resolution != "" {
 		r.Resolution = req.Resolution
 	}
-	if req.Size != "" {
-		r.Ratio = req.Size
-	}
+	// Ark calls this field ratio. Keep size as the legacy override, but accept
+	// the public video API's aspect_ratio field when size is not supplied.
+	r.Ratio = firstNonEmpty(req.Size, req.AspectRatio, r.Ratio)
 
 	r.Content = lo.Reject(r.Content, func(c ContentItem, _ int) bool { return c.Type == "text" })
 	r.Content = append(r.Content, ContentItem{

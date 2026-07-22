@@ -135,7 +135,7 @@ func TestMaxAPISeedanceBetaUsesVolcengineArkProtocol(t *testing.T) {
 	bodyJSON := `{
 		"model":"public-seedance-beta",
 		"prompt":"Use the reference image as the character and the video as the motion",
-		"size":"16:9",
+		"aspect_ratio":"16:9",
 		"resolution":"1080p",
 		"duration":15,
 		"metadata":{
