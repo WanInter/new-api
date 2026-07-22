@@ -4935,7 +4935,7 @@
     "Failed to load captured requests": "Не удалось загрузить захваченные запросы",
     "Failed to update capture policy": "Не удалось обновить политику захвата",
     "No captured requests found": "Захваченные запросы не найдены",
-    "Only non-streaming JSON and plain-text payloads are eligible for capture.": "Для захвата доступны только не потоковые JSON и текстовые данные.",
+    "JSON, plain-text, and text Server-Sent Event (SSE) payloads are eligible for capture.": "Для захвата доступны JSON, обычный текст и текстовые Server-Sent Events (SSE).",
     "Outcome": "Результат",
     "Protocol": "Протокол",
     "Relay Capture": "Захват реле",

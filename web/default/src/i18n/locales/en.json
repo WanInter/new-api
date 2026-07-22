@@ -4935,7 +4935,7 @@
     "Failed to load captured requests": "Failed to load captured requests",
     "Failed to update capture policy": "Failed to update capture policy",
     "No captured requests found": "No captured requests found",
-    "Only non-streaming JSON and plain-text payloads are eligible for capture.": "Only non-streaming JSON and plain-text payloads are eligible for capture.",
+    "JSON, plain-text, and text Server-Sent Event (SSE) payloads are eligible for capture.": "JSON, plain-text, and text Server-Sent Event (SSE) payloads are eligible for capture.",
     "Outcome": "Outcome",
     "Protocol": "Protocol",
     "Relay Capture": "Relay Capture",

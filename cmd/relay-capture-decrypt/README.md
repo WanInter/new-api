@@ -34,10 +34,12 @@ archive. `--capture-root` remains an equivalent compatibility alias.
 
 Every output line has the form `{"messages":[...]}`. Chat Completions exports
 one line per response choice. Anthropic Messages and OpenAI Responses preserve
-their structured content blocks. The JSONL output is created with mode `0600`
-and is not overwritten unless `--force` is specified.
+their structured content blocks for non-streaming captures. For supported text
+SSE captures, the exporter reconstructs the assistant text from the client-
+visible stream events. The JSONL output is created with mode `0600` and is not
+overwritten unless `--force` is specified.
 
 The utility supports the current `enc:v1` AES-256-GCM format with the
-`relay-capture` purpose. Streaming, oversized, non-text, incomplete, or
-malformed captures are skipped and reported on standard error. A missing or
-different `CRYPTO_SECRET` causes decryption to fail.
+`relay-capture` purpose. Oversized, non-text, incomplete, malformed, or
+non-textual streaming captures are skipped and reported on standard error. A
+missing or different `CRYPTO_SECRET` causes decryption to fail.

@@ -26,12 +26,9 @@ func NewSession(metadata Metadata, requestHeader http.Header, requestContentType
 	metadata.RequestHeaders = sanitizeHeaders(requestHeader)
 	metadata.Request.ContentType = requestContentType
 	metadata.Outcome = "pending"
+	metadata.Stream = isStream
 
 	session := &Session{metadata: metadata}
-	if isStream {
-		session.skip("streaming_not_supported")
-		return session
-	}
 	if !isTextContentType(requestContentType) {
 		session.skip("unsupported_request_content_type")
 		return session
@@ -59,10 +56,8 @@ func (s *Session) AppendResponse(headers http.Header, body []byte) {
 		s.metadata.ResponseHeaders = sanitizeHeaders(headers)
 	}
 	if isStreamContentType(contentType) {
-		s.skip("streaming_not_supported")
-		return
-	}
-	if !isTextContentType(contentType) {
+		s.metadata.Stream = true
+	} else if !isTextContentType(contentType) {
 		s.skip("unsupported_response_content_type")
 		return
 	}

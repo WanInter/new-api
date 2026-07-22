@@ -4935,7 +4935,7 @@
     "Failed to load captured requests": "Echec du chargement des requetes capturees",
     "Failed to update capture policy": "Echec de la mise a jour de la politique de capture",
     "No captured requests found": "Aucune requete capturee trouvee",
-    "Only non-streaming JSON and plain-text payloads are eligible for capture.": "Seules les charges utiles JSON et texte brut non diffusees sont eligibles a la capture.",
+    "JSON, plain-text, and text Server-Sent Event (SSE) payloads are eligible for capture.": "Les charges utiles JSON, texte brut et Server-Sent Events (SSE) textuels peuvent etre capturees.",
     "Outcome": "Resultat",
     "Protocol": "Protocole",
     "Relay Capture": "Capture de relais",

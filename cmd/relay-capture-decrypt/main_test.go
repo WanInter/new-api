@@ -39,6 +39,35 @@ func TestNormalize(t *testing.T) {
 			response: `{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}]}]}`,
 			expected: []map[string]any{{"role": "user", "content": "hello"}, {"role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "hi"}}}},
 		},
+		{
+			name:     "chat completions SSE",
+			protocol: "openai.chat_completions",
+			request:  `{"messages":[{"role":"user","content":"hello"}]}`,
+			response: "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"hel\"}}]}\n\n" +
+				"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"lo\"}}]}\n\n" +
+				"data: [DONE]\n\n",
+			expected: []map[string]any{{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hello"}},
+		},
+		{
+			name:     "anthropic messages SSE",
+			protocol: "anthropic.messages",
+			request:  `{"system":"brief","messages":[{"role":"user","content":"hello"}]}`,
+			response: "event: content_block_delta\r\n" +
+				"data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"hel\"}}\r\n\r\n" +
+				"event: content_block_delta\r\n" +
+				"data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"lo\"}}\r\n\r\n",
+			expected: []map[string]any{{"role": "system", "content": "brief"}, {"role": "user", "content": "hello"}, {"role": "assistant", "content": "hello"}},
+		},
+		{
+			name:     "responses SSE",
+			protocol: "openai.responses",
+			request:  `{"input":"hello"}`,
+			response: "event: response.output_text.delta\n" +
+				"data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hel\"}\n\n" +
+				"event: response.output_text.delta\n" +
+				"data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"lo\"}\n\n",
+			expected: []map[string]any{{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hello"}},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

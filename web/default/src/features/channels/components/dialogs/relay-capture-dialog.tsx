@@ -258,7 +258,7 @@ export function RelayCaptureDialog({
               <AlertCircle />
               <AlertDescription>
                 {t(
-                  'Only non-streaming JSON and plain-text payloads are eligible for capture.'
+                  'JSON, plain-text, and text Server-Sent Event (SSE) payloads are eligible for capture.'
                 )}
               </AlertDescription>
             </Alert>

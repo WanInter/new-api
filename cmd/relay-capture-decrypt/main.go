@@ -25,6 +25,7 @@ type captureManifest struct {
 	ID        string      `json:"id"`
 	CreatedAt int64       `json:"created_at"`
 	Protocol  string      `json:"protocol"`
+	Stream    bool        `json:"stream"`
 	Request   capturePart `json:"request"`
 	Response  capturePart `json:"response"`
 }
@@ -191,10 +192,17 @@ func normalize(protocol string, request []byte, response []byte) ([]conversation
 	if err := common.Unmarshal(request, &req); err != nil {
 		return nil, fmt.Errorf("decode request JSON: %w", err)
 	}
+	if looksLikeSSE(response) {
+		return normalizeSSE(protocol, req, response)
+	}
 	var res map[string]any
 	if err := common.Unmarshal(response, &res); err != nil {
 		return nil, fmt.Errorf("decode response JSON: %w", err)
 	}
+	return normalizeJSON(protocol, req, res)
+}
+
+func normalizeJSON(protocol string, req map[string]any, res map[string]any) ([]conversation, error) {
 	switch protocol {
 	case "openai.chat_completions":
 		messages, err := messagesFrom(req["messages"])
@@ -255,6 +263,265 @@ func normalize(protocol string, request []byte, response []byte) ([]conversation
 		return []conversation{{Messages: messages}}, nil
 	default:
 		return nil, fmt.Errorf("unsupported protocol %q", protocol)
+	}
+}
+
+func normalizeSSE(protocol string, request map[string]any, response []byte) ([]conversation, error) {
+	payloads, err := ssePayloads(response)
+	if err != nil {
+		return nil, err
+	}
+	switch protocol {
+	case "openai.chat_completions":
+		messages, err := messagesFrom(request["messages"])
+		if err != nil {
+			return nil, err
+		}
+		textByChoice := make(map[int]string)
+		for _, payload := range payloads {
+			choicesValue, exists := payload["choices"]
+			if !exists {
+				continue
+			}
+			choices, ok := choicesValue.([]any)
+			if !ok {
+				return nil, errors.New("stream choices are not an array")
+			}
+			for position, choiceValue := range choices {
+				choice, ok := choiceValue.(map[string]any)
+				if !ok {
+					return nil, errors.New("stream choice is not an object")
+				}
+				index := streamIndex(choice["index"], position)
+				delta, ok := choice["delta"].(map[string]any)
+				if !ok {
+					continue
+				}
+				if text, ok := delta["content"].(string); ok {
+					textByChoice[index] += text
+				}
+			}
+		}
+		if len(textByChoice) == 0 {
+			return nil, errors.New("stream has no assistant text")
+		}
+		indices := make([]int, 0, len(textByChoice))
+		for index := range textByChoice {
+			indices = append(indices, index)
+		}
+		sort.Ints(indices)
+		records := make([]conversation, 0, len(indices))
+		for _, index := range indices {
+			if textByChoice[index] == "" {
+				continue
+			}
+			records = append(records, conversation{Messages: append(copyMessages(messages), map[string]any{
+				"role":    "assistant",
+				"content": textByChoice[index],
+			})})
+		}
+		if len(records) == 0 {
+			return nil, errors.New("stream has no assistant text")
+		}
+		return records, nil
+	case "anthropic.messages":
+		messages := make([]map[string]any, 0)
+		if system, ok := request["system"]; ok && system != nil {
+			messages = append(messages, map[string]any{"role": "system", "content": system})
+		}
+		requestMessages, err := messagesFrom(request["messages"])
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, requestMessages...)
+		var text strings.Builder
+		for _, payload := range payloads {
+			switch payload["type"] {
+			case "content_block_start":
+				if block, ok := payload["content_block"].(map[string]any); ok && block["type"] == "text" {
+					if value, ok := block["text"].(string); ok {
+						text.WriteString(value)
+					}
+				}
+			case "content_block_delta":
+				if delta, ok := payload["delta"].(map[string]any); ok {
+					if value, ok := delta["text"].(string); ok {
+						text.WriteString(value)
+					}
+				}
+			}
+		}
+		if text.Len() == 0 {
+			return nil, errors.New("stream has no assistant text")
+		}
+		messages = append(messages, map[string]any{"role": "assistant", "content": text.String()})
+		return []conversation{{Messages: messages}}, nil
+	case "openai.responses":
+		messages, err := responseInputMessages(request["input"])
+		if err != nil {
+			return nil, err
+		}
+		textByOutput := make(map[int]string)
+		for _, payload := range payloads {
+			index := streamIndex(payload["output_index"], 0)
+			switch payload["type"] {
+			case "response.output_text.delta":
+				if delta, ok := payload["delta"].(string); ok {
+					textByOutput[index] += delta
+				}
+			case "response.output_text.done":
+				if textByOutput[index] == "" {
+					if text, ok := payload["text"].(string); ok {
+						textByOutput[index] = text
+					}
+				}
+			case "response.output_item.done":
+				if textByOutput[index] == "" {
+					if text, ok := outputText(payload["item"]); ok {
+						textByOutput[index] = text
+					}
+				}
+			case "response.completed":
+				if completed, ok := payload["response"].(map[string]any); ok {
+					appendResponseOutputText(textByOutput, completed["output"])
+				}
+			}
+		}
+		if len(textByOutput) == 0 {
+			return nil, errors.New("stream has no assistant text")
+		}
+		indices := make([]int, 0, len(textByOutput))
+		for index := range textByOutput {
+			indices = append(indices, index)
+		}
+		sort.Ints(indices)
+		for _, index := range indices {
+			if textByOutput[index] != "" {
+				messages = append(messages, map[string]any{"role": "assistant", "content": textByOutput[index]})
+			}
+		}
+		if len(messages) == 0 || messages[len(messages)-1]["role"] != "assistant" {
+			return nil, errors.New("stream has no assistant text")
+		}
+		return []conversation{{Messages: messages}}, nil
+	default:
+		return nil, fmt.Errorf("unsupported protocol %q", protocol)
+	}
+}
+
+type sseRecord struct {
+	data string
+}
+
+func looksLikeSSE(body []byte) bool {
+	text := strings.TrimLeft(string(body), " \t\r\n")
+	return strings.HasPrefix(text, "data:") || strings.HasPrefix(text, "event:") || strings.HasPrefix(text, ":")
+}
+
+func ssePayloads(body []byte) ([]map[string]any, error) {
+	events, err := parseSSE(body)
+	if err != nil {
+		return nil, err
+	}
+	payloads := make([]map[string]any, 0, len(events))
+	for _, event := range events {
+		if strings.TrimSpace(event.data) == "[DONE]" {
+			continue
+		}
+		var payload map[string]any
+		if err := common.Unmarshal([]byte(event.data), &payload); err != nil {
+			return nil, fmt.Errorf("decode stream event JSON: %w", err)
+		}
+		payloads = append(payloads, payload)
+	}
+	if len(payloads) == 0 {
+		return nil, errors.New("stream has no JSON events")
+	}
+	return payloads, nil
+}
+
+func parseSSE(body []byte) ([]sseRecord, error) {
+	text := strings.ReplaceAll(string(body), "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	records := make([]sseRecord, 0)
+	data := make([]string, 0)
+	emit := func() {
+		if len(data) > 0 {
+			records = append(records, sseRecord{data: strings.Join(data, "\n")})
+		}
+		data = data[:0]
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if line == "" {
+			emit()
+			continue
+		}
+		if strings.HasPrefix(line, ":") {
+			continue
+		}
+		field, value, hasSeparator := strings.Cut(line, ":")
+		if !hasSeparator {
+			continue
+		}
+		value = strings.TrimPrefix(value, " ")
+		if field == "data" {
+			data = append(data, value)
+		}
+	}
+	emit()
+	if len(records) == 0 {
+		return nil, errors.New("stream has no data events")
+	}
+	return records, nil
+}
+
+func streamIndex(value any, fallback int) int {
+	switch index := value.(type) {
+	case float64:
+		return int(index)
+	case int:
+		return index
+	case int64:
+		return int(index)
+	default:
+		return fallback
+	}
+}
+
+func outputText(value any) (string, bool) {
+	item, ok := value.(map[string]any)
+	if !ok || item["type"] != "message" || item["role"] != "assistant" {
+		return "", false
+	}
+	content, ok := item["content"].([]any)
+	if !ok {
+		return "", false
+	}
+	var text strings.Builder
+	for _, value := range content {
+		block, ok := value.(map[string]any)
+		if !ok || (block["type"] != "output_text" && block["type"] != "text") {
+			continue
+		}
+		if value, ok := block["text"].(string); ok {
+			text.WriteString(value)
+		}
+	}
+	return text.String(), text.Len() > 0
+}
+
+func appendResponseOutputText(textByOutput map[int]string, value any) {
+	output, ok := value.([]any)
+	if !ok {
+		return
+	}
+	for index, item := range output {
+		if textByOutput[index] != "" {
+			continue
+		}
+		if text, ok := outputText(item); ok {
+			textByOutput[index] = text
+		}
 	}
 }
 

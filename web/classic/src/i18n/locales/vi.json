@@ -4363,7 +4363,7 @@
     "查看响应": "Xem phản hồi",
     "中继报文采集": "Thu thập thông điệp chuyển tiếp",
     "采集策略": "Chính sách thu thập",
-    "仅采集非流式 JSON 和纯文本报文。": "Chỉ thu thập thông điệp JSON không theo luồng và văn bản thuần túy.",
+    "仅采集 JSON、纯文本和文本 SSE 报文。": "Thu thap JSON, van ban thuan va su kien do may chu gui (SSE) dang van ban.",
     "启用中继采集": "Bật thu thập lưu lượng chuyển tiếp",
     "采集正文会加密静态存储。": "Nội dung đã thu thập được mã hóa khi lưu trữ.",
     "采集协议": "Giao thức thu thập",

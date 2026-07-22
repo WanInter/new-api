@@ -141,6 +141,7 @@ export interface RelayCaptureMetadata {
   model?: string
   upstream_model?: string
   retry_index?: number
+  stream?: boolean
   status_code?: number
   outcome: 'success' | 'error' | string
   skipped_reason?: string

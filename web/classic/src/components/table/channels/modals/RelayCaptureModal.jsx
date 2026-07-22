@@ -315,7 +315,7 @@ const RelayCaptureModal = ({ visible, channel, onCancel }) => {
               <Banner
                 type='warning'
                 icon={<IconAlertTriangle />}
-                description={t('仅采集非流式 JSON 和纯文本报文。')}
+                description={t('仅采集 JSON、纯文本和文本 SSE 报文。')}
               />
               <Spin spinning={loadingPolicy}>
                 <div className='rounded-lg border border-[var(--semi-color-border)] p-4'>

@@ -4935,7 +4935,7 @@
     "Failed to load captured requests": "Khong the tai cac yeu cau da thu thap",
     "Failed to update capture policy": "Khong the cap nhat chinh sach thu thap",
     "No captured requests found": "Khong tim thay yeu cau da thu thap",
-    "Only non-streaming JSON and plain-text payloads are eligible for capture.": "Chi JSON va du lieu van ban thuan khong phat truc tiep duoc phep thu thap.",
+    "JSON, plain-text, and text Server-Sent Event (SSE) payloads are eligible for capture.": "Co the thu thap JSON, van ban thuan va su kien do may chu gui (SSE) dang van ban.",
     "Outcome": "Ket qua",
     "Protocol": "Giao thuc",
     "Relay Capture": "Thu thap relay",

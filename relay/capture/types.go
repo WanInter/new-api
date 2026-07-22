@@ -35,6 +35,7 @@ type Metadata struct {
 	Model           string            `json:"model,omitempty"`
 	UpstreamModel   string            `json:"upstream_model,omitempty"`
 	RetryIndex      int               `json:"retry_index,omitempty"`
+	Stream          bool              `json:"stream,omitempty"`
 	StatusCode      int               `json:"status_code,omitempty"`
 	Outcome         string            `json:"outcome"`
 	SkippedReason   string            `json:"skipped_reason,omitempty"`

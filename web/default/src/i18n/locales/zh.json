@@ -4935,7 +4935,7 @@
     "Failed to load captured requests": "加载采集请求失败",
     "Failed to update capture policy": "更新采集策略失败",
     "No captured requests found": "未找到采集请求",
-    "Only non-streaming JSON and plain-text payloads are eligible for capture.": "仅采集非流式 JSON 和纯文本报文。",
+    "JSON, plain-text, and text Server-Sent Event (SSE) payloads are eligible for capture.": "可采集 JSON、纯文本和文本服务器发送事件（SSE）报文。",
     "Outcome": "结果",
     "Protocol": "协议",
     "Relay Capture": "中继采集",

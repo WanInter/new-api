@@ -3832,7 +3832,7 @@
     "查看响应": "Voir la réponse",
     "中继报文采集": "Capture de messages du relais",
     "采集策略": "Politique de capture",
-    "仅采集非流式 JSON 和纯文本报文。": "Seuls les messages JSON et texte brut sans flux sont capturés.",
+    "仅采集 JSON、纯文本和文本 SSE 报文。": "Les messages JSON, texte brut et Server-Sent Events (SSE) textuels sont capturés.",
     "启用中继采集": "Activer la capture du relais",
     "采集正文会加密静态存储。": "Les messages capturés sont chiffrés au repos.",
     "采集协议": "Protocoles de capture",
