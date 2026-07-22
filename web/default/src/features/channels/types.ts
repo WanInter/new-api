@@ -107,6 +107,49 @@ export interface ChannelOtherSettings {
   upstream_model_update_last_check_time?: number
   upstream_model_update_last_detected_models?: string[]
   advanced_custom?: AdvancedCustomConfig
+  relay_capture?: RelayCapturePolicy
+}
+
+export type RelayCaptureProtocol =
+  | 'openai.chat_completions'
+  | 'anthropic.messages'
+  | 'openai.responses'
+
+export interface RelayCapturePolicy {
+  enabled: boolean
+  protocols: RelayCaptureProtocol[]
+}
+
+export interface RelayCapturePartMeta {
+  content_type?: string
+  size?: number
+  sha256?: string
+  compression?: string
+  stored: boolean
+}
+
+export interface RelayCaptureMetadata {
+  id: string
+  created_at: number
+  channel_id: number
+  channel_name?: string
+  protocol: RelayCaptureProtocol
+  request_id?: string
+  method: string
+  path: string
+  user_id?: number
+  token_id?: number
+  model?: string
+  upstream_model?: string
+  retry_index?: number
+  stream?: boolean
+  status_code?: number
+  outcome: 'success' | 'error' | string
+  skipped_reason?: string
+  request_headers?: Record<string, string>
+  response_headers?: Record<string, string>
+  request: RelayCapturePartMeta
+  response: RelayCapturePartMeta
 }
 
 export interface AdvancedCustomConfig {
@@ -166,6 +209,23 @@ export interface GetChannelResponse {
   success: boolean
   message?: string
   data?: Channel
+}
+
+export interface RelayCapturePolicyResponse {
+  success: boolean
+  message?: string
+  data?: RelayCapturePolicy | null
+}
+
+export interface RelayCapturesResponse {
+  success: boolean
+  message?: string
+  data?: {
+    page: number
+    page_size: number
+    total: number
+    items: RelayCaptureMetadata[]
+  }
 }
 
 export interface ChannelTestResponse {

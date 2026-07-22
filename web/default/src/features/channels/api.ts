@@ -33,6 +33,9 @@ import type {
   GetChannelsResponse,
   MultiKeyManageParams,
   MultiKeyStatusResponse,
+  RelayCapturePolicy,
+  RelayCapturePolicyResponse,
+  RelayCapturesResponse,
   SearchChannelsParams,
   SearchChannelsResponse,
   TagOperationParams,
@@ -122,6 +125,47 @@ export async function updateChannel(
     { id, ...data },
     channelActionConfig()
   )
+  return res.data
+}
+
+export async function getChannelRelayCapturePolicy(
+  id: number
+): Promise<RelayCapturePolicyResponse> {
+  const res = await api.get(`/api/channel/${id}/relay_capture`)
+  return res.data
+}
+
+export async function updateChannelRelayCapturePolicy(
+  id: number,
+  policy: RelayCapturePolicy
+): Promise<RelayCapturePolicyResponse> {
+  const res = await api.put(
+    `/api/channel/${id}/relay_capture`,
+    policy,
+    channelActionConfig()
+  )
+  return res.data
+}
+
+export async function getRelayCaptures(params: {
+  channel_id?: number
+  protocol?: string
+  request_id?: string
+  p?: number
+  page_size?: number
+}): Promise<RelayCapturesResponse> {
+  const res = await api.get('/api/relay-captures', { params })
+  return res.data
+}
+
+export async function getRelayCapturePart(
+  id: string,
+  part: 'request' | 'response'
+): Promise<string> {
+  const res = await api.get(`/api/relay-captures/${id}/${part}`, {
+    responseType: 'text',
+    skipErrorHandler: true,
+  })
   return res.data
 }
 

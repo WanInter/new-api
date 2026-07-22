@@ -52,6 +52,7 @@ type VideoRoutingSimulationRequest struct {
 	Videos      int    `json:"videos"`
 	Audios      int    `json:"audios"`
 	Duration    *int   `json:"duration,omitempty"`
+	Resolution  string `json:"resolution,omitempty"`
 	ContentType string `json:"content_type,omitempty"`
 	Retry       int    `json:"retry,omitempty"`
 	RequestPath string `json:"request_path,omitempty"`
@@ -171,6 +172,7 @@ func SimulateVideoRouting(request VideoRoutingSimulationRequest) (VideoRoutingSi
 			Videos:      request.Videos,
 			Audios:      request.Audios,
 			Duration:    request.Duration,
+			Resolution:  request.Resolution,
 			ContentType: request.ContentType,
 		},
 		Retry: request.Retry,

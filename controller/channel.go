@@ -602,6 +602,10 @@ func AddChannel(c *gin.Context) {
 		})
 		return
 	}
+	if addChannelRequest.Channel.GetOtherSettings().RelayCapture != nil {
+		common.ApiErrorMsg(c, "relay capture policy must be configured through its dedicated endpoint")
+		return
+	}
 
 	addChannelRequest.Channel.CreatedTime = common.GetTimestamp()
 	keys := make([]string, 0)
@@ -915,6 +919,10 @@ func UpdateChannel(c *gin.Context) {
 		})
 		return
 	}
+	if err := preserveRelayCapturePolicy(originChannel, &channel.Channel); err != nil {
+		common.ApiErrorMsg(c, "relay capture policy must be configured through its dedicated endpoint")
+		return
+	}
 
 	// Always copy the original ChannelInfo so that fields like IsMultiKey and MultiKeySize are retained.
 	channel.ChannelInfo = originChannel.ChannelInfo
@@ -1055,6 +1063,44 @@ func equalStringPtr(a, b *string) bool {
 		return false
 	}
 	return *a == *b
+}
+
+func relayCapturePolicyChanged(before *dto.RelayCapturePolicy, after *dto.RelayCapturePolicy) bool {
+	if before == nil || after == nil {
+		return before != after
+	}
+	if before.Enabled != after.Enabled || len(before.Protocols) != len(after.Protocols) {
+		return true
+	}
+	for i := range before.Protocols {
+		if before.Protocols[i] != after.Protocols[i] {
+			return true
+		}
+	}
+	return false
+}
+
+// preserveRelayCapturePolicy prevents generic channel updates from clearing a
+// policy managed by the secure relay capture endpoint. Existing channel forms
+// do not expose this policy and may omit it when serializing other settings.
+func preserveRelayCapturePolicy(origin *model.Channel, update *model.Channel) error {
+	if origin == nil || update == nil {
+		return fmt.Errorf("channel is required")
+	}
+	originSettings := origin.GetOtherSettings()
+	if update.OtherSettings == "" {
+		update.OtherSettings = origin.OtherSettings
+	} else {
+		updateSettings := update.GetOtherSettings()
+		if updateSettings.RelayCapture == nil && originSettings.RelayCapture != nil {
+			updateSettings.RelayCapture = originSettings.RelayCapture
+			update.SetOtherSettings(updateSettings)
+		}
+	}
+	if relayCapturePolicyChanged(originSettings.RelayCapture, update.GetOtherSettings().RelayCapture) {
+		return fmt.Errorf("relay capture policy changed")
+	}
+	return nil
 }
 
 func FetchModels(c *gin.Context) {

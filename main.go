@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"github.com/QuantumNous/new-api/oauth"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
+	relaycapture "github.com/QuantumNous/new-api/relay/capture"
 	"github.com/QuantumNous/new-api/router"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
@@ -294,6 +296,9 @@ func InitResources() error {
 	setting.InitPaymentSensitiveFromEnv()
 
 	logger.SetupLogger()
+	if err := relaycapture.InitFromEnv(context.Background()); err != nil {
+		common.SysError("relay capture storage disabled: " + err.Error())
+	}
 
 	// Initialize model settings
 	ratio_setting.InitRatioSettings()

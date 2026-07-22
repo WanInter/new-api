@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import {
   ArrowDown,
@@ -50,12 +50,12 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { getEnabledModels } from '@/features/channels/api'
 import {
   getImageRoutingRules,
   replaceImageRoutingConfig,
   simulateImageRouting,
 } from '../api'
-import { getEnabledModels } from '@/features/channels/api'
 import type {
   ImageRoutingChannel,
   ImageRoutingConfig,
@@ -71,9 +71,9 @@ const DEFAULT_SIZES: Record<ImageRoutingTier, string[]> = {
   '4k': ['2880x2880', '3840x2160', '2160x3840', '2160x2880', '2880x2160'],
 }
 
-function createEmptyConfig(): ImageRoutingConfig {
+function createEmptyConfig(publicModel = ''): ImageRoutingConfig {
   return {
-    public_model: 'image2',
+    public_model: publicModel,
     configured: false,
     strict: true,
     default_size: '1024x1024',
@@ -132,8 +132,8 @@ type ImageRoutingPanelProps = {
 
 export function ImageRoutingPanel({ groups, isRoot }: ImageRoutingPanelProps) {
   const { t } = useTranslation()
-  const [model, setModel] = useState('image2')
-  const [group, setGroup] = useState('creative-image')
+  const [model, setModel] = useState('')
+  const [group, setGroup] = useState('')
   const [draft, setDraft] = useState<ImageRoutingConfig>(createEmptyConfig)
   const [sizes, setSizes] = useState<Record<ImageRoutingTier, string>>(() =>
     sizeDrafts(createEmptyConfig())
@@ -144,15 +144,17 @@ export function ImageRoutingPanel({ groups, isRoot }: ImageRoutingPanelProps) {
   const [simulationSize, setSimulationSize] = useState('1024x1024')
   const [loadedAt, setLoadedAt] = useState(0)
 
-  const configQuery = useQuery({
-    queryKey: ['image-routing-rules', model, group],
-    queryFn: () => getImageRoutingRules(model, group),
-    enabled: Boolean(model.trim() && group.trim()),
-  })
+  const selectedGroup = group || groups[0] || ''
+  useEffect(() => {
+    if (!group && selectedGroup) {
+      setGroup(selectedGroup)
+    }
+  }, [group, selectedGroup])
+
   const modelsQuery = useQuery({
-    queryKey: ['enabled-models', 'image-routing-rules', group],
-    queryFn: () => getEnabledModels(group),
-    enabled: Boolean(group.trim()),
+    queryKey: ['enabled-models', 'image-routing-rules', selectedGroup],
+    queryFn: () => getEnabledModels(selectedGroup),
+    enabled: Boolean(selectedGroup),
   })
   const models = useMemo(
     () =>
@@ -162,6 +164,12 @@ export function ImageRoutingPanel({ groups, isRoot }: ImageRoutingPanelProps) {
         .sort((left, right) => left.localeCompare(right)),
     [modelsQuery.data]
   )
+  const selectedModel = models.includes(model) ? model : (models[0] ?? '')
+  const configQuery = useQuery({
+    queryKey: ['image-routing-rules', selectedModel, selectedGroup],
+    queryFn: () => getImageRoutingRules(selectedModel, selectedGroup),
+    enabled: Boolean(selectedModel && selectedGroup),
+  })
 
   const routesByTier = useMemo(
     () =>
@@ -208,7 +216,10 @@ export function ImageRoutingPanel({ groups, isRoot }: ImageRoutingPanelProps) {
   if (incoming && configQuery.dataUpdatedAt !== loadedAt) {
     const next = incoming.configured
       ? incoming
-      : { ...createEmptyConfig(), candidates: incoming.candidates || [] }
+      : {
+          ...createEmptyConfig(selectedModel),
+          candidates: incoming.candidates || [],
+        }
     setLoadedAt(configQuery.dataUpdatedAt)
     setDraft(next)
     setSizes(sizeDrafts(next))
@@ -260,7 +271,7 @@ export function ImageRoutingPanel({ groups, isRoot }: ImageRoutingPanelProps) {
 
   const save = () => {
     saveMutation.mutate({
-      public_model: model.trim(),
+      public_model: selectedModel,
       strict: draft.strict,
       default_size: draft.default_size,
       revision: draft.revision || 0,
@@ -305,7 +316,7 @@ export function ImageRoutingPanel({ groups, isRoot }: ImageRoutingPanelProps) {
               value: item,
               label: item,
             }))}
-            value={model}
+            value={selectedModel}
             onValueChange={(value) => {
               if (value) setModel(value)
             }}
@@ -317,14 +328,21 @@ export function ImageRoutingPanel({ groups, isRoot }: ImageRoutingPanelProps) {
           <FieldLabel htmlFor='image-routing-group'>{t('Group')}</FieldLabel>
           <NativeSelect
             id='image-routing-group'
-            value={group}
+            value={selectedGroup}
             onChange={(event) => {
               setGroup(event.target.value)
               setModel('')
             }}
           >
-            {!groups.includes(group) && (
-              <NativeSelectOption value={group}>{group}</NativeSelectOption>
+            {!selectedGroup && (
+              <NativeSelectOption value='' disabled>
+                {t('Select a group')}
+              </NativeSelectOption>
+            )}
+            {!groups.includes(selectedGroup) && selectedGroup && (
+              <NativeSelectOption value={selectedGroup}>
+                {selectedGroup}
+              </NativeSelectOption>
             )}
             {groups.map((item) => (
               <NativeSelectOption key={item} value={item}>
@@ -506,7 +524,11 @@ export function ImageRoutingPanel({ groups, isRoot }: ImageRoutingPanelProps) {
           <Button
             disabled={simulationMutation.isPending}
             onClick={() =>
-              simulationMutation.mutate({ model, group, size: simulationSize })
+              simulationMutation.mutate({
+                model: selectedModel,
+                group: selectedGroup,
+                size: simulationSize,
+              })
             }
           >
             {simulationMutation.isPending ? (

@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import {
@@ -75,13 +75,12 @@ import { CapabilityRuleEditor } from './components/capability-rule-editor'
 import { ImageRoutingPanel } from './components/image-routing-panel'
 import type {
   VideoMediaRange,
+  VideoResolution,
   VideoRoutingCandidate,
   UpdateVideoRoutingChannelSettingsRequest,
   VideoRoutingSimulationRequest,
   VideoRoutingSimulationResult,
 } from './types'
-
-const DEFAULT_GROUP = 'creative-video'
 
 type ChannelSettingsDraft = {
   priority: string
@@ -107,6 +106,10 @@ function formatDurationCapability(
   }
   const range = formatRange(capability?.duration)
   return range === '—' ? range : `${range}s`
+}
+
+function formatResolutionCapability(resolutions?: VideoResolution[]) {
+  return resolutions?.length ? resolutions.join(', ') : '—'
 }
 
 function violationText(
@@ -135,6 +138,13 @@ function violationText(
     duration_above_max: t(
       'Supports a duration of at most {{expected}} seconds',
       values
+    ),
+    resolution_not_supported: t(
+      'Resolution {{resolution}} is not supported. Supported: {{supported_resolutions}}',
+      {
+        resolution: violation.resolution,
+        supported_resolutions: violation.supported_resolutions?.join(', '),
+      }
     ),
     content_type_mismatch: t('Requires an application/json request'),
     missing_capability: t('No capability profile is configured'),
@@ -215,7 +225,7 @@ function CandidateTable({
   }
   return (
     <div className='overflow-x-auto rounded-md border'>
-      <Table className='min-w-[1620px] table-fixed'>
+      <Table className='min-w-[1756px] table-fixed'>
         <TableHeader>
           <TableRow>
             <TableHead className='w-[520px]'>{t('Channel')}</TableHead>
@@ -235,6 +245,9 @@ function CandidateTable({
             <TableHead className='w-[84px] text-center'>
               {t('Duration')}
             </TableHead>
+            <TableHead className='w-[120px] text-center'>
+              {t('Resolution')}
+            </TableHead>
             <TableHead className='w-[104px] text-center'>
               {t('Priority')}
             </TableHead>
@@ -251,7 +264,7 @@ function CandidateTable({
           {candidates.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={11}
+                colSpan={12}
                 className='text-muted-foreground h-28 text-center'
               >
                 {t('No routing candidates found')}
@@ -302,6 +315,11 @@ function CandidateTable({
                 </TableCell>
                 <TableCell className='text-center'>
                   {formatDurationCapability(candidate.capability)}
+                </TableCell>
+                <TableCell className='text-center text-xs'>
+                  {formatResolutionCapability(
+                    candidate.capability?.resolutions
+                  )}
                 </TableCell>
                 <TableCell className='text-center'>
                   {editableChannelSettings && getChannelSettingsDraft ? (
@@ -459,6 +477,12 @@ function CandidateDetails({
                 <dd>{formatRange(candidate.capability?.video_audio_total)}</dd>
                 <dt className='text-muted-foreground'>{t('Duration')}</dt>
                 <dd>{formatDurationCapability(candidate.capability)}</dd>
+                <dt className='text-muted-foreground'>{t('Resolution')}</dt>
+                <dd>
+                  {candidate.capability?.resolutions?.length
+                    ? candidate.capability.resolutions.join(', ')
+                    : t('Any')}
+                </dd>
                 <dt className='text-muted-foreground'>{t('Content Type')}</dt>
                 <dd>
                   {candidate.capability?.require_json
@@ -517,7 +541,7 @@ export function RoutingRules() {
   const isRoot =
     useAuthStore((state) => state.auth.user?.role) === USER_ROLE.ROOT
   const [model, setModel] = useState('')
-  const [group, setGroup] = useState(DEFAULT_GROUP)
+  const [group, setGroup] = useState('')
   const [routingMode, setRoutingMode] = useState<'video' | 'image'>('video')
   const [selectedCandidate, setSelectedCandidate] =
     useState<VideoRoutingCandidate | null>(null)
@@ -528,7 +552,7 @@ export function RoutingRules() {
   >({})
   const [simulation, setSimulation] = useState<VideoRoutingSimulationRequest>({
     model: '',
-    group: DEFAULT_GROUP,
+    group: '',
     images: 4,
     videos: 0,
     audios: 0,
@@ -541,6 +565,16 @@ export function RoutingRules() {
     queryKey: ['groups', 'routing-rules'],
     queryFn: getGroups,
   })
+  const groups = useMemo(
+    () => [...new Set(groupsQuery.data?.data || [])],
+    [groupsQuery.data]
+  )
+  useEffect(() => {
+    if (!group && groups.length > 0) {
+      setGroup(groups[0])
+    }
+  }, [group, groups])
+
   const modelsQuery = useQuery({
     queryKey: ['enabled-models', 'routing-rules', group],
     queryFn: () => getEnabledModels(group),
@@ -590,8 +624,6 @@ export function RoutingRules() {
       toast.error(t('Update failed'))
     },
   })
-  const groups = useMemo(() => groupsQuery.data?.data || [], [groupsQuery.data])
-
   const getChannelSettingsDraft = (candidate: VideoRoutingCandidate) =>
     channelSettingsDrafts[candidate.channel_id] || {
       priority: String(candidate.priority),
@@ -699,6 +731,11 @@ export function RoutingRules() {
                       setEditingCandidate(null)
                     }}
                   >
+                    {!group && (
+                      <NativeSelectOption value='' disabled>
+                        {t('Select a group')}
+                      </NativeSelectOption>
+                    )}
                     {!groups.includes(group) && (
                       <NativeSelectOption value={group}>
                         {group}
@@ -784,7 +821,7 @@ export function RoutingRules() {
                   />
                 </TabsContent>
                 <TabsContent value='simulator' className='space-y-4'>
-                  <div className='grid gap-3 border-y py-4 sm:grid-cols-3 lg:grid-cols-6'>
+                  <div className='grid gap-3 border-y py-4 sm:grid-cols-3 lg:grid-cols-7'>
                     {(
                       [
                         'images',
@@ -815,6 +852,37 @@ export function RoutingRules() {
                         />
                       </div>
                     ))}
+                    <div className='space-y-1.5'>
+                      <Label htmlFor='simulation-resolution'>
+                        {t('Resolution')}
+                      </Label>
+                      <NativeSelect
+                        id='simulation-resolution'
+                        value={simulation.resolution || ''}
+                        onChange={(event) =>
+                          setSimulation((current) => ({
+                            ...current,
+                            resolution: (event.target.value || undefined) as
+                              | VideoResolution
+                              | undefined,
+                          }))
+                        }
+                      >
+                        <NativeSelectOption value=''>
+                          {t('Any')}
+                        </NativeSelectOption>
+                        {(['480p', '720p', '1080p', '4k'] as const).map(
+                          (resolution) => (
+                            <NativeSelectOption
+                              key={resolution}
+                              value={resolution}
+                            >
+                              {resolution}
+                            </NativeSelectOption>
+                          )
+                        )}
+                      </NativeSelect>
+                    </div>
                     <div className='flex items-end'>
                       <Button
                         className='w-full'

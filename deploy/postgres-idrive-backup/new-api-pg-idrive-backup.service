@@ -1,0 +1,10 @@
+[Unit]
+Description=Create and upload a consistent New API PostgreSQL backup
+After=docker.service
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/usr/local/sbin/new-api-pg-idrive-backup
+StandardOutput=append:/var/log/new-api-pg-idrive-backup.log
+StandardError=append:/var/log/new-api-pg-idrive-backup.log

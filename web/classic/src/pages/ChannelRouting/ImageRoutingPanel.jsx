@@ -46,8 +46,6 @@ import { API, showError, showSuccess } from '../../helpers';
 
 const { Text } = Typography;
 const TIERS = ['1k', '2k', '4k'];
-const DEFAULT_MODEL = 'image2';
-const DEFAULT_GROUP = 'creative-image';
 const DEFAULT_SIZES = {
   '1k': ['1024x1024', '1536x1024', '1024x1536', '960x1280', '1280x960'],
   '2k': ['2048x2048', '2560x1440', '1440x2560', '1920x2560', '2560x1920'],
@@ -85,8 +83,8 @@ const routeReasonLabel = (reason, t) => {
 
 const ImageRoutingPanel = ({ rootUser }) => {
   const { t } = useTranslation();
-  const [model, setModel] = useState(DEFAULT_MODEL);
-  const [group, setGroup] = useState(DEFAULT_GROUP);
+  const [model, setModel] = useState('');
+  const [group, setGroup] = useState('');
   const [groups, setGroups] = useState([]);
   const [models, setModels] = useState([]);
   const [config, setConfig] = useState(emptyConfig);
@@ -101,7 +99,16 @@ const ImageRoutingPanel = ({ rootUser }) => {
   const loadGroups = useCallback(async () => {
     try {
       const response = await API.get('/api/group/');
-      if (response.data.success) setGroups(response.data.data || []);
+      if (!response.data.success) throw new Error(response.data.message);
+      const nextGroups = Array.from(
+        new Set(
+          (response.data.data || [])
+            .map((item) => String(item || '').trim())
+            .filter(Boolean),
+        ),
+      );
+      setGroups(nextGroups);
+      setGroup((current) => current || nextGroups[0] || '');
     } catch (error) {
       showError(errorMessage(error));
     }
@@ -122,6 +129,9 @@ const ImageRoutingPanel = ({ rootUser }) => {
         ),
       ).sort((left, right) => left.localeCompare(right));
       setModels(nextModels);
+      setModel((current) =>
+        nextModels.includes(current) ? current : nextModels[0] || '',
+      );
     } catch (error) {
       showError(errorMessage(error));
     }
@@ -409,12 +419,12 @@ const ImageRoutingPanel = ({ rootUser }) => {
                 setSimulation(null);
                 setPendingChannel({});
               }}
-              optionList={Array.from(new Set([group, ...groups])).map(
-                (item) => ({
-                  value: item,
-                  label: item,
-                }),
-              )}
+              optionList={Array.from(
+                new Set(group ? [group, ...groups] : groups),
+              ).map((item) => ({
+                value: item,
+                label: item,
+              }))}
             />
           </div>
           <Button icon={<RefreshCw size={16} />} onClick={loadConfig}>

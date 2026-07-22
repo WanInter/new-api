@@ -117,6 +117,9 @@ export const useChannelsData = () => {
   // Multi-key management states
   const [showMultiKeyManageModal, setShowMultiKeyManageModal] = useState(false);
   const [currentMultiKeyChannel, setCurrentMultiKeyChannel] = useState(null);
+  const [showRelayCaptureModal, setShowRelayCaptureModal] = useState(false);
+  const [currentRelayCaptureChannel, setCurrentRelayCaptureChannel] =
+    useState(null);
 
   // Refs
   const requestCounter = useRef(0);
@@ -1208,6 +1211,10 @@ export const useChannelsData = () => {
     setShowMultiKeyManageModal,
     currentMultiKeyChannel,
     setCurrentMultiKeyChannel,
+    showRelayCaptureModal,
+    setShowRelayCaptureModal,
+    currentRelayCaptureChannel,
+    setCurrentRelayCaptureChannel,
     ...upstreamUpdates,
 
     // Form

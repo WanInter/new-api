@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Field,
   FieldError,
@@ -70,9 +71,14 @@ import {
   capabilityToFormValues,
   emptyCapabilityRuleFormValues,
   formValuesToCapability,
+  videoResolutionOptions,
   type CapabilityRuleFormValues,
 } from '../lib/capability-form'
-import type { VideoMediaRange, VideoRoutingCandidate } from '../types'
+import type {
+  VideoMediaRange,
+  VideoResolution,
+  VideoRoutingCandidate,
+} from '../types'
 
 type CapabilityRuleEditorProps = {
   candidate: VideoRoutingCandidate | null
@@ -211,6 +217,13 @@ export function CapabilityRuleEditor(props: CapabilityRuleEditorProps) {
 
                 <Separator />
 
+                <ResolutionOverrideField
+                  form={form}
+                  effective={candidate.capability?.resolutions}
+                />
+
+                <Separator />
+
                 <FieldSet>
                   <FieldLegend variant='label'>{t('Duration')}</FieldLegend>
                   <FieldGroup className='grid grid-cols-1 gap-3 sm:grid-cols-3'>
@@ -326,6 +339,53 @@ export function CapabilityRuleEditor(props: CapabilityRuleEditorProps) {
         </AlertDialogContent>
       </AlertDialog>
     </>
+  )
+}
+
+function ResolutionOverrideField(props: {
+  form: UseFormReturn<CapabilityRuleFormValues>
+  effective?: VideoResolution[]
+}) {
+  const { t } = useTranslation()
+  return (
+    <Controller
+      control={props.form.control}
+      name='resolutions'
+      render={({ field }) => (
+        <FieldSet>
+          <FieldLegend variant='label'>
+            {t('Supported resolutions')}
+          </FieldLegend>
+          <FieldGroup className='grid grid-cols-2 gap-3 sm:grid-cols-4'>
+            {videoResolutionOptions.map((resolution) => {
+              const checked = field.value.includes(resolution)
+              return (
+                <Field key={resolution} orientation='horizontal'>
+                  <Checkbox
+                    id={`routing-resolution-${resolution}`}
+                    checked={checked}
+                    onCheckedChange={(nextChecked) => {
+                      const next = nextChecked
+                        ? [...field.value, resolution]
+                        : field.value.filter((item) => item !== resolution)
+                      field.onChange(next)
+                    }}
+                  />
+                  <FieldLabel htmlFor={`routing-resolution-${resolution}`}>
+                    {resolution}
+                  </FieldLabel>
+                </Field>
+              )
+            })}
+          </FieldGroup>
+          {props.effective?.length ? (
+            <p className='text-muted-foreground text-xs'>
+              {t('Effective')}: {props.effective.join(', ')}
+            </p>
+          ) : null}
+        </FieldSet>
+      )}
+    />
   )
 }
 

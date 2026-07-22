@@ -38,6 +38,7 @@ import {
   showSuccess,
   showError,
   showInfo,
+  isRoot,
 } from '../../../helpers';
 import {
   CHANNEL_OPTIONS,
@@ -327,6 +328,8 @@ export const getChannelsColumns = ({
   setCurrentMultiKeyChannel,
   openUpstreamUpdateModal,
   detectChannelUpstreamUpdates,
+  setShowRelayCaptureModal,
+  setCurrentRelayCaptureChannel,
 }) => {
   return [
     {
@@ -734,6 +737,18 @@ export const getChannelsColumns = ({
               },
             },
           ];
+
+          if (isRoot()) {
+            moreMenuItems.unshift({
+              node: 'item',
+              name: t('中继报文采集'),
+              type: 'tertiary',
+              onClick: () => {
+                setCurrentRelayCaptureChannel(record);
+                setShowRelayCaptureModal(true);
+              },
+            });
+          }
 
           if (upstreamUpdateMeta.supported) {
             moreMenuItems.push({

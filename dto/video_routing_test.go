@@ -94,3 +94,11 @@ func TestVideoModelCapabilityValidateVideoAudioTotal(t *testing.T) {
 		})
 	}
 }
+
+func TestVideoModelCapabilityValidateResolutions(t *testing.T) {
+	capability := VideoModelCapability{Resolutions: []string{"480p", "720p", "1080p", "4k"}}
+	assert.NoError(t, capability.Validate())
+
+	assert.EqualError(t, VideoModelCapability{Resolutions: []string{"4K"}}.Validate(), `resolution "4K" must be one of 480p, 720p, 1080p, 4k`)
+	assert.EqualError(t, VideoModelCapability{Resolutions: []string{"720p", "720p"}}.Validate(), `resolution "720p" must not be duplicated`)
+}

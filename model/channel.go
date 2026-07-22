@@ -1035,6 +1035,16 @@ func (channel *Channel) ValidateSettings() error {
 			return err
 		}
 	}
+	if channelOtherSettings.VideoRouting != nil {
+		if err := channelOtherSettings.VideoRouting.Validate(); err != nil {
+			return err
+		}
+	}
+	if channelOtherSettings.RelayCapture != nil {
+		if err := channelOtherSettings.RelayCapture.Validate(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

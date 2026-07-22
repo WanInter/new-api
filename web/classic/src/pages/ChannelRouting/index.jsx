@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next';
 import {
   Banner,
   Button,
+  Checkbox,
   Descriptions,
   Divider,
   Input,
@@ -57,7 +58,7 @@ import { CHANNEL_OPTIONS } from '../../constants';
 import ImageRoutingPanel from './ImageRoutingPanel';
 
 const { Title, Text } = Typography;
-const DEFAULT_GROUP = 'creative-video';
+const VIDEO_RESOLUTIONS = ['480p', '720p', '1080p', '4k'];
 
 const EMPTY_CAPABILITY_FORM = {
   images_min: '',
@@ -71,6 +72,7 @@ const EMPTY_CAPABILITY_FORM = {
   duration_min: '',
   duration_max: '',
   fixed_duration: '',
+  resolutions: [],
   require_json: 'inherit',
   require_text: 'inherit',
   content_precedence: 'inherit',
@@ -100,6 +102,9 @@ const formatDurationCapability = (capability) => {
   return range === '—' ? range : `${range}s`;
 };
 
+const formatResolutionCapability = (capability) =>
+  capability?.resolutions?.length ? capability.resolutions.join(', ') : '—';
+
 const numberToDraft = (value) =>
   value === undefined || value === null ? '' : String(value);
 
@@ -120,6 +125,7 @@ const capabilityToForm = (capability) => ({
   duration_min: numberToDraft(capability?.duration?.min),
   duration_max: numberToDraft(capability?.duration?.max),
   fixed_duration: numberToDraft(capability?.fixed_duration),
+  resolutions: capability?.resolutions || [],
   require_json: booleanToDraft(capability?.require_json),
   require_text: booleanToDraft(capability?.require_text),
   content_precedence: booleanToDraft(capability?.content_precedence),
@@ -152,6 +158,7 @@ const formToCapability = (form) => ({
   ),
   duration: rangeFromDraft(form.duration_min, form.duration_max),
   fixed_duration: draftToNumber(form.fixed_duration),
+  resolutions: form.resolutions.length > 0 ? form.resolutions : undefined,
   require_json: draftToBoolean(form.require_json),
   require_text: draftToBoolean(form.require_text),
   content_precedence: draftToBoolean(form.content_precedence),
@@ -206,9 +213,12 @@ const validateCapabilityForm = (form, t) => {
   ) {
     return t('固定时长不能与范围时长同时设置');
   }
-  if (
-    Object.values(form).every((value) => value === '' || value === 'inherit')
-  ) {
+  const hasOverride = Object.entries(form).some(([field, value]) =>
+    field === 'resolutions'
+      ? value.length > 0
+      : value !== '' && value !== 'inherit',
+  );
+  if (!hasOverride) {
     return t('至少添加一项覆盖');
   }
   return null;
@@ -238,6 +248,13 @@ const violationText = (violation, t) => {
     duration_mismatch: t('仅支持 {{expected}} 秒时长', options),
     duration_below_min: t('时长至少为 {{expected}} 秒', options),
     duration_above_max: t('时长最多为 {{expected}} 秒', options),
+    resolution_not_supported: t(
+      '清晰度 {{resolution}} 不受支持，支持：{{supported_resolutions}}',
+      {
+        resolution: violation.resolution,
+        supported_resolutions: violation.supported_resolutions?.join(', '),
+      },
+    ),
     content_type_mismatch: t('仅支持 application/json 请求'),
     missing_capability: t('未配置能力档案'),
     invalid_content: t('显式 content 包含无效内容项'),
@@ -336,6 +353,12 @@ const CandidateDetails = ({ candidate, onClose, t }) => (
               {
                 key: t('时长'),
                 value: formatDurationCapability(candidate.capability),
+              },
+              {
+                key: t('清晰度'),
+                value: candidate.capability?.resolutions?.length
+                  ? candidate.capability.resolutions.join(', ')
+                  : t('不限'),
               },
               {
                 key: 'Content-Type',
@@ -600,6 +623,35 @@ const CapabilityRuleEditor = ({ candidate, onClose, onSaved, t }) => {
           <Divider margin='16px' />
 
           <section>
+            <Text strong>{t('支持的清晰度')}</Text>
+            <Space wrap className='mt-2'>
+              {VIDEO_RESOLUTIONS.map((resolution) => (
+                <Checkbox
+                  key={resolution}
+                  checked={form.resolutions.includes(resolution)}
+                  onChange={(event) => {
+                    const resolutions = event.target.checked
+                      ? [...form.resolutions, resolution]
+                      : form.resolutions.filter((item) => item !== resolution);
+                    updateField('resolutions', resolutions);
+                  }}
+                >
+                  {resolution}
+                </Checkbox>
+              ))}
+            </Space>
+            {candidate.capability?.resolutions?.length > 0 && (
+              <div className='mt-2'>
+                <Text type='tertiary' size='small'>
+                  {t('生效')}: {candidate.capability.resolutions.join(', ')}
+                </Text>
+              </div>
+            )}
+          </section>
+
+          <Divider margin='16px' />
+
+          <section>
             <Text strong>{t('时长')}</Text>
             <div className='mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3'>
               {[
@@ -671,7 +723,7 @@ const ChannelRouting = () => {
   const rootUser = isRoot();
   const [routingMode, setRoutingMode] = useState('video');
   const [model, setModel] = useState('');
-  const [group, setGroup] = useState(DEFAULT_GROUP);
+  const [group, setGroup] = useState('');
   const [groups, setGroups] = useState([]);
   const [models, setModels] = useState([]);
   const [rules, setRules] = useState(null);
@@ -688,13 +740,23 @@ const ChannelRouting = () => {
     videos: 0,
     audios: 0,
     duration: 15,
+    resolution: '',
     retry: 0,
   });
 
   const loadGroups = useCallback(async () => {
     try {
       const response = await API.get('/api/group/');
-      if (response.data.success) setGroups(response.data.data || []);
+      if (!response.data.success) throw new Error(response.data.message);
+      const nextGroups = Array.from(
+        new Set(
+          (response.data.data || [])
+            .map((item) => String(item || '').trim())
+            .filter(Boolean),
+        ),
+      );
+      setGroups(nextGroups);
+      setGroup((current) => current || nextGroups[0] || '');
     } catch (error) {
       showError(error.message);
     }
@@ -921,6 +983,12 @@ const ChannelRouting = () => {
         render: (_, record) => formatDurationCapability(record.capability),
       },
       {
+        title: t('清晰度'),
+        width: 120,
+        align: 'center',
+        render: (_, record) => formatResolutionCapability(record.capability),
+      },
+      {
         title: t('优先级'),
         width: 104,
         align: 'center',
@@ -1016,7 +1084,7 @@ const ChannelRouting = () => {
         rowKey={(record) => `${record.group}-${record.channel_id}`}
         pagination={false}
         tableLayout='fixed'
-        scroll={{ x: 1620 }}
+        scroll={{ x: 1776 }}
         empty={t('未找到分流候选渠道')}
       />
     </Spin>
@@ -1098,12 +1166,12 @@ const ChannelRouting = () => {
                   setSelectedCandidate(null);
                   setEditingCandidate(null);
                 }}
-                optionList={Array.from(new Set([group, ...groups])).map(
-                  (item) => ({
-                    value: item,
-                    label: item,
-                  }),
-                )}
+                optionList={Array.from(
+                  new Set(group ? [group, ...groups] : groups),
+                ).map((item) => ({
+                  value: item,
+                  label: item,
+                }))}
               />
             </div>
             <Button
@@ -1136,7 +1204,7 @@ const ChannelRouting = () => {
               }
               itemKey='simulator'
             >
-              <div className='grid grid-cols-2 gap-3 border-y border-semi-color-border py-4 md:grid-cols-6'>
+              <div className='grid grid-cols-2 gap-3 border-y border-semi-color-border py-4 md:grid-cols-7'>
                 {['images', 'videos', 'audios', 'duration', 'retry'].map(
                   (field) => (
                     <div key={field}>
@@ -1165,6 +1233,26 @@ const ChannelRouting = () => {
                     </div>
                   ),
                 )}
+                <div>
+                  <Text type='tertiary'>{t('清晰度')}</Text>
+                  <Select
+                    className='mt-1 w-full'
+                    value={simulation.resolution}
+                    onChange={(resolution) =>
+                      setSimulation((current) => ({
+                        ...current,
+                        resolution: resolution || '',
+                      }))
+                    }
+                    optionList={[
+                      { value: '', label: t('不限') },
+                      ...VIDEO_RESOLUTIONS.map((resolution) => ({
+                        value: resolution,
+                        label: resolution,
+                      })),
+                    ]}
+                  />
+                </div>
                 <div className='flex items-end'>
                   <Button
                     type='primary'
