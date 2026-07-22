@@ -4368,6 +4368,9 @@
     "采集正文会加密静态存储。": "Nội dung đã thu thập được mã hóa khi lưu trữ.",
     "采集协议": "Giao thức thu thập",
     "已采集请求": "Yêu cầu đã thu thập",
-    "未找到采集请求": "Không tìm thấy yêu cầu đã thu thập"
+    "未找到采集请求": "Không tìm thấy yêu cầu đã thu thập",
+    "清晰度": "Độ phân giải",
+    "支持的清晰度": "Độ phân giải được hỗ trợ",
+    "清晰度 {{resolution}} 不受支持，支持：{{supported_resolutions}}": "Độ phân giải {{resolution}} không được hỗ trợ. Hỗ trợ: {{supported_resolutions}}"
   }
 }

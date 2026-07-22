@@ -1,6 +1,27 @@
 package dto
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
+
+var supportedVideoResolutions = map[string]struct{}{
+	"480p":  {},
+	"720p":  {},
+	"1080p": {},
+	"4k":    {},
+}
+
+// NormalizeVideoResolution converts accepted resolution aliases to the
+// canonical values stored in video routing capabilities.
+func NormalizeVideoResolution(value string) (string, bool) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "2160p" {
+		value = "4k"
+	}
+	_, ok := supportedVideoResolutions[value]
+	return value, ok
+}
 
 type VideoMediaRange struct {
 	Min *int `json:"min,omitempty"`
@@ -13,6 +34,7 @@ type VideoModelCapability struct {
 	Audios        *VideoMediaRange `json:"audios,omitempty"`
 	Duration      *VideoMediaRange `json:"duration,omitempty"`
 	FixedDuration *int             `json:"fixed_duration,omitempty"`
+	Resolutions   []string         `json:"resolutions,omitempty"`
 	RequireJSON   *bool            `json:"require_json,omitempty"`
 	RequireText   *bool            `json:"require_text,omitempty"`
 	// ContentPrecedence means explicit content items replace legacy media fields
@@ -42,6 +64,18 @@ func (c *VideoRoutingConfig) Validate() error {
 }
 
 func (c VideoModelCapability) Validate() error {
+	seenResolutions := make(map[string]struct{}, len(c.Resolutions))
+	for _, resolution := range c.Resolutions {
+		normalized, ok := NormalizeVideoResolution(resolution)
+		if !ok || normalized != resolution {
+			return fmt.Errorf("resolution %q must be one of 480p, 720p, 1080p, 4k", resolution)
+		}
+		if _, duplicated := seenResolutions[normalized]; duplicated {
+			return fmt.Errorf("resolution %q must not be duplicated", resolution)
+		}
+		seenResolutions[normalized] = struct{}{}
+	}
+
 	media := []struct {
 		name       string
 		rangeValue *VideoMediaRange

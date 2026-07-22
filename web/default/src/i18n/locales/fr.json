@@ -4948,6 +4948,10 @@
     "Use Passkey or 2FA to confirm changes to captured client payloads.": "Utilisez Passkey ou l'A2F pour confirmer les modifications des charges utiles client capturees.",
     "Use Passkey or 2FA to view this captured client payload.": "Utilisez Passkey ou l'A2F pour voir cette charge utile client capturee.",
     "Verify to update relay capture policy": "Verifiez pour mettre a jour la politique de capture de relais",
-    "Verify to view captured payload": "Verifiez pour voir la charge utile capturee"
+    "Verify to view captured payload": "Verifiez pour voir la charge utile capturee",
+    "Effective": "Effective",
+    "Resolution": "Resolution",
+    "Resolution {{resolution}} is not supported. Supported: {{supported_resolutions}}": "La resolution {{resolution}} n'est pas prise en charge. Prises en charge : {{supported_resolutions}}",
+    "Supported resolutions": "Resolutions prises en charge"
   }
 }

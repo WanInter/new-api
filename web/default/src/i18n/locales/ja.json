@@ -4948,6 +4948,10 @@
     "Use Passkey or 2FA to confirm changes to captured client payloads.": "キャプチャしたクライアントペイロードの変更を確認するには、Passkey または 2FA を使用してください。",
     "Use Passkey or 2FA to view this captured client payload.": "このキャプチャしたクライアントペイロードを表示するには、Passkey または 2FA を使用してください。",
     "Verify to update relay capture policy": "リレーキャプチャポリシーを更新するための認証",
-    "Verify to view captured payload": "キャプチャしたペイロードを表示するための認証"
+    "Verify to view captured payload": "キャプチャしたペイロードを表示するための認証",
+    "Effective": "有効値",
+    "Resolution": "解像度",
+    "Resolution {{resolution}} is not supported. Supported: {{supported_resolutions}}": "解像度 {{resolution}} はサポートされていません。対応：{{supported_resolutions}}",
+    "Supported resolutions": "対応解像度"
   }
 }

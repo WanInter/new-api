@@ -1,5 +1,16 @@
 import { z } from 'zod'
-import type { VideoMediaRange, VideoModelCapability } from '../types'
+import type {
+  VideoMediaRange,
+  VideoModelCapability,
+  VideoResolution,
+} from '../types'
+
+export const videoResolutionOptions: VideoResolution[] = [
+  '480p',
+  '720p',
+  '1080p',
+  '4k',
+]
 
 const optionalNonNegativeInteger = z
   .string()
@@ -26,6 +37,7 @@ export const capabilityRuleFormSchema = z
     duration_min: optionalPositiveInteger,
     duration_max: optionalPositiveInteger,
     fixed_duration: optionalPositiveInteger,
+    resolutions: z.array(z.enum(videoResolutionOptions)),
     require_json: booleanOverrideSchema,
     require_text: booleanOverrideSchema,
     content_precedence: booleanOverrideSchema,
@@ -71,6 +83,7 @@ export const emptyCapabilityRuleFormValues: CapabilityRuleFormValues = {
   duration_min: '',
   duration_max: '',
   fixed_duration: '',
+  resolutions: [],
   require_json: 'inherit',
   require_text: 'inherit',
   content_precedence: 'inherit',
@@ -89,6 +102,7 @@ export function capabilityToFormValues(
     duration_min: numberToDraft(capability?.duration?.min),
     duration_max: numberToDraft(capability?.duration?.max),
     fixed_duration: numberToDraft(capability?.fixed_duration),
+    resolutions: capability?.resolutions || [],
     require_json: booleanToOverride(capability?.require_json),
     require_text: booleanToOverride(capability?.require_text),
     content_precedence: booleanToOverride(capability?.content_precedence),
@@ -104,6 +118,7 @@ export function formValuesToCapability(
     audios: rangeFromDraft(values.audios_min, values.audios_max),
     duration: rangeFromDraft(values.duration_min, values.duration_max),
     fixed_duration: draftToNumber(values.fixed_duration),
+    resolutions: values.resolutions.length > 0 ? values.resolutions : undefined,
     require_json: overrideToBoolean(values.require_json),
     require_text: overrideToBoolean(values.require_text),
     content_precedence: overrideToBoolean(values.content_precedence),
@@ -126,8 +141,12 @@ function validateRange(
 }
 
 function hasAnyOverride(values: CapabilityRuleFormValues) {
-  return Object.values(values).some(
-    (value) => value !== '' && value !== 'inherit'
+  return (
+    values.resolutions.length > 0 ||
+    Object.entries(values).some(
+      ([field, value]) =>
+        field !== 'resolutions' && value !== '' && value !== 'inherit'
+    )
   )
 }
 

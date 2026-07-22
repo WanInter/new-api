@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -119,6 +120,7 @@ func extractJSONVideoRequestFeatures(body []byte, features VideoRequestFeatures)
 		features.profiledContent = &profiledContent
 	}
 	features.Duration = parseJSONDuration(body)
+	features.Resolution = parseJSONVideoResolution(body, request.Metadata)
 	return features, nil
 }
 
@@ -186,6 +188,7 @@ func extractFormVideoRequestFeatures(values url.Values, files map[string][]*mult
 			break
 		}
 	}
+	features.Resolution = parseVideoResolution(values.Get("resolution"))
 	return features
 }
 
@@ -223,6 +226,26 @@ func parseJSONDuration(body []byte) *int {
 		}
 	}
 	return nil
+}
+
+func parseJSONVideoResolution(body []byte, metadata map[string]interface{}) string {
+	for _, field := range []string{"resolution", "parameters.resolution", "params.resolution"} {
+		if resolution := parseVideoResolution(gjson.GetBytes(body, field).String()); resolution != "" {
+			return resolution
+		}
+	}
+	if resolution, ok := metadata["resolution"].(string); ok {
+		return parseVideoResolution(resolution)
+	}
+	return ""
+}
+
+func parseVideoResolution(value string) string {
+	resolution, ok := dto.NormalizeVideoResolution(value)
+	if !ok {
+		return ""
+	}
+	return resolution
 }
 
 func parseDurationString(value string) (int, bool) {

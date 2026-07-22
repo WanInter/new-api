@@ -27,10 +27,13 @@ export type VideoModelCapability = {
   audios?: VideoMediaRange
   duration?: VideoMediaRange
   fixed_duration?: number
+  resolutions?: VideoResolution[]
   require_json?: boolean
   require_text?: boolean
   content_precedence?: boolean
 }
+
+export type VideoResolution = '480p' | '720p' | '1080p' | '4k'
 
 export type VideoRoutingPolicy = {
   id: number
@@ -67,6 +70,8 @@ export type VideoConstraintViolation = {
   field?: string
   actual?: number
   expected?: number
+  resolution?: VideoResolution
+  supported_resolutions?: VideoResolution[]
 }
 
 export type VideoRoutingCandidate = {
@@ -128,6 +133,7 @@ export type VideoRoutingSimulationRequest = {
   videos: number
   audios: number
   duration?: number
+  resolution?: VideoResolution
   content_type: string
   retry: number
   request_path?: string
@@ -139,6 +145,7 @@ export type VideoRoutingSimulationResult = VideoRoutingRuleSet & {
     videos: number
     audios: number
     duration?: number
+    resolution?: VideoResolution
     content_type?: string
   }
   retry: number

@@ -4948,6 +4948,10 @@
     "Use Passkey or 2FA to confirm changes to captured client payloads.": "Используйте Passkey или двухфакторную аутентификацию, чтобы подтвердить изменения захваченных клиентских данных.",
     "Use Passkey or 2FA to view this captured client payload.": "Используйте Passkey или двухфакторную аутентификацию, чтобы просмотреть эти захваченные клиентские данные.",
     "Verify to update relay capture policy": "Подтвердите обновление политики захвата реле",
-    "Verify to view captured payload": "Подтвердите просмотр захваченных данных"
+    "Verify to view captured payload": "Подтвердите просмотр захваченных данных",
+    "Effective": "Действующее значение",
+    "Resolution": "Разрешение",
+    "Resolution {{resolution}} is not supported. Supported: {{supported_resolutions}}": "Разрешение {{resolution}} не поддерживается. Поддерживаются: {{supported_resolutions}}",
+    "Supported resolutions": "Поддерживаемые разрешения"
   }
 }

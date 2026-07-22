@@ -93,6 +93,19 @@ func TestEvaluateChannelVideoRoutingUsesChannelOverride(t *testing.T) {
 	assert.Contains(t, result.Sources, "channel_override:*")
 }
 
+func TestMatchVideoCapabilityResolutions(t *testing.T) {
+	capability := dto.VideoModelCapability{Resolutions: []string{"720p", "4k"}}
+
+	assert.Empty(t, MatchVideoCapability(VideoRequestFeatures{Resolution: "4k"}, capability))
+	assert.Empty(t, MatchVideoCapability(VideoRequestFeatures{}, capability))
+	assert.Contains(t, MatchVideoCapability(VideoRequestFeatures{Resolution: "1080p"}, capability), VideoConstraintViolation{
+		Code:                 "resolution_not_supported",
+		Field:                "resolution",
+		Resolution:           "1080p",
+		SupportedResolutions: []string{"720p", "4k"},
+	})
+}
+
 func TestDatabaseVideoRoutingOverridePreservesExplicitZeroAndFalse(t *testing.T) {
 	truncate(t)
 	channel := channelWithVideoModelMapping(t, constant.ChannelTypeSora, "ax2.0-9tu")
@@ -385,6 +398,19 @@ func TestGetVideoRequestFeaturesCountsEveryReferenceEntry(t *testing.T) {
 	assert.Equal(t, 15, *features.Duration)
 }
 
+func TestGetVideoRequestFeaturesNormalizesResolution(t *testing.T) {
+	c := newChannelConstraintTestContext(t, "/v1/videos", `{
+		"model":"sd-bak-1",
+		"resolution":"1080P",
+		"metadata":{"resolution":"720p"}
+	}`)
+
+	features, err := GetVideoRequestFeatures(c)
+
+	require.NoError(t, err)
+	assert.Equal(t, "1080p", features.Resolution)
+}
+
 func TestVideoRoutingUsesExplicitContentForProfiledModels(t *testing.T) {
 	body := `{
 		"model":"sd-bak-1",
@@ -548,6 +574,46 @@ func TestSimulateVideoRoutingUsesEligiblePriorityTier(t *testing.T) {
 		}
 	}
 	assert.Equal(t, []int{102}, selectedIDs)
+}
+
+func TestSimulateVideoRoutingFiltersUnsupportedResolution(t *testing.T) {
+	truncate(t)
+	group := "resolution-group"
+	modelName := StrictVideoRoutingModelSDBak1
+	priority := int64(10)
+	weight := uint(100)
+	mapping, err := common.Marshal(map[string]string{modelName: "resolution-upstream"})
+	require.NoError(t, err)
+	mappingString := string(mapping)
+	channel := model.Channel{
+		Id: 301, Name: "720p only", Type: constant.ChannelTypeSora, Key: "key",
+		Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight, ModelMapping: &mappingString,
+	}
+	require.NoError(t, model.DB.Create(&channel).Error)
+	require.NoError(t, model.DB.Create(&model.Ability{
+		Group: group, Model: modelName, ChannelId: channel.Id, Enabled: true,
+		Priority: &priority, Weight: weight,
+	}).Error)
+	_, err = UpsertChannelVideoRoutingCapabilityRule(channel.Id, "resolution-upstream", dto.VideoModelCapability{
+		Resolutions: []string{"720p"},
+	}, 0, 1)
+	require.NoError(t, err)
+
+	result, err := SimulateVideoRouting(VideoRoutingSimulationRequest{
+		Model: modelName, Group: group, Resolution: "1080p", ContentType: "application/json",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Candidates, 1)
+	require.NotNil(t, result.Candidates[0].Eligible)
+	assert.False(t, *result.Candidates[0].Eligible)
+	assert.Nil(t, result.TargetPriority)
+	assert.Contains(t, result.Candidates[0].Violations, VideoConstraintViolation{
+		Code:                 "resolution_not_supported",
+		Field:                "resolution",
+		Resolution:           "1080p",
+		SupportedResolutions: []string{"720p"},
+	})
 }
 
 func TestSimulateVideoRoutingRejectsAdvancedCustomWithoutVideoPath(t *testing.T) {

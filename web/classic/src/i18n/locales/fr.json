@@ -3837,6 +3837,9 @@
     "采集正文会加密静态存储。": "Les messages capturés sont chiffrés au repos.",
     "采集协议": "Protocoles de capture",
     "已采集请求": "Requêtes capturées",
-    "未找到采集请求": "Aucune requête capturée trouvée"
+    "未找到采集请求": "Aucune requête capturée trouvée",
+    "清晰度": "Résolution",
+    "支持的清晰度": "Résolutions prises en charge",
+    "清晰度 {{resolution}} 不受支持，支持：{{supported_resolutions}}": "La résolution {{resolution}} n'est pas prise en charge. Prises en charge : {{supported_resolutions}}"
   }
 }

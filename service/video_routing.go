@@ -22,6 +22,7 @@ type VideoRequestFeatures struct {
 	Videos      int    `json:"videos"`
 	Audios      int    `json:"audios"`
 	Duration    *int   `json:"duration,omitempty"`
+	Resolution  string `json:"resolution,omitempty"`
 	ContentType string `json:"content_type,omitempty"`
 
 	profiledContent *videoMediaCounts
@@ -36,10 +37,12 @@ type videoMediaCounts struct {
 }
 
 type VideoConstraintViolation struct {
-	Code     string `json:"code"`
-	Field    string `json:"field,omitempty"`
-	Actual   *int   `json:"actual,omitempty"`
-	Expected *int   `json:"expected,omitempty"`
+	Code                 string   `json:"code"`
+	Field                string   `json:"field,omitempty"`
+	Actual               *int     `json:"actual,omitempty"`
+	Expected             *int     `json:"expected,omitempty"`
+	Resolution           string   `json:"resolution,omitempty"`
+	SupportedResolutions []string `json:"supported_resolutions,omitempty"`
 }
 
 type EffectiveVideoCapability struct {
@@ -204,6 +207,9 @@ func mergeVideoCapability(base, override dto.VideoModelCapability) dto.VideoMode
 	base.Images = mergeVideoMediaRange(base.Images, override.Images)
 	base.Videos = mergeVideoMediaRange(base.Videos, override.Videos)
 	base.Audios = mergeVideoMediaRange(base.Audios, override.Audios)
+	if override.Resolutions != nil {
+		base.Resolutions = append([]string(nil), override.Resolutions...)
+	}
 	if override.Duration != nil {
 		base.Duration = mergeVideoMediaRange(nil, override.Duration)
 		base.FixedDuration = nil
@@ -265,6 +271,14 @@ func MatchVideoCapability(features VideoRequestFeatures, capability dto.VideoMod
 			violations = append(violations, matchVideoMediaRange("duration", *features.Duration, capability.Duration)...)
 		}
 	}
+	if features.Resolution != "" && len(capability.Resolutions) > 0 && !containsVideoResolution(capability.Resolutions, features.Resolution) {
+		violations = append(violations, VideoConstraintViolation{
+			Code:                 "resolution_not_supported",
+			Field:                "resolution",
+			Resolution:           features.Resolution,
+			SupportedResolutions: append([]string(nil), capability.Resolutions...),
+		})
+	}
 	if capability.RequireJSON != nil && *capability.RequireJSON && !isJSONMediaType(features.ContentType) {
 		violations = append(violations, VideoConstraintViolation{Code: "content_type_mismatch", Field: "content_type"})
 	}
@@ -280,6 +294,15 @@ func MatchVideoCapability(features VideoRequestFeatures, capability dto.VideoMod
 		}
 	}
 	return violations
+}
+
+func containsVideoResolution(resolutions []string, resolution string) bool {
+	for _, supported := range resolutions {
+		if supported == resolution {
+			return true
+		}
+	}
+	return false
 }
 
 func videoFeaturesForCapability(features VideoRequestFeatures, capability dto.VideoModelCapability) VideoRequestFeatures {

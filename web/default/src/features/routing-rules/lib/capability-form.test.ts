@@ -30,6 +30,7 @@ describe('routing capability override form', () => {
       duration_min: '5',
       duration_max: '15',
       fixed_duration: '10',
+      resolutions: [],
       require_json: 'inherit',
       require_text: 'inherit',
       content_precedence: 'inherit',
@@ -60,11 +61,23 @@ describe('routing capability override form', () => {
       duration_min: '',
       duration_max: '',
       fixed_duration: '',
+      resolutions: [],
       require_json: 'inherit',
       require_text: 'inherit',
       content_precedence: 'inherit',
     })
 
     expect(result.success).toBe(false)
+  })
+
+  test('serializes selected resolution capabilities', () => {
+    const values = capabilityToFormValues({ resolutions: ['720p', '4k'] })
+
+    expect(JSON.stringify(values.resolutions)).toBe(
+      JSON.stringify(['720p', '4k'])
+    )
+    expect(JSON.stringify(formValuesToCapability(values))).toBe(
+      JSON.stringify({ resolutions: ['720p', '4k'] })
+    )
   })
 })

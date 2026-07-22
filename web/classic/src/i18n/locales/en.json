@@ -3986,6 +3986,9 @@
     "采集正文会加密静态存储。": "Captured payloads are encrypted at rest.",
     "采集协议": "Capture protocols",
     "已采集请求": "Captured requests",
-    "未找到采集请求": "No captured requests found"
+    "未找到采集请求": "No captured requests found",
+    "清晰度": "Resolution",
+    "支持的清晰度": "Supported resolutions",
+    "清晰度 {{resolution}} 不受支持，支持：{{supported_resolutions}}": "Resolution {{resolution}} is not supported. Supported: {{supported_resolutions}}"
   }
 }

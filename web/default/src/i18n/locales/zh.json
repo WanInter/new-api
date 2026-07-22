@@ -4948,6 +4948,10 @@
     "Use Passkey or 2FA to confirm changes to captured client payloads.": "请使用 Passkey 或双重验证确认对客户端采集报文的修改。",
     "Use Passkey or 2FA to view this captured client payload.": "请使用 Passkey 或双重验证查看此客户端采集报文。",
     "Verify to update relay capture policy": "验证后更新中继采集策略",
-    "Verify to view captured payload": "验证后查看采集报文"
+    "Verify to view captured payload": "验证后查看采集报文",
+    "Effective": "生效值",
+    "Resolution": "清晰度",
+    "Resolution {{resolution}} is not supported. Supported: {{supported_resolutions}}": "不支持清晰度 {{resolution}}。支持：{{supported_resolutions}}",
+    "Supported resolutions": "支持的清晰度"
   }
 }

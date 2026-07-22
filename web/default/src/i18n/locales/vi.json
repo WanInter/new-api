@@ -4948,6 +4948,10 @@
     "Use Passkey or 2FA to confirm changes to captured client payloads.": "Dung Passkey hoac 2FA de xac nhan cac thay doi doi voi du lieu client da thu thap.",
     "Use Passkey or 2FA to view this captured client payload.": "Dung Passkey hoac 2FA de xem du lieu client da thu thap nay.",
     "Verify to update relay capture policy": "Xac minh de cap nhat chinh sach thu thap relay",
-    "Verify to view captured payload": "Xac minh de xem du lieu da thu thap"
+    "Verify to view captured payload": "Xac minh de xem du lieu da thu thap",
+    "Effective": "Gia tri hien hanh",
+    "Resolution": "Do phan giai",
+    "Resolution {{resolution}} is not supported. Supported: {{supported_resolutions}}": "Do phan giai {{resolution}} khong duoc ho tro. Ho tro: {{supported_resolutions}}",
+    "Supported resolutions": "Do phan giai duoc ho tro"
   }
 }
