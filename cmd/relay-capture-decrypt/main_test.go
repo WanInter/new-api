@@ -56,13 +56,15 @@ func TestRunExportsEncryptedCaptureAsJSONL(t *testing.T) {
 	t.Cleanup(func() { common.CryptoSecret = previousSecret })
 	t.Setenv("CRYPTO_SECRET", common.CryptoSecret)
 
-	captureDir := t.TempDir()
+	captureRoot := t.TempDir()
+	captureDir := filepath.Join(captureRoot, "2026", "07", "22", "channel-1", "capture-fixture")
+	require.NoError(t, os.MkdirAll(captureDir, 0o700))
 	writeFixture(t, captureDir)
 	output := filepath.Join(t.TempDir(), "conversations.jsonl")
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	require.Zero(t, run([]string{"--capture-dir", captureDir, "--output", output}, &stdout, &stderr), stderr.String())
+	require.Zero(t, run([]string{"--capture-dir", captureRoot, "--output", output}, &stdout, &stderr), stderr.String())
 	require.Contains(t, stdout.String(), "exported 1 conversation")
 	body, err := os.ReadFile(output)
 	require.NoError(t, err)

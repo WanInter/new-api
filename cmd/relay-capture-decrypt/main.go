@@ -43,14 +43,13 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	flags := flag.NewFlagSet("relay-capture-decrypt", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	captureDir := flags.String("capture-dir", "", "one capture artifact directory")
-	captureRoot := flags.String("capture-root", "", "directory containing capture artifacts")
+	captureDir := flags.String("capture-dir", "", "directory to scan recursively for capture artifacts")
+	captureRoot := flags.String("capture-root", "", "deprecated alias for --capture-dir")
 	output := flags.String("output", "", "JSONL output file")
 	force := flags.Bool("force", false, "overwrite an existing output file")
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "Usage:")
 		fmt.Fprintln(stderr, "  relay-capture-decrypt --capture-dir CAPTURE_DIR --output conversations.jsonl [--force]")
-		fmt.Fprintln(stderr, "  relay-capture-decrypt --capture-root CAPTURE_ROOT --output conversations.jsonl [--force]")
 		fmt.Fprintln(stderr, "Set CRYPTO_SECRET in the environment before running this tool.")
 	}
 	if err := flags.Parse(args); err != nil {
@@ -70,17 +69,13 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 	common.CryptoSecret = secret
 
-	var artifacts []artifact
-	var err error
-	if *captureDir != "" {
-		item, loadErr := loadArtifact(*captureDir)
-		if loadErr != nil {
-			fmt.Fprintf(stderr, "read capture directory: %v\n", loadErr)
-			return 1
-		}
-		artifacts = []artifact{item}
-	} else if artifacts, err = findArtifacts(*captureRoot); err != nil {
-		fmt.Fprintf(stderr, "read capture root: %v\n", err)
+	scanDirectory := *captureDir
+	if scanDirectory == "" {
+		scanDirectory = *captureRoot
+	}
+	artifacts, err := findArtifacts(scanDirectory)
+	if err != nil {
+		fmt.Fprintf(stderr, "read capture directory: %v\n", err)
 		return 1
 	}
 

@@ -15,26 +15,22 @@ Transfer only the binary and copied capture artifacts to the offline host.
 Obtain the exact stable `CRYPTO_SECRET` through the approved secret-management
 process. Do not put it in a command argument, file, or shell history.
 
-Export one capture artifact as JSONL:
+Export all capture artifacts beneath a channel, day, or archive directory as JSONL:
 
 ```bash
 read -r -s -p 'CRYPTO_SECRET: ' CRYPTO_SECRET; echo
 export CRYPTO_SECRET
 
 ./relay-capture-decrypt \
-  --capture-dir /archive/relay-captures/2026/07/22/channel-1/b8008359-b449-4265-ae64-52f6925bb398 \
+  --capture-dir /archive/relay-captures/2026/07/22/channel-1 \
   --output /archive/conversations.jsonl
 
 unset CRYPTO_SECRET
 ```
 
-To merge a copied capture tree, use `--capture-root`:
-
-```bash
-./relay-capture-decrypt \
-  --capture-root /archive/relay-captures \
-  --output /archive/conversations.jsonl
-```
+`--capture-dir` recursively finds every `manifest.json` below the supplied
+directory, so it also accepts `/archive/relay-captures` to merge the entire
+archive. `--capture-root` remains an equivalent compatibility alias.
 
 Every output line has the form `{"messages":[...]}`. Chat Completions exports
 one line per response choice. Anthropic Messages and OpenAI Responses preserve
