@@ -12,6 +12,7 @@ var doubaoModelList = []string{
 	"doubao-seedance-1-5-pro-251215",
 	"doubao-seedance-2-0-260128",
 	"doubao-seedance-2-0-fast-260128",
+	"model/seedance-2.0-beta", // MaxAPI Volcengine Ark-compatible endpoint
 }
 
 var byteforModelList = []string{

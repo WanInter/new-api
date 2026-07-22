@@ -131,6 +131,67 @@ func TestBuildRequestBodyPreservesTopLevelAspectRatio(t *testing.T) {
 	assert.Equal(t, []string{"https://example.com/reference.png"}, payload.Images)
 }
 
+func TestMaxAPISeedanceBetaUsesVolcengineArkProtocol(t *testing.T) {
+	bodyJSON := `{
+		"model":"public-seedance-beta",
+		"prompt":"Use the reference image as the character and the video as the motion",
+		"size":"16:9",
+		"resolution":"1080p",
+		"duration":15,
+		"metadata":{
+			"generate_audio":true,
+			"watermark":false,
+			"tools":[{"type":"web_search"}],
+			"content":[
+				{"type":"image_url","image_url":{"url":"https://example.com/character.png"},"role":"reference_image"},
+				{"type":"video_url","video_url":{"url":"https://example.com/motion.mp4"},"role":"reference_video"}
+			]
+		}
+	}`
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos/generations", strings.NewReader(bodyJSON))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "public-seedance-beta",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "model/seedance-2.0-beta",
+			IsModelMapped:     true,
+		},
+	}
+	adaptor := &TaskAdaptor{baseURL: "https://api.maxapi.dev"}
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	requestURL, err := adaptor.BuildRequestURL(info)
+	require.NoError(t, err)
+	assert.Equal(t, "https://api.maxapi.dev/api/v3/contents/generations/tasks", requestURL)
+
+	requestBody, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(requestBody)
+	require.NoError(t, err)
+
+	var payload map[string]interface{}
+	require.NoError(t, common.Unmarshal(data, &payload))
+	assert.Equal(t, "model/seedance-2.0-beta", payload["model"])
+	assert.Equal(t, "16:9", payload["ratio"])
+	assert.Equal(t, "1080p", payload["resolution"])
+	assert.Equal(t, float64(15), payload["duration"])
+	assert.Equal(t, true, payload["generate_audio"])
+	assert.Equal(t, false, payload["watermark"])
+
+	content, ok := payload["content"].([]interface{})
+	require.True(t, ok)
+	require.Len(t, content, 3)
+	assert.Equal(t, map[string]interface{}{
+		"type": "text",
+		"text": "Use the reference image as the character and the video as the motion",
+	}, content[2])
+	assert.Equal(t, "reference_image", content[0].(map[string]interface{})["role"])
+	assert.Equal(t, "reference_video", content[1].(map[string]interface{})["role"])
+}
+
 func TestConvertByteforRequestPreservesAllMediaAliasesAndDuplicates(t *testing.T) {
 	req := &relaycommon.TaskSubmitReq{
 		Images:               []string{"duplicate", "duplicate"},
