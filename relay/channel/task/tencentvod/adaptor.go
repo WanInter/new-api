@@ -466,13 +466,16 @@ func convertToRequestPayload(req *relaycommon.TaskSubmitReq, info *relaycommon.R
 	if err := taskcommon.UnmarshalMetadata(req.Metadata, &metadata); err != nil {
 		return nil, err
 	}
+	if err := validateTencentVODMedia(req); err != nil {
+		return nil, err
+	}
 	if utf8.RuneCountInString(req.Prompt) > maxPromptLength {
 		return nil, fmt.Errorf("prompt must not exceed %d characters", maxPromptLength)
 	}
 	if utf8.RuneCountInString(metadata.NegativePrompt) > maxPromptLength {
 		return nil, fmt.Errorf("negative_prompt must not exceed %d characters", maxPromptLength)
 	}
-	resolution, err := normalizeResolution(metadata.Resolution)
+	resolution, err := normalizeResolution(firstNonEmpty(req.Resolution, metadata.Resolution))
 	if err != nil {
 		return nil, err
 	}
@@ -492,7 +495,7 @@ func convertToRequestPayload(req *relaycommon.TaskSubmitReq, info *relaycommon.R
 	}
 	durationFloat := float64(duration)
 	aspectRatio, err := normalizeAspectRatio(
-		firstNonEmpty(metadata.AspectRatio, aspectRatioFromSize(req.Size)),
+		firstNonEmpty(req.AspectRatio, req.Ratio, metadata.AspectRatio, aspectRatioFromSize(req.Size)),
 		len(fileInfos) == 0,
 	)
 	if err != nil {
@@ -726,13 +729,15 @@ func normalizeEnabled(value any) string {
 }
 
 func buildFileInputs(req *relaycommon.TaskSubmitReq, metadata requestMetadata) ([]inputFileInfo, string, error) {
-	if len(metadata.FileInfos) > 0 {
+	if req == nil {
+		return nil, "", errors.New("video request is required")
+	}
+	images := tencentVODImageInputs(req)
+	if len(images) == 0 && len(metadata.FileInfos) > 0 {
 		return metadata.FileInfos, firstNonEmpty(metadata.LastFrameURL, metadata.ImageTail), nil
 	}
-	images := make([]string, 0, len(req.Images)+1)
-	images = append(images, req.Images...)
-	if strings.TrimSpace(req.InputReference) != "" {
-		images = append(images, req.InputReference)
+	if len(images) > 0 && len(metadata.FileInfos) > 0 {
+		return nil, "", errors.New("cannot combine public image inputs with metadata.file_infos")
 	}
 	usage := normalizeImageUsage(metadata.ImageUsage)
 	lastFrameURL := firstNonEmpty(metadata.LastFrameURL, metadata.ImageTail)
@@ -752,6 +757,77 @@ func buildFileInputs(req *relaycommon.TaskSubmitReq, metadata requestMetadata) (
 		fileInfos = append(fileInfos, fileInfo)
 	}
 	return fileInfos, lastFrameURL, nil
+}
+
+// Tencent VOD's Kling task input can represent image references only. Keep
+// every public image spelling on the supported path and reject video/audio
+// references before billing instead of silently omitting them.
+func validateTencentVODMedia(req *relaycommon.TaskSubmitReq) error {
+	if req == nil {
+		return errors.New("video request is required")
+	}
+	if hasNonEmptyTencentVODMedia(req.Videos) || hasNonEmptyTencentVODMedia(req.VideoURLs) {
+		return errors.New("Tencent VOD Kling does not support video reference inputs")
+	}
+	if hasNonEmptyTencentVODMedia(req.Audios) || hasNonEmptyTencentVODMedia(req.AudioURLs) {
+		return errors.New("Tencent VOD Kling does not support audio reference inputs")
+	}
+	for _, item := range req.Content {
+		if item.VideoURL != nil && strings.TrimSpace(item.VideoURL.URL) != "" {
+			return errors.New("Tencent VOD Kling does not support video reference inputs")
+		}
+		if item.AudioURL != nil && strings.TrimSpace(item.AudioURL.URL) != "" {
+			return errors.New("Tencent VOD Kling does not support audio reference inputs")
+		}
+	}
+	return nil
+}
+
+func tencentVODImageInputs(req *relaycommon.TaskSubmitReq) []string {
+	if req == nil {
+		return nil
+	}
+	images := make([]string, 0, len(req.Images)+len(req.ImageURLs)+len(req.Content)+6)
+	seen := make(map[string]struct{})
+	appendImage := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, exists := seen[value]; exists {
+			return
+		}
+		seen[value] = struct{}{}
+		images = append(images, value)
+	}
+	for _, values := range [][]string{
+		req.Images,
+		req.ImageURLs,
+		req.InputStartFrames,
+		req.InputImageReferences,
+		req.MetadataStartFrames,
+	} {
+		for _, value := range values {
+			appendImage(value)
+		}
+	}
+	appendImage(req.Image)
+	appendImage(req.InputReference)
+	for _, item := range req.Content {
+		if item.ImageURL != nil {
+			appendImage(item.ImageURL.URL)
+		}
+	}
+	return images
+}
+
+func hasNonEmptyTencentVODMedia(values []string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeImageUsage(value string) string {

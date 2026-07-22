@@ -4955,6 +4955,17 @@
     "Effective": "Gia tri hien hanh",
     "Resolution": "Do phan giai",
     "Resolution {{resolution}} is not supported. Supported: {{supported_resolutions}}": "Do phan giai {{resolution}} khong duoc ho tro. Ho tro: {{supported_resolutions}}",
-    "Supported resolutions": "Do phan giai duoc ho tro"
+    "Supported resolutions": "Do phan giai duoc ho tro",
+    "Aspect ratio": "Tỷ lệ khung hình",
+    "Pixel size": "Kích thước điểm ảnh",
+    "Supported aspect ratios": "Tỷ lệ khung hình được hỗ trợ",
+    "Supported pixel sizes": "Kích thước điểm ảnh được hỗ trợ",
+    "Aspect ratio {{aspect_ratio}} is not supported. Supported: {{supported_aspect_ratios}}": "Tỷ lệ khung hình {{aspect_ratio}} không được hỗ trợ. Hỗ trợ: {{supported_aspect_ratios}}",
+    "Pixel size {{size}} is not supported. Supported: {{supported_sizes}}": "Kích thước điểm ảnh {{size}} không được hỗ trợ. Hỗ trợ: {{supported_sizes}}",
+    "Use W:H aspect ratios or adaptive": "Dung ty le khung hinh W:H hoac adaptive",
+    "Use WxH pixel sizes": "Dung kich thuoc diem anh WxH",
+    "Use a quality label such as 720p or 4k": "Dung nhan chat luong nhu 720p hoac 4k",
+    "Do not repeat output values": "Khong lap lai gia tri dau ra",
+    "Pixel size conflicts with aspect ratio": "Kich thuoc diem anh khong khop voi ty le khung hinh"
   }
 }

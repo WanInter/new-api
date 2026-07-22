@@ -1,7 +1,10 @@
 package shishi
 
 import (
+	"bytes"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -100,6 +103,158 @@ func TestBuildRequestBodyMapsSecondsAliasToDurationWithoutChangingExplicitZero(t
 			assert.NotContains(t, got, "seconds")
 		})
 	}
+}
+
+func TestBuildRequestBodyNormalizesVideoOutputAliases(t *testing.T) {
+	testCases := []struct {
+		name            string
+		request         string
+		wantAspectRatio string
+		wantResolution  string
+	}{
+		{
+			name:            "ratio alias",
+			request:         `{"model":"public-video-model","prompt":"animate","ratio":"32:18","resolution":"720P"}`,
+			wantAspectRatio: "16:9",
+			wantResolution:  "720p",
+		},
+		{
+			name:            "camel aspect ratio alias",
+			request:         `{"model":"public-video-model","prompt":"animate","aspectRatio":"9:16","resolution":"1080P"}`,
+			wantAspectRatio: "9:16",
+			wantResolution:  "1080p",
+		},
+		{
+			name:            "metadata fallback",
+			request:         `{"model":"public-video-model","prompt":"animate","metadata":{"ratio":"4:3","resolution":"720P"}}`,
+			wantAspectRatio: "4:3",
+			wantResolution:  "720p",
+		},
+		{
+			name:            "encoded metadata fallback",
+			request:         `{"model":"public-video-model","prompt":"animate","metadata":"{\"ratio\":\"4:3\",\"resolution\":\"720P\",\"provider_option\":true}"}`,
+			wantAspectRatio: "4:3",
+			wantResolution:  "720p",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(testCase.request))
+			c.Request.Header.Set("Content-Type", "application/json")
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+			adaptor := &TaskAdaptor{}
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "public-video-model",
+				ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "shishi-upstream-model"},
+				TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+			}
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+			req, err := relaycommon.GetTaskRequest(c)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.wantAspectRatio, req.AspectRatio)
+			assert.Equal(t, testCase.wantResolution, req.Resolution)
+
+			body, err := adaptor.BuildRequestBody(c, info)
+			require.NoError(t, err)
+			data, err := io.ReadAll(body)
+			require.NoError(t, err)
+			var got map[string]any
+			require.NoError(t, common.Unmarshal(data, &got))
+			assert.Equal(t, testCase.wantAspectRatio, got["aspect_ratio"])
+			assert.Equal(t, testCase.wantResolution, got["resolution"])
+			assert.NotContains(t, got, "ratio")
+			assert.NotContains(t, got, "aspectRatio")
+			if testCase.name == "encoded metadata fallback" {
+				rawMetadata, ok := got["metadata"].(string)
+				require.True(t, ok)
+				var metadata map[string]any
+				require.NoError(t, common.UnmarshalJsonStr(rawMetadata, &metadata))
+				assert.Equal(t, "4:3", metadata["aspect_ratio"])
+				assert.Equal(t, "720p", metadata["resolution"])
+				assert.Equal(t, true, metadata["provider_option"])
+				assert.NotContains(t, metadata, "ratio")
+			}
+		})
+	}
+}
+
+func TestBuildRequestBodyNormalizesMultipartVideoOutputAndMetadata(t *testing.T) {
+	var input bytes.Buffer
+	inputWriter := multipart.NewWriter(&input)
+	require.NoError(t, inputWriter.WriteField("model", "public-video-model"))
+	require.NoError(t, inputWriter.WriteField("prompt", "animate"))
+	require.NoError(t, inputWriter.WriteField("ratio", "32:18"))
+	require.NoError(t, inputWriter.WriteField("aspectRatio", "16:9"))
+	require.NoError(t, inputWriter.WriteField("size", "0960X0540"))
+	require.NoError(t, inputWriter.WriteField("resolution", "1080P"))
+	require.NoError(t, inputWriter.WriteField("metadata", `{
+		"ratio":"9:16",
+		"aspectRatio":"9:16",
+		"aspect_ratio":"9:16",
+		"size":"720x1280",
+		"resolution":"720P",
+		"provider_option":{"keep":true}
+	}`))
+	require.NoError(t, inputWriter.Close())
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(input.Bytes()))
+	c.Request.Header.Set("Content-Type", inputWriter.FormDataContentType())
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	adaptor := &TaskAdaptor{}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "public-video-model",
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "shishi-upstream-model"},
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	_, params, err := mime.ParseMediaType(c.Request.Header.Get("Content-Type"))
+	require.NoError(t, err)
+	form, err := multipart.NewReader(bytes.NewReader(data), params["boundary"]).ReadForm(1 << 20)
+	require.NoError(t, err)
+	defer form.RemoveAll()
+
+	require.Equal(t, []string{"shishi-upstream-model"}, form.Value["model"])
+	assert.Equal(t, []string{"960x540"}, form.Value["size"])
+	assert.Equal(t, []string{"16:9"}, form.Value["aspect_ratio"])
+	assert.Equal(t, []string{"1080p"}, form.Value["resolution"])
+	assert.NotContains(t, form.Value, "ratio")
+	assert.NotContains(t, form.Value, "aspectRatio")
+
+	var metadata map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(form.Value["metadata"][0], &metadata))
+	assert.Equal(t, "960x540", metadata["size"])
+	assert.Equal(t, "16:9", metadata["aspect_ratio"])
+	assert.Equal(t, "1080p", metadata["resolution"])
+	assert.NotContains(t, metadata, "ratio")
+	assert.NotContains(t, metadata, "aspectRatio")
+	assert.Equal(t, map[string]any{"keep": true}, metadata["provider_option"])
+}
+
+func TestValidateRequestRejectsConflictingSizeAndRatio(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"public-video-model","prompt":"animate","size":"960x540","ratio":"9:16"}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, &relaycommon.RelayInfo{
+		OriginModelName: "public-video-model",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	})
+
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_video_output", taskErr.Code)
+	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	assert.Contains(t, taskErr.Message, "conflicts with aspect_ratio")
 }
 
 func TestTaskRequestFromPayloadPrefersCanonicalDuration(t *testing.T) {

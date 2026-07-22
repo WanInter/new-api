@@ -99,6 +99,9 @@ func validateRemixRequest(c *gin.Context) *dto.TaskError {
 	if err := common.UnmarshalBodyReusable(c, &req); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
+	if _, err := relaycommon.NormalizeTaskSubmitVideoOutput(&req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_video_output", http.StatusBadRequest)
+	}
 	if strings.TrimSpace(req.Prompt) == "" {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("field prompt is required"), "invalid_request", http.StatusBadRequest)
 	}
@@ -173,6 +176,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if strings.HasPrefix(contentType, "application/json") {
 		var bodyMap map[string]interface{}
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
+			applyNormalizedSoraJSONVideoOutput(c, bodyMap)
 			bodyMap["model"] = info.UpstreamModelName
 			profile, hasProfile := soraModelProfileForInfo(info)
 			if hasProfile {
@@ -199,6 +203,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		var buf bytes.Buffer
 		writer := multipart.NewWriter(&buf)
 		writer.WriteField("model", info.UpstreamModelName)
+		if err := applyNormalizedSoraMultipartVideoOutput(c, formData.Value); err != nil {
+			return nil, err
+		}
 		profile, hasProfile := soraModelProfileForInfo(info)
 		if hasProfile && profile.MultipartTransform != requestTransformNone {
 			applySoraModelMultipartProfile(writer, formData.Value, profile)
@@ -241,6 +248,98 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 
 	return common.ReaderOnly(storage), nil
+}
+
+// BuildRequestBody intentionally starts from the original wire body because
+// Sora-compatible providers have model-specific transforms. Once validation
+// has produced a TaskSubmitReq, copy its normalized public output fields back
+// into that body so routing, billing, and the provider see the same request.
+func applyNormalizedSoraJSONVideoOutput(c *gin.Context, body map[string]interface{}) {
+	if body == nil {
+		return
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return
+	}
+	if req.Size != "" {
+		body["size"] = req.Size
+	}
+	if req.AspectRatio != "" {
+		body["aspect_ratio"] = req.AspectRatio
+		if _, ok := body["ratio"]; ok {
+			body["ratio"] = req.AspectRatio
+		}
+		if _, ok := body["aspectRatio"]; ok {
+			body["aspectRatio"] = req.AspectRatio
+		}
+	}
+	if req.Resolution != "" {
+		body["resolution"] = req.Resolution
+		setSoraParametersResolution(body, req.Resolution)
+	}
+
+	metadata, encodedMetadata := soraJSONMetadata(body)
+	if metadata == nil {
+		return
+	}
+	delete(metadata, "ratio")
+	delete(metadata, "aspectRatio")
+	delete(metadata, "aspect_ratio")
+	if req.Size != "" {
+		metadata["size"] = req.Size
+	}
+	if req.AspectRatio != "" {
+		metadata["aspect_ratio"] = req.AspectRatio
+	}
+	if req.Resolution != "" {
+		metadata["resolution"] = req.Resolution
+	}
+	if !encodedMetadata {
+		return
+	}
+	if serialized, err := common.Marshal(metadata); err == nil {
+		body["metadata"] = string(serialized)
+	}
+}
+
+func soraJSONMetadata(body map[string]interface{}) (map[string]interface{}, bool) {
+	if metadata, ok := body["metadata"].(map[string]interface{}); ok {
+		return metadata, false
+	}
+	rawMetadata, ok := body["metadata"].(string)
+	if !ok || strings.TrimSpace(rawMetadata) == "" {
+		return nil, false
+	}
+	var metadata map[string]interface{}
+	if err := common.UnmarshalJsonStr(rawMetadata, &metadata); err != nil {
+		return nil, false
+	}
+	return metadata, true
+}
+
+// setSoraParametersResolution keeps Sora's nested wire hint aligned with a
+// canonical public resolution when callers send both forms. Do not create a
+// parameters object for requests that did not use that provider-specific form.
+func setSoraParametersResolution(body map[string]interface{}, resolution string) {
+	parameters, ok := body["parameters"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	parameters["resolution"] = resolution
+}
+
+func applyNormalizedSoraMultipartVideoOutput(c *gin.Context, values map[string][]string) error {
+	if values == nil {
+		return nil
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return nil
+	}
+	return relaycommon.ApplyNormalizedTaskMultipartVideoOutput(values, req, relaycommon.MultipartVideoOutputOptions{
+		PreserveAspectRatioAliases: true,
+	})
 }
 
 // mapDurationToSoraSeconds maps the public duration field to the Sora wire

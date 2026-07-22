@@ -6,6 +6,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -255,6 +256,216 @@ func TestGetVideoRequestFeaturesNormalizesResolution(t *testing.T) {
 	assert.Equal(t, "1080p", features.Resolution)
 }
 
+func TestGetVideoRequestFeaturesNormalizesOutputAliasesAndPixelSize(t *testing.T) {
+	c := newChannelConstraintTestContext(t, "/v1/videos", `{
+		"model":"video-model",
+		"ratio":"32:18",
+		"size":"960X540"
+	}`)
+
+	features, err := GetVideoRequestFeatures(c)
+
+	require.NoError(t, err)
+	assert.Equal(t, "16:9", features.AspectRatio)
+	assert.Equal(t, "960x540", features.Size)
+	assert.Empty(t, features.Resolution)
+}
+
+func TestGetVideoRequestFeaturesAcceptsExplicitResolutionWithPixelSize(t *testing.T) {
+	c := newChannelConstraintTestContext(t, "/v1/videos", `{
+		"model":"video-model",
+		"size":"960x540",
+		"resolution":"720p"
+	}`)
+
+	features, err := GetVideoRequestFeatures(c)
+
+	require.NoError(t, err)
+	assert.Equal(t, "960x540", features.Size)
+	assert.Equal(t, "720p", features.Resolution)
+}
+
+func TestNestedProviderResolutionHintsConstrainOnlyOwningChannels(t *testing.T) {
+	truncate(t)
+	publicModel := "provider-resolution-hints-public"
+	capability := dto.VideoModelCapability{Resolutions: []string{"720p"}}
+	sora := channelWithVideoModelMapping(t, 904, constant.ChannelTypeSora, publicModel, "sora-upstream")
+	openAI := channelWithVideoModelMapping(t, 908, constant.ChannelTypeOpenAI, publicModel, "openai-sora-upstream")
+	gemini := channelWithVideoModelMapping(t, 905, constant.ChannelTypeGemini, publicModel, "gemini-upstream")
+	vertex := channelWithVideoModelMapping(t, 906, constant.ChannelTypeVertexAi, publicModel, "vertex-upstream")
+	aggc := channelWithVideoModelMapping(t, 907, constant.ChannelTypeAGGC, publicModel, "aggc-upstream")
+	createChannelVideoCapability(t, sora, "sora-upstream", capability)
+	createChannelVideoCapability(t, openAI, "openai-sora-upstream", capability)
+	createChannelVideoCapability(t, gemini, "gemini-upstream", capability)
+	createChannelVideoCapability(t, vertex, "vertex-upstream", capability)
+	createChannelVideoCapability(t, aggc, "aggc-upstream", capability)
+
+	c := newChannelConstraintTestContext(t, "/v1/videos", `{
+		"model":"provider-resolution-hints-public",
+		"prompt":"test",
+		"parameters":{"resolution":"1080P"},
+		"params":{"resolution":"2160P"}
+	}`)
+	features, err := GetVideoRequestFeatures(c)
+	require.NoError(t, err)
+	assert.Empty(t, features.Resolution)
+
+	assert.False(t, ChannelSupportsRequestConstraints(c, sora, publicModel))
+	assert.False(t, ChannelSupportsRequestConstraints(c, openAI, publicModel))
+	assert.True(t, ChannelSupportsRequestConstraints(c, gemini, publicModel))
+	assert.True(t, ChannelSupportsRequestConstraints(c, vertex, publicModel))
+	assert.False(t, ChannelSupportsRequestConstraints(c, aggc, publicModel))
+
+	filter, err := channelFilterForRequest(c, publicModel)
+	require.NoError(t, err)
+	require.NotNil(t, filter)
+	assert.False(t, filter(sora))
+	assert.False(t, filter(openAI))
+	assert.True(t, filter(gemini))
+	assert.True(t, filter(vertex))
+	assert.False(t, filter(aggc))
+
+	for _, testCase := range []struct {
+		name string
+		body string
+	}{
+		{
+			name: "top level resolution wins",
+			body: `{
+				"model":"provider-resolution-hints-public",
+				"prompt":"test",
+				"resolution":"720P",
+				"parameters":{"resolution":"1080P"},
+				"params":{"resolution":"2160P"}
+			}`,
+		},
+		{
+			name: "metadata resolution remains standard",
+			body: `{
+				"model":"provider-resolution-hints-public",
+				"prompt":"test",
+				"metadata":{"resolution":"720P"},
+				"parameters":{"resolution":"1080P"},
+				"params":{"resolution":"2160P"}
+			}`,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			c := newChannelConstraintTestContext(t, "/v1/videos", testCase.body)
+			features, err := GetVideoRequestFeatures(c)
+			require.NoError(t, err)
+			assert.Equal(t, "720p", features.Resolution)
+
+			assert.True(t, ChannelSupportsRequestConstraints(c, sora, publicModel))
+			assert.True(t, ChannelSupportsRequestConstraints(c, openAI, publicModel))
+			assert.True(t, ChannelSupportsRequestConstraints(c, gemini, publicModel))
+			assert.True(t, ChannelSupportsRequestConstraints(c, vertex, publicModel))
+			assert.True(t, ChannelSupportsRequestConstraints(c, aggc, publicModel))
+		})
+	}
+}
+
+func TestNormalizeVideoRoutingSimulationRequestUsesPublicOutputContract(t *testing.T) {
+	request := VideoRoutingSimulationRequest{
+		Ratio:            "32:18",
+		AspectRatioAlias: "16:9",
+		Size:             "960X540",
+		Resolution:       "2160P",
+	}
+
+	err := NormalizeVideoRoutingSimulationRequest(&request)
+
+	require.NoError(t, err)
+	assert.Empty(t, request.Ratio)
+	assert.Empty(t, request.AspectRatioAlias)
+	assert.Equal(t, "16:9", request.AspectRatio)
+	assert.Equal(t, "960x540", request.Size)
+	assert.Equal(t, "4k", request.Resolution)
+}
+
+func TestSimulateVideoRoutingDeclaresPublicFieldConstraintScope(t *testing.T) {
+	result, err := SimulateVideoRouting(VideoRoutingSimulationRequest{})
+
+	require.NoError(t, err)
+	assert.Equal(t, videoRoutingSimulationConstraintScope, result.ConstraintScope)
+}
+
+func TestNormalizeVideoRoutingSimulationRequestRejectsConflictingOutputFields(t *testing.T) {
+	request := VideoRoutingSimulationRequest{
+		AspectRatio: "9:16",
+		Size:        "960x540",
+	}
+
+	err := NormalizeVideoRoutingSimulationRequest(&request)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "conflicts with aspect_ratio")
+}
+
+func TestMatchVideoCapabilityRejectsUnsupportedOutputConstraints(t *testing.T) {
+	capability := dto.VideoModelCapability{
+		AspectRatios: []string{"16:9"},
+		Sizes:        []string{"1280x720"},
+		Resolutions:  []string{"720p"},
+	}
+
+	violations := MatchVideoCapability(VideoRequestFeatures{
+		AspectRatio: "9:16",
+		Size:        "960x540",
+		Resolution:  "1080p",
+	}, capability)
+
+	assert.Contains(t, violations, VideoConstraintViolation{
+		Code:                  "aspect_ratio_not_supported",
+		Field:                 "aspect_ratio",
+		AspectRatio:           "9:16",
+		SupportedAspectRatios: []string{"16:9"},
+	})
+	assert.Contains(t, violations, VideoConstraintViolation{
+		Code:           "size_not_supported",
+		Field:          "size",
+		Size:           "960x540",
+		SupportedSizes: []string{"1280x720"},
+	})
+	assert.Contains(t, violations, VideoConstraintViolation{
+		Code:                 "resolution_not_supported",
+		Field:                "resolution",
+		Resolution:           "1080p",
+		SupportedResolutions: []string{"720p"},
+	})
+}
+
+func TestChannelVideoCapabilityAcceptsOutputOnlyConstraints(t *testing.T) {
+	truncate(t)
+	publicModel := "output-only-public"
+	upstreamModel := "output-only-upstream"
+	channel := channelWithVideoModelMapping(t, 90, constant.ChannelTypeYobox, publicModel, upstreamModel)
+	createChannelVideoCapability(t, channel, upstreamModel, dto.VideoModelCapability{
+		AspectRatios: []string{"16:9"},
+		Sizes:        []string{"1280x720"},
+	})
+
+	eligible := EvaluateChannelVideoRouting(channel, publicModel, VideoRequestFeatures{
+		AspectRatio: "16:9",
+		Size:        "1280x720",
+	})
+	unsupported := EvaluateChannelVideoRouting(channel, publicModel, VideoRequestFeatures{
+		AspectRatio: "9:16",
+		Size:        "720x1280",
+	})
+
+	assert.True(t, eligible.Eligible)
+	assert.False(t, unsupported.Eligible)
+	assert.Contains(t, unsupported.Violations, VideoConstraintViolation{
+		Code: "aspect_ratio_not_supported", Field: "aspect_ratio", AspectRatio: "9:16",
+		SupportedAspectRatios: []string{"16:9"},
+	})
+	assert.Contains(t, unsupported.Violations, VideoConstraintViolation{
+		Code: "size_not_supported", Field: "size", Size: "720x1280",
+		SupportedSizes: []string{"1280x720"},
+	})
+}
+
 func TestGetVideoRequestFeaturesReturnsTypedErrorForInvalidMediaField(t *testing.T) {
 	c := newChannelConstraintTestContext(t, "/v1/videos", `{"model":"video-model","images":{"url":"x"}}`)
 
@@ -299,6 +510,128 @@ func TestGetVideoRequestFeaturesCountsMultipartValuesAndFiles(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, 5, features.Images)
+}
+
+func TestGetVideoRequestFeaturesReadsMetadataOutputFromFormBodies(t *testing.T) {
+	testCases := []struct {
+		name    string
+		request func(t *testing.T) *http.Request
+	}{
+		{
+			name: "multipart",
+			request: func(t *testing.T) *http.Request {
+				var body bytes.Buffer
+				writer := multipart.NewWriter(&body)
+				require.NoError(t, writer.WriteField("metadata", `{"size":"720x1280","aspectRatio":"9:16","resolution":"1080P"}`))
+				require.NoError(t, writer.Close())
+				request := httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(body.Bytes()))
+				request.Header.Set("Content-Type", writer.FormDataContentType())
+				return request
+			},
+		},
+		{
+			name: "url encoded",
+			request: func(t *testing.T) *http.Request {
+				values := url.Values{}
+				values.Set("metadata", `{"size":"720x1280","aspectRatio":"9:16","resolution":"1080P"}`)
+				request := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(values.Encode()))
+				request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				return request
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = testCase.request(t)
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+			features, err := GetVideoRequestFeatures(c)
+
+			require.NoError(t, err)
+			assert.Equal(t, "9:16", features.AspectRatio)
+			assert.Equal(t, "720x1280", features.Size)
+			assert.Equal(t, "1080p", features.Resolution)
+		})
+	}
+}
+
+func TestMultipartMetadataOutputConstrainsChannelRouting(t *testing.T) {
+	truncate(t)
+	publicModel := "multipart-metadata-output-public"
+	upstreamModel := "multipart-metadata-output-upstream"
+	channel := channelWithVideoModelMapping(t, 911, constant.ChannelTypeYobox, publicModel, upstreamModel)
+	createChannelVideoCapability(t, channel, upstreamModel, dto.VideoModelCapability{
+		AspectRatios: []string{"16:9"},
+		Resolutions:  []string{"720p"},
+	})
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("metadata", `{"aspect_ratio":"9:16","resolution":"1080p"}`))
+	require.NoError(t, writer.Close())
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(body.Bytes()))
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	assert.False(t, ChannelSupportsRequestConstraints(c, channel, publicModel))
+}
+
+func TestGetVideoRequestFeaturesCountsJimengDimensioNumberedMultipartFiles(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for _, field := range []string{"image_file_1", "image_file_2", "video_file_1", "audio_file_1", "audio_file_2"} {
+		fileWriter, err := writer.CreateFormFile(field, field+".bin")
+		require.NoError(t, err)
+		_, err = fileWriter.Write([]byte(field))
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close())
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(body.Bytes()))
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	features, err := GetVideoRequestFeatures(c)
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, features.Images)
+	assert.Equal(t, 1, features.Videos)
+	assert.Equal(t, 2, features.Audios)
+}
+
+func TestChannelSupportsRequestConstraintsRejectsDimensioNumberedFilesBeyondExactCapability(t *testing.T) {
+	truncate(t)
+	publicModel := "dimensio-numbered-files-public"
+	upstreamModel := "dimensio-numbered-files-upstream"
+	channel := channelWithVideoModelMapping(t, 909, constant.ChannelTypeJimengDimensio, publicModel, upstreamModel)
+	createChannelVideoCapability(t, channel, upstreamModel, dto.VideoModelCapability{
+		Images:          &dto.VideoMediaRange{Max: common.GetPointer(1)},
+		Videos:          &dto.VideoMediaRange{Max: common.GetPointer(0)},
+		Audios:          &dto.VideoMediaRange{Max: common.GetPointer(1)},
+		VideoAudioTotal: &dto.VideoMediaRange{Max: common.GetPointer(1)},
+	})
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", publicModel))
+	for _, field := range []string{"image_file_1", "image_file_2", "video_file_1", "audio_file_1", "audio_file_2"} {
+		fileWriter, err := writer.CreateFormFile(field, field+".bin")
+		require.NoError(t, err)
+		_, err = fileWriter.Write([]byte(field))
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close())
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(body.Bytes()))
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	assert.False(t, ChannelSupportsRequestConstraints(c, channel, publicModel))
 }
 
 func TestGetVideoRequestFeaturesIgnoresNonVideoRoute(t *testing.T) {
@@ -400,6 +733,85 @@ func TestSimulateVideoRoutingFiltersUnsupportedResolution(t *testing.T) {
 		Resolution:           "1080p",
 		SupportedResolutions: []string{"720p"},
 	})
+}
+
+func TestSimulateVideoRoutingFiltersUnsupportedAspectRatioAndSize(t *testing.T) {
+	truncate(t)
+	group := "output-constraints-group"
+	modelName := StrictVideoRoutingModelSDBak1
+	priority := int64(10)
+	weight := uint(100)
+	mapping, err := common.Marshal(map[string]string{modelName: "output-constraints-upstream"})
+	require.NoError(t, err)
+	mappingString := string(mapping)
+	channel := model.Channel{
+		Id: 302, Name: "landscape only", Type: constant.ChannelTypeSora, Key: "key",
+		Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight, ModelMapping: &mappingString,
+	}
+	require.NoError(t, model.DB.Create(&channel).Error)
+	require.NoError(t, model.DB.Create(&model.Ability{
+		Group: group, Model: modelName, ChannelId: channel.Id, Enabled: true,
+		Priority: &priority, Weight: weight,
+	}).Error)
+	_, err = UpsertChannelVideoRoutingCapabilityRule(channel.Id, "output-constraints-upstream", dto.VideoModelCapability{
+		AspectRatios: []string{"16:9"},
+		Sizes:        []string{"1280x720"},
+	}, 0, 1)
+	require.NoError(t, err)
+
+	result, err := SimulateVideoRouting(VideoRoutingSimulationRequest{
+		Model: modelName, Group: group, AspectRatio: "9:16", Size: "720x1280", ContentType: "application/json",
+	})
+
+	require.NoError(t, err)
+	require.Len(t, result.Candidates, 1)
+	require.NotNil(t, result.Candidates[0].Eligible)
+	assert.False(t, *result.Candidates[0].Eligible)
+	assert.Nil(t, result.TargetPriority)
+	assert.Contains(t, result.Candidates[0].Violations, VideoConstraintViolation{
+		Code: "aspect_ratio_not_supported", Field: "aspect_ratio", AspectRatio: "9:16",
+		SupportedAspectRatios: []string{"16:9"},
+	})
+	assert.Contains(t, result.Candidates[0].Violations, VideoConstraintViolation{
+		Code: "size_not_supported", Field: "size", Size: "720x1280",
+		SupportedSizes: []string{"1280x720"},
+	})
+}
+
+func TestSimulateVideoRoutingDerivesAspectRatioFromPixelSize(t *testing.T) {
+	truncate(t)
+	group := "derived-output-constraints-group"
+	modelName := StrictVideoRoutingModelSDBak1
+	priority := int64(10)
+	weight := uint(100)
+	mapping, err := common.Marshal(map[string]string{modelName: "derived-output-constraints-upstream"})
+	require.NoError(t, err)
+	mappingString := string(mapping)
+	channel := model.Channel{
+		Id: 303, Name: "derived landscape", Type: constant.ChannelTypeSora, Key: "key",
+		Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight, ModelMapping: &mappingString,
+	}
+	require.NoError(t, model.DB.Create(&channel).Error)
+	require.NoError(t, model.DB.Create(&model.Ability{
+		Group: group, Model: modelName, ChannelId: channel.Id, Enabled: true,
+		Priority: &priority, Weight: weight,
+	}).Error)
+	_, err = UpsertChannelVideoRoutingCapabilityRule(channel.Id, "derived-output-constraints-upstream", dto.VideoModelCapability{
+		AspectRatios: []string{"16:9"},
+		Sizes:        []string{"1280x720"},
+	}, 0, 1)
+	require.NoError(t, err)
+
+	result, err := SimulateVideoRouting(VideoRoutingSimulationRequest{
+		Model: modelName, Group: group, Size: "1280X720", ContentType: "application/json",
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "16:9", result.Features.AspectRatio)
+	assert.Equal(t, "1280x720", result.Features.Size)
+	require.Len(t, result.Candidates, 1)
+	require.NotNil(t, result.Candidates[0].Eligible)
+	assert.True(t, *result.Candidates[0].Eligible)
 }
 
 func TestSimulateVideoRoutingRejectsAdvancedCustomWithoutVideoPath(t *testing.T) {

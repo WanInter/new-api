@@ -4955,6 +4955,17 @@
     "Effective": "Effective",
     "Resolution": "Resolution",
     "Resolution {{resolution}} is not supported. Supported: {{supported_resolutions}}": "Resolution {{resolution}} is not supported. Supported: {{supported_resolutions}}",
-    "Supported resolutions": "Supported resolutions"
+    "Supported resolutions": "Supported resolutions",
+    "Aspect ratio": "Aspect ratio",
+    "Pixel size": "Pixel size",
+    "Supported aspect ratios": "Supported aspect ratios",
+    "Supported pixel sizes": "Supported pixel sizes",
+    "Aspect ratio {{aspect_ratio}} is not supported. Supported: {{supported_aspect_ratios}}": "Aspect ratio {{aspect_ratio}} is not supported. Supported: {{supported_aspect_ratios}}",
+    "Pixel size {{size}} is not supported. Supported: {{supported_sizes}}": "Pixel size {{size}} is not supported. Supported: {{supported_sizes}}",
+    "Use W:H aspect ratios or adaptive": "Use W:H aspect ratios or adaptive",
+    "Use WxH pixel sizes": "Use WxH pixel sizes",
+    "Use a quality label such as 720p or 4k": "Use a quality label such as 720p or 4k",
+    "Do not repeat output values": "Do not repeat output values",
+    "Pixel size conflicts with aspect ratio": "Pixel size conflicts with aspect ratio"
   }
 }

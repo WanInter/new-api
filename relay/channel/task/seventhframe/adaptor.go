@@ -406,9 +406,6 @@ func mergeRequestOptions(c *gin.Context, req *relaycommon.TaskSubmitReq) {
 	if err := common.Unmarshal(body, &raw); err != nil {
 		return
 	}
-	if aspectRatio, ok := raw["aspectRatio"].(string); ok && strings.TrimSpace(aspectRatio) != "" {
-		req.AspectRatio = strings.TrimSpace(aspectRatio)
-	}
 	if req.Metadata == nil {
 		req.Metadata = map[string]any{}
 	}

@@ -4955,6 +4955,17 @@
     "Effective": "生效值",
     "Resolution": "清晰度",
     "Resolution {{resolution}} is not supported. Supported: {{supported_resolutions}}": "不支持清晰度 {{resolution}}。支持：{{supported_resolutions}}",
-    "Supported resolutions": "支持的清晰度"
+    "Supported resolutions": "支持的清晰度",
+    "Aspect ratio": "画面比例",
+    "Pixel size": "像素尺寸",
+    "Supported aspect ratios": "支持的画面比例",
+    "Supported pixel sizes": "支持的像素尺寸",
+    "Aspect ratio {{aspect_ratio}} is not supported. Supported: {{supported_aspect_ratios}}": "画面比例 {{aspect_ratio}} 不受支持。支持：{{supported_aspect_ratios}}",
+    "Pixel size {{size}} is not supported. Supported: {{supported_sizes}}": "像素尺寸 {{size}} 不受支持。支持：{{supported_sizes}}",
+    "Use W:H aspect ratios or adaptive": "请使用 W:H 画面比例或 adaptive",
+    "Use WxH pixel sizes": "请使用 WxH 像素尺寸",
+    "Use a quality label such as 720p or 4k": "请使用如 720p 或 4k 的清晰度标识",
+    "Do not repeat output values": "输出值不能重复",
+    "Pixel size conflicts with aspect ratio": "像素尺寸与画面比例冲突"
   }
 }

@@ -35,7 +35,6 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import {
   Field,
   FieldError,
@@ -71,14 +70,10 @@ import {
   capabilityToFormValues,
   emptyCapabilityRuleFormValues,
   formValuesToCapability,
-  videoResolutionOptions,
+  normalizeVideoOutputList,
   type CapabilityRuleFormValues,
 } from '../lib/capability-form'
-import type {
-  VideoMediaRange,
-  VideoResolution,
-  VideoRoutingCandidate,
-} from '../types'
+import type { VideoMediaRange, VideoRoutingCandidate } from '../types'
 
 type CapabilityRuleEditorProps = {
   candidate: VideoRoutingCandidate | null
@@ -217,8 +212,27 @@ export function CapabilityRuleEditor(props: CapabilityRuleEditorProps) {
 
                 <Separator />
 
-                <ResolutionOverrideField
+                <OutputListOverrideField
                   form={form}
+                  name='aspect_ratios'
+                  label={t('Supported aspect ratios')}
+                  placeholder='16:9, 9:16'
+                  effective={candidate.capability?.aspect_ratios}
+                />
+
+                <OutputListOverrideField
+                  form={form}
+                  name='sizes'
+                  label={t('Supported pixel sizes')}
+                  placeholder='1280x720, 720x1280'
+                  effective={candidate.capability?.sizes}
+                />
+
+                <OutputListOverrideField
+                  form={form}
+                  name='resolutions'
+                  label={t('Supported resolutions')}
+                  placeholder='480p, 720p, 768p, 1080p, 4k'
                   effective={candidate.capability?.resolutions}
                 />
 
@@ -342,42 +356,46 @@ export function CapabilityRuleEditor(props: CapabilityRuleEditorProps) {
   )
 }
 
-function ResolutionOverrideField(props: {
+function OutputListOverrideField(props: {
   form: UseFormReturn<CapabilityRuleFormValues>
-  effective?: VideoResolution[]
+  name: 'aspect_ratios' | 'resolutions' | 'sizes'
+  label: string
+  placeholder: string
+  effective?: string[]
 }) {
   const { t } = useTranslation()
+  const error = props.form.formState.errors[props.name]
   return (
     <Controller
       control={props.form.control}
-      name='resolutions'
+      name={props.name}
       render={({ field }) => (
         <FieldSet>
-          <FieldLegend variant='label'>
-            {t('Supported resolutions')}
-          </FieldLegend>
-          <FieldGroup className='grid grid-cols-2 gap-3 sm:grid-cols-4'>
-            {videoResolutionOptions.map((resolution) => {
-              const checked = field.value.includes(resolution)
-              return (
-                <Field key={resolution} orientation='horizontal'>
-                  <Checkbox
-                    id={`routing-resolution-${resolution}`}
-                    checked={checked}
-                    onCheckedChange={(nextChecked) => {
-                      const next = nextChecked
-                        ? [...field.value, resolution]
-                        : field.value.filter((item) => item !== resolution)
-                      field.onChange(next)
-                    }}
-                  />
-                  <FieldLabel htmlFor={`routing-resolution-${resolution}`}>
-                    {resolution}
-                  </FieldLabel>
-                </Field>
-              )
-            })}
-          </FieldGroup>
+          <FieldLegend variant='label'>{props.label}</FieldLegend>
+          <Field data-invalid={Boolean(error)}>
+            <Input
+              id={`routing-${props.name}`}
+              value={field.value.join(', ')}
+              placeholder={props.placeholder}
+              aria-invalid={Boolean(error)}
+              onChange={(event) =>
+                field.onChange(
+                  event.target.value
+                    .split(',')
+                    .map((value) => value.trim())
+                    .filter(Boolean)
+                )
+              }
+              onBlur={() => {
+                field.onChange(
+                  normalizeVideoOutputList(props.name, field.value)
+                )
+                field.onBlur()
+                void props.form.trigger(props.name)
+              }}
+            />
+            <FieldError>{error?.message ? t(error.message) : null}</FieldError>
+          </Field>
           {props.effective?.length ? (
             <p className='text-muted-foreground text-xs'>
               {t('Effective')}: {props.effective.join(', ')}

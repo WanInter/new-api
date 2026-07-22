@@ -64,9 +64,15 @@ X-New-Api-Other-Ratios: {"seconds":4,"size":1}
 | `prompt` | string | 是 | 视频提示词 |
 | `model` | string | 是 | 模型名称 |
 | `mode` | string | 否 | 模式/子模式 |
-| `image` | string | 否 | 单图输入（部分渠道兼容） |
-| `images` | string[] | 否 | 多图输入 |
-| `size` | string | 否 | 尺寸/分辨率 |
+| `image` | string | 否 | 单图兼容别名，使用 URL 或 data URI 字符串 |
+| `images` | string / string[] | 否 | 标准图片引用；接受单个或数组 URL/data URI 字符串 |
+| `videos` | string / string[] | 否 | 标准视频引用；接受单个或数组 URL/data URI 字符串，具体模型决定是否支持 |
+| `audios` | string / string[] | 否 | 标准音频引用；接受单个或数组 URL/data URI 字符串，具体模型决定是否支持 |
+| `aspect_ratio` | string | 否 | 标准输出比例，`W:H`，如 `16:9`、`9:16`、`1:1` |
+| `resolution` | string | 否 | 标准输出质量档。规范值为正整数加 `p`（如 `768p`）或 `4k`；具体渠道/能力规则决定可用档位；不是像素宽高 |
+| `size` | string | 否 | 旧兼容/渠道原生尺寸字段，不是跨渠道通用分辨率 |
+| `ratio` | string | 否 | `aspect_ratio` 的旧兼容别名 |
+| `aspectRatio` | string | 否 | `aspect_ratio` 的 camelCase 兼容别名 |
 | `duration` | int | 否 | 时长（秒） |
 | `seconds` | string | 否 | 时长，兼容字符串格式 |
 | `input_reference` | string | 否 | 参考图，常用于 OpenAI/Sora 风格接口 |
@@ -78,14 +84,16 @@ X-New-Api-Other-Ratios: {"seconds":4,"size":1}
 | --- | --- | --- |
 | `application/json` | 是 | 推荐 |
 | `application/x-www-form-urlencoded` | 是 | 支持基础字段 |
-| `multipart/form-data` | 是 | 适合上传参考图/文件 |
+| `multipart/form-data` | 是 | 可承载上述字符串字段；二进制文件仅限渠道明确支持的专用字段 |
+
+`images`、`videos`、`audios` 的跨渠道公共语义是**字符串引用**，而不是通用文件上传：JSON 可使用单值或数组，multipart 可重复同名文本字段。普通渠道对二进制文件会在计费前返回 `400 invalid_media_input`，避免文件被静默忽略。OpenAI、Sora 与 Shishi 渠道会透传三个标准字段的二进制 part；Gemini/Vertex Veo、即梦等渠道使用各自的 `input_reference` 或 `*_file_N` 专用字段，必须按对应渠道文档提交。
 
 ### 任务类型判定
 
 服务会根据请求内容自动识别：
 
 - **文生视频**：未提供 `input_reference` / `images`；
-- **图生视频**：提供了 `input_reference` / `images` / `image` 中的图片输入。
+- **图生视频**：提供了 `input_reference` / `images` / `image` 中的图片字符串引用或渠道专用文件输入。
 
 ### `metadata` 用法
 
@@ -99,6 +107,33 @@ X-New-Api-Other-Ratios: {"seconds":4,"size":1}
 
 - 通用字段放顶层；
 - 渠道专属字段放 `metadata`。
+
+### 输出尺寸字段约定
+
+视频输出相关字段统一按以下规则处理：
+
+| 字段 | 定位 | 规范化规则 |
+| --- | --- | --- |
+| `aspect_ratio` | 跨渠道标准比例字段 | 使用正整数 `W:H`；会约分，例如 `32:18` 归一为 `16:9` |
+| `ratio` / `aspectRatio` | 仅入站兼容别名 | 归一到 `aspect_ratio`，新请求不要同时依赖多个拼写 |
+| `resolution` | 跨渠道标准质量档 | 不表示 `WxH`；规范格式为正整数加 `p` 或 `4k`，大小写归一为小写，`2160p` 归一为 `4k`；具体模型决定可用档位 |
+| `size` | 旧兼容或渠道原生字段 | 只有所选模型明确注册或渠道明确支持的精确尺寸才能换算/透传 |
+
+优先级是顶层标准字段优先，`metadata` 仅在顶层字段缺失时作为兼容回退。`aspect_ratio`、`ratio`、`aspectRatio` 彼此给出不同的比例，或像素 `size` 与显式比例不一致时，请求返回 `400 invalid_video_output`，不会静默选择一个值。
+
+`size: "960x540"` 只能表达 `16:9` 的像素尺寸，不能在公共层推断成某个 `resolution` 质量档。它是否可用取决于所选模型是否注册了这个精确尺寸；没有注册时应改用明确的标准字段，例如：
+
+```json
+{
+  "model": "seedance-2.0-noface",
+  "prompt": "test",
+  "duration": 5,
+  "aspect_ratio": "16:9",
+  "resolution": "720p"
+}
+```
+
+`model` 不能为空。普通视频提交路径会在选择渠道前拒绝空白 `model`，因此不能依靠某个渠道的默认模型来解释输出字段。
 
 ---
 

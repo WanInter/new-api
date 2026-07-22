@@ -4955,6 +4955,17 @@
     "Effective": "Действующее значение",
     "Resolution": "Разрешение",
     "Resolution {{resolution}} is not supported. Supported: {{supported_resolutions}}": "Разрешение {{resolution}} не поддерживается. Поддерживаются: {{supported_resolutions}}",
-    "Supported resolutions": "Поддерживаемые разрешения"
+    "Supported resolutions": "Поддерживаемые разрешения",
+    "Aspect ratio": "Соотношение сторон",
+    "Pixel size": "Размер в пикселях",
+    "Supported aspect ratios": "Поддерживаемые соотношения сторон",
+    "Supported pixel sizes": "Поддерживаемые размеры в пикселях",
+    "Aspect ratio {{aspect_ratio}} is not supported. Supported: {{supported_aspect_ratios}}": "Соотношение сторон {{aspect_ratio}} не поддерживается. Поддерживаются: {{supported_aspect_ratios}}",
+    "Pixel size {{size}} is not supported. Supported: {{supported_sizes}}": "Размер в пикселях {{size}} не поддерживается. Поддерживаются: {{supported_sizes}}",
+    "Use W:H aspect ratios or adaptive": "Используйте соотношение W:H или adaptive",
+    "Use WxH pixel sizes": "Используйте размер в пикселях WxH",
+    "Use a quality label such as 720p or 4k": "Используйте обозначение качества, например 720p или 4k",
+    "Do not repeat output values": "Не повторяйте выходные значения",
+    "Pixel size conflicts with aspect ratio": "Размер в пикселях не соответствует соотношению сторон"
   }
 }

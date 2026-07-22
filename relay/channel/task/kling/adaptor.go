@@ -133,6 +133,20 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
 }
 
+// ValidateMappedRequest rejects media input that Kling's image-to-video wire
+// shape cannot express before the request is priced. The first two image
+// inputs map to the upstream start and end frame fields.
+func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, _ *relaycommon.RelayInfo) *dto.TaskError {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "get_task_request_failed", http.StatusBadRequest)
+	}
+	if err := validateKlingMediaInputs(&req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	return nil
+}
+
 // BuildRequestURL constructs the upstream URL.
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	path := lo.Ternary(info.Action == constant.TaskActionGenerate, "/v1/videos/image2video", "/v1/videos/text2video")
@@ -265,12 +279,14 @@ func (a *TaskAdaptor) GetChannelName() string {
 // ============================
 
 func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (*requestPayload, error) {
+	if err := validateKlingMediaInputs(req); err != nil {
+		return nil, err
+	}
 	r := requestPayload{
 		Prompt:         req.Prompt,
 		Image:          req.Image,
 		Mode:           taskcommon.DefaultString(req.Mode, "std"),
 		Duration:       fmt.Sprintf("%d", taskcommon.DefaultInt(req.Duration, 5)),
-		AspectRatio:    a.getAspectRatio(req.Size),
 		ModelName:      info.UpstreamModelName,
 		Model:          info.UpstreamModelName,
 		CfgScale:       0.5,
@@ -287,7 +303,109 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 	if err := taskcommon.UnmarshalMetadata(req.Metadata, &r); err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}
+	if images := klingImageInputs(req); len(images) > 0 {
+		r.Image = images[0]
+		if len(images) > 1 {
+			r.ImageTail = images[1]
+		}
+	}
+	if aspectRatio := strings.TrimSpace(req.AspectRatio); aspectRatio != "" {
+		r.AspectRatio = aspectRatio
+	} else if r.AspectRatio == "" {
+		r.AspectRatio = a.getAspectRatio(req.Size)
+	}
 	return &r, nil
+}
+
+func validateKlingImageInputs(req *relaycommon.TaskSubmitReq) error {
+	if len(klingImageInputs(req)) <= 2 {
+		return nil
+	}
+	return fmt.Errorf("Kling supports at most two image inputs: a start frame and an end frame")
+}
+
+func validateKlingMediaInputs(req *relaycommon.TaskSubmitReq) error {
+	if hasKlingVideoOrAudioInput(req) {
+		return fmt.Errorf("Kling does not support video or audio reference inputs")
+	}
+	return validateKlingImageInputs(req)
+}
+
+func hasKlingVideoOrAudioInput(req *relaycommon.TaskSubmitReq) bool {
+	if req == nil {
+		return false
+	}
+	for _, values := range [][]string{req.Videos, req.VideoURLs, req.Audios, req.AudioURLs} {
+		for _, value := range values {
+			if strings.TrimSpace(value) != "" {
+				return true
+			}
+		}
+	}
+	for _, item := range req.Content {
+		if item.VideoURL != nil && strings.TrimSpace(item.VideoURL.URL) != "" {
+			return true
+		}
+		if item.AudioURL != nil && strings.TrimSpace(item.AudioURL.URL) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// Canonical images take precedence. The legacy aliases remain a fallback for
+// existing clients that have not moved to the unified field yet.
+func klingImageInputs(req *relaycommon.TaskSubmitReq) []string {
+	if req == nil {
+		return nil
+	}
+	images := []string(nil)
+	for _, candidates := range [][]string{req.Images, req.ImageURLs} {
+		if images = nonEmptyKlingImages(candidates); len(images) > 0 {
+			break
+		}
+	}
+	if len(images) == 0 {
+		if image := strings.TrimSpace(req.Image); image != "" {
+			images = []string{image}
+		}
+	}
+	if len(images) == 0 {
+		if image := strings.TrimSpace(req.InputReference); image != "" {
+			images = []string{image}
+		}
+	}
+	if len(images) == 0 {
+		for _, candidates := range [][]string{req.InputStartFrames, req.InputImageReferences, req.MetadataStartFrames} {
+			if images = nonEmptyKlingImages(candidates); len(images) > 0 {
+				break
+			}
+		}
+	}
+	for _, item := range req.Content {
+		if item.ImageURL != nil {
+			images = appendKlingImage(images, item.ImageURL.URL)
+		}
+	}
+	return images
+}
+
+func nonEmptyKlingImages(images []string) []string {
+	values := make([]string, 0, len(images))
+	for _, image := range images {
+		if image = strings.TrimSpace(image); image != "" {
+			values = append(values, image)
+		}
+	}
+	return values
+}
+
+func appendKlingImage(images []string, image string) []string {
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return images
+	}
+	return append(images, image)
 }
 
 func (a *TaskAdaptor) getAspectRatio(size string) string {
@@ -299,7 +417,7 @@ func (a *TaskAdaptor) getAspectRatio(size string) string {
 	case "720x1280", "1080x1920":
 		return "9:16"
 	default:
-		return "1:1"
+		return ""
 	}
 }
 

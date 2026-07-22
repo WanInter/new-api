@@ -1,16 +1,168 @@
 import { z } from 'zod'
-import type {
-  VideoMediaRange,
-  VideoModelCapability,
-  VideoResolution,
-} from '../types'
+import type { VideoMediaRange, VideoModelCapability } from '../types'
 
-export const videoResolutionOptions: VideoResolution[] = [
-  '480p',
-  '720p',
-  '1080p',
-  '4k',
-]
+const maxVideoOutputDimension = 32768
+
+export type VideoOutputListField = 'aspect_ratios' | 'resolutions' | 'sizes'
+
+export type VideoSimulationOutput = {
+  aspect_ratio?: string
+  size?: string
+  resolution?: string
+}
+
+export type VideoSimulationOutputError =
+  | 'invalid_aspect_ratio'
+  | 'invalid_size'
+  | 'invalid_resolution'
+  | 'size_aspect_ratio_conflict'
+
+export type VideoSimulationOutputNormalization =
+  | { output: VideoSimulationOutput }
+  | { error: VideoSimulationOutputError }
+
+const outputFieldMessages: Record<VideoOutputListField, string> = {
+  aspect_ratios: 'Use W:H aspect ratios or adaptive',
+  resolutions: 'Use a quality label such as 720p or 4k',
+  sizes: 'Use WxH pixel sizes',
+}
+
+export function normalizeVideoOutputListValue(
+  field: VideoOutputListField,
+  value: string
+): string | undefined {
+  const trimmed = value.trim()
+  if (field === 'aspect_ratios') {
+    const normalized = trimmed.toLowerCase()
+    if (normalized === 'adaptive') return normalized
+    const parts = normalized.split(':')
+    if (parts.length !== 2) return undefined
+    const width = parseVideoOutputDimension(parts[0])
+    const height = parseVideoOutputDimension(parts[1])
+    if (width === undefined || height === undefined) return undefined
+    const divisor = greatestCommonDivisor(width, height)
+    return `${width / divisor}:${height / divisor}`
+  }
+
+  if (field === 'resolutions') {
+    const normalized = trimmed.toLowerCase()
+    if (normalized === '4k' || normalized === '2160p') return '4k'
+    if (!normalized.endsWith('p')) return undefined
+    const height = parseVideoOutputDimension(normalized.slice(0, -1))
+    return height === undefined ? undefined : `${height}p`
+  }
+
+  const parts = trimmed.split('x')
+  if (parts.length !== 2) return undefined
+  const width = parseVideoOutputDimension(parts[0])
+  const height = parseVideoOutputDimension(parts[1])
+  if (width === undefined || height === undefined) return undefined
+  return `${width}x${height}`
+}
+
+export function normalizeVideoOutputList(
+  field: VideoOutputListField,
+  values: string[]
+): string[] {
+  return values.map(
+    (value) => normalizeVideoOutputListValue(field, value) || value.trim()
+  )
+}
+
+export function normalizeVideoSimulationOutput(
+  output: VideoSimulationOutput
+): VideoSimulationOutputNormalization {
+  const aspectRatio = normalizeOptionalVideoOutputValue(
+    'aspect_ratios',
+    output.aspect_ratio
+  )
+  if (output.aspect_ratio?.trim() && !aspectRatio) {
+    return { error: 'invalid_aspect_ratio' }
+  }
+
+  const size = normalizeOptionalVideoOutputValue('sizes', output.size)
+  if (output.size?.trim() && !size) {
+    return { error: 'invalid_size' }
+  }
+
+  const resolution = normalizeOptionalVideoOutputValue(
+    'resolutions',
+    output.resolution
+  )
+  if (output.resolution?.trim() && !resolution) {
+    return { error: 'invalid_resolution' }
+  }
+
+  if (size && aspectRatio) {
+    const sizeAspectRatio = aspectRatioFromSize(size)
+    if (aspectRatio === 'adaptive' || aspectRatio !== sizeAspectRatio) {
+      return { error: 'size_aspect_ratio_conflict' }
+    }
+  }
+
+  return {
+    output: {
+      aspect_ratio: aspectRatio,
+      size,
+      resolution,
+    },
+  }
+}
+
+function normalizeOptionalVideoOutputValue(
+  field: VideoOutputListField,
+  value?: string
+): string | undefined {
+  if (!value?.trim()) return undefined
+  return normalizeVideoOutputListValue(field, value)
+}
+
+function aspectRatioFromSize(size: string): string {
+  const [width, height] = size.split('x').map(Number)
+  const divisor = greatestCommonDivisor(width, height)
+  return `${width / divisor}:${height / divisor}`
+}
+
+function parseVideoOutputDimension(value: string): number | undefined {
+  if (!/^\d+$/.test(value.trim())) return undefined
+  const parsed = Number(value.trim())
+  return parsed > 0 && parsed <= maxVideoOutputDimension ? parsed : undefined
+}
+
+function greatestCommonDivisor(left: number, right: number): number {
+  while (right !== 0) {
+    const remainder = left % right
+    left = right
+    right = remainder
+  }
+  return left
+}
+
+function outputListSchema(field: VideoOutputListField) {
+  return z.array(z.string()).superRefine((values, context) => {
+    const seen = new Set<string>()
+    values.forEach((value, index) => {
+      const normalized = normalizeVideoOutputListValue(field, value)
+      if (!normalized) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index],
+          message: outputFieldMessages[field],
+        })
+        return
+      }
+      if (seen.has(normalized)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index],
+          message: 'Do not repeat output values',
+        })
+        return
+      }
+      seen.add(normalized)
+    })
+  })
+}
 
 const optionalNonNegativeInteger = z
   .string()
@@ -39,7 +191,9 @@ export const capabilityRuleFormSchema = z
     duration_min: optionalPositiveInteger,
     duration_max: optionalPositiveInteger,
     fixed_duration: optionalPositiveInteger,
-    resolutions: z.array(z.enum(videoResolutionOptions)),
+    aspect_ratios: outputListSchema('aspect_ratios'),
+    resolutions: outputListSchema('resolutions'),
+    sizes: outputListSchema('sizes'),
     require_json: booleanOverrideSchema,
     require_text: booleanOverrideSchema,
     content_precedence: booleanOverrideSchema,
@@ -93,7 +247,9 @@ export const emptyCapabilityRuleFormValues: CapabilityRuleFormValues = {
   duration_min: '',
   duration_max: '',
   fixed_duration: '',
+  aspect_ratios: [],
   resolutions: [],
+  sizes: [],
   require_json: 'inherit',
   require_text: 'inherit',
   content_precedence: 'inherit',
@@ -114,7 +270,9 @@ export function capabilityToFormValues(
     duration_min: numberToDraft(capability?.duration?.min),
     duration_max: numberToDraft(capability?.duration?.max),
     fixed_duration: numberToDraft(capability?.fixed_duration),
+    aspect_ratios: capability?.aspect_ratios || [],
     resolutions: capability?.resolutions || [],
+    sizes: capability?.sizes || [],
     require_json: booleanToOverride(capability?.require_json),
     require_text: booleanToOverride(capability?.require_text),
     content_precedence: booleanToOverride(capability?.content_precedence),
@@ -134,7 +292,18 @@ export function formValuesToCapability(
     ),
     duration: rangeFromDraft(values.duration_min, values.duration_max),
     fixed_duration: draftToNumber(values.fixed_duration),
-    resolutions: values.resolutions.length > 0 ? values.resolutions : undefined,
+    aspect_ratios:
+      values.aspect_ratios.length > 0
+        ? normalizeVideoOutputList('aspect_ratios', values.aspect_ratios)
+        : undefined,
+    resolutions:
+      values.resolutions.length > 0
+        ? normalizeVideoOutputList('resolutions', values.resolutions)
+        : undefined,
+    sizes:
+      values.sizes.length > 0
+        ? normalizeVideoOutputList('sizes', values.sizes)
+        : undefined,
     require_json: overrideToBoolean(values.require_json),
     require_text: overrideToBoolean(values.require_text),
     content_precedence: overrideToBoolean(values.content_precedence),
@@ -158,10 +327,16 @@ function validateRange(
 
 function hasAnyOverride(values: CapabilityRuleFormValues) {
   return (
+    values.aspect_ratios.length > 0 ||
     values.resolutions.length > 0 ||
+    values.sizes.length > 0 ||
     Object.entries(values).some(
       ([field, value]) =>
-        field !== 'resolutions' && value !== '' && value !== 'inherit'
+        field !== 'aspect_ratios' &&
+        field !== 'resolutions' &&
+        field !== 'sizes' &&
+        value !== '' &&
+        value !== 'inherit'
     )
   )
 }

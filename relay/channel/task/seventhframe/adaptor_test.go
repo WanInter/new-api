@@ -54,7 +54,7 @@ func TestBuildRequestBodyUploadsAssetsAndPreservesFileObjects(t *testing.T) {
 		"model":"public-video-model",
 		"prompt":"animate the references",
 		"duration":4,
-		"aspectRatio":"16:9",
+		"aspectRatio":"32:18",
 		"resolution":"720p",
 		"seed":"0",
 		"images":["` + server.URL + `/source/first.png"],

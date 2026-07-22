@@ -29,6 +29,8 @@ type ModelRequest struct {
 	Group string `json:"group,omitempty"`
 }
 
+const errorCodeInvalidVideoOutput types.ErrorCode = "invalid_video_output"
+
 func Distribute() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		var channel *model.Channel
@@ -40,6 +42,10 @@ func Distribute() func(c *gin.Context) {
 				statusCode = http.StatusRequestEntityTooLarge
 			}
 			abortWithOpenAiMessage(c, statusCode, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
+			return
+		}
+		if shouldSelectChannel && strings.TrimSpace(modelRequest.Model) == "" {
+			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorModelNameRequired))
 			return
 		}
 		if ok {
@@ -81,10 +87,6 @@ func Distribute() func(c *gin.Context) {
 			}
 
 			if shouldSelectChannel {
-				if modelRequest.Model == "" {
-					abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorModelNameRequired))
-					return
-				}
 				var selectGroup string
 				usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
 				// check path is /pg/chat/completions
@@ -147,11 +149,7 @@ func Distribute() func(c *gin.Context) {
 					if err != nil {
 						var featuresErr *service.VideoRequestFeaturesError
 						if errors.As(err, &featuresErr) {
-							statusCode := http.StatusBadRequest
-							if common.IsRequestBodyTooLargeError(featuresErr) {
-								statusCode = http.StatusRequestEntityTooLarge
-							}
-							abortWithOpenAiMessage(c, statusCode, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": featuresErr.Error()}))
+							abortWithVideoRequestFeaturesError(c, featuresErr)
 							return
 						}
 						if service.IsImageRoutingRequestError(err) {
@@ -179,6 +177,13 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		if ok && shouldSelectChannel && channel != nil && !service.ChannelSupportsRequestConstraints(c, channel, modelRequest.Model) {
+			if _, err := service.GetVideoRequestFeatures(c); err != nil {
+				var featuresErr *service.VideoRequestFeaturesError
+				if errors.As(err, &featuresErr) {
+					abortWithVideoRequestFeaturesError(c, featuresErr)
+					return
+				}
+			}
 			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorChannelConstraintFailed))
 			return
 		}
@@ -189,6 +194,19 @@ func Distribute() func(c *gin.Context) {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}
+}
+
+func abortWithVideoRequestFeaturesError(c *gin.Context, featuresErr *service.VideoRequestFeaturesError) {
+	statusCode := http.StatusBadRequest
+	if common.IsRequestBodyTooLargeError(featuresErr) {
+		statusCode = http.StatusRequestEntityTooLarge
+	}
+	message := i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": featuresErr.Error()})
+	if service.IsVideoRequestOutputError(featuresErr) {
+		abortWithOpenAiMessage(c, statusCode, message, errorCodeInvalidVideoOutput)
+		return
+	}
+	abortWithOpenAiMessage(c, statusCode, message)
 }
 
 // channelSupportsRequestPath reports whether a channel can serve the request path.

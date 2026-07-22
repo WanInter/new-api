@@ -62,6 +62,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
+	if _, err := relaycommon.NormalizeTaskSubmitVideoOutput(&req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_video_output", http.StatusBadRequest)
+	}
 	c.Set("task_request", req)
 	if hasMedia {
 		info.Action = constant.TaskActionGenerate
@@ -110,6 +113,10 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
+	req, err := shishiNormalizedTaskRequest(c, payload, info)
+	if err != nil {
+		return nil, err
+	}
 	if err := normalizeSoraContent(payload); err != nil {
 		return nil, err
 	}
@@ -121,6 +128,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		if ratio := firstNonEmpty(stringFromValue(payload["aspectRatio"]), stringFromValue(payload["ratio"])); ratio != "" {
 			payload["aspect_ratio"] = ratio
 		}
+	}
+	if err := applyCanonicalVideoOutput(payload, req); err != nil {
+		return nil, err
 	}
 	body, err := common.Marshal(payload)
 	if err != nil {
@@ -327,22 +337,75 @@ func taskRequestFromPayload(payload map[string]any, fallbackModel string) (relay
 	// duration is the canonical public spelling. Keep the request stored for
 	// billing consistent with the outgoing body, which also gives duration
 	// precedence over seconds.
-	duration := firstPositiveInt(payload["duration"], payload["seconds"], nestedValue(payload, "metadata", "duration"))
+	metadata := taskMetadata(payload["metadata"])
+	duration := firstPositiveInt(payload["duration"], payload["seconds"], metadata["duration"])
 	req := relaycommon.TaskSubmitReq{
-		Prompt:      prompt,
-		Model:       modelName,
-		Images:      media.images,
-		Videos:      media.videos,
-		Audios:      media.audios,
-		Content:     content,
-		Size:        stringFromValue(payload["size"]),
-		AspectRatio: firstNonEmpty(stringFromValue(payload["aspect_ratio"]), stringFromValue(payload["aspectRatio"]), stringFromValue(payload["ratio"])),
-		Resolution:  stringFromValue(payload["resolution"]),
-		Duration:    duration,
-		Seconds:     stringFromValue(payload["seconds"]),
-		Metadata:    mapValue(payload["metadata"]),
+		Prompt:           prompt,
+		Model:            modelName,
+		Images:           media.images,
+		Videos:           media.videos,
+		Audios:           media.audios,
+		Content:          content,
+		Size:             stringFromValue(payload["size"]),
+		Ratio:            stringFromValue(payload["ratio"]),
+		AspectRatio:      stringFromValue(payload["aspect_ratio"]),
+		AspectRatioAlias: stringFromValue(payload["aspectRatio"]),
+		Resolution:       stringFromValue(payload["resolution"]),
+		Duration:         duration,
+		Seconds:          stringFromValue(payload["seconds"]),
+		Metadata:         metadata,
 	}
 	return req, media.hasAny(), nil
+}
+
+func shishiNormalizedTaskRequest(c *gin.Context, payload map[string]any, info *relaycommon.RelayInfo) (relaycommon.TaskSubmitReq, error) {
+	if _, exists := c.Get("task_request"); exists {
+		return relaycommon.GetTaskRequest(c)
+	}
+
+	fallbackModel := ""
+	if info != nil {
+		fallbackModel = info.OriginModelName
+	}
+	req, _, err := taskRequestFromPayload(payload, fallbackModel)
+	if err != nil {
+		return relaycommon.TaskSubmitReq{}, err
+	}
+	if _, err := relaycommon.NormalizeTaskSubmitVideoOutput(&req); err != nil {
+		return relaycommon.TaskSubmitReq{}, err
+	}
+	return req, nil
+}
+
+func applyCanonicalVideoOutput(payload map[string]any, req relaycommon.TaskSubmitReq) error {
+	delete(payload, "ratio")
+	delete(payload, "aspectRatio")
+	if req.Size != "" {
+		payload["size"] = req.Size
+	}
+	if req.AspectRatio != "" {
+		payload["aspect_ratio"] = req.AspectRatio
+	} else {
+		delete(payload, "aspect_ratio")
+	}
+	if req.Resolution != "" {
+		payload["resolution"] = req.Resolution
+	} else {
+		delete(payload, "resolution")
+	}
+	if req.Metadata == nil {
+		return nil
+	}
+	if _, encoded := payload["metadata"].(string); encoded {
+		metadata, err := common.Marshal(req.Metadata)
+		if err != nil {
+			return err
+		}
+		payload["metadata"] = string(metadata)
+		return nil
+	}
+	payload["metadata"] = req.Metadata
+	return nil
 }
 
 type mediaReferences struct {
@@ -476,6 +539,11 @@ func buildMultipartBody(c *gin.Context, upstreamModel string) (io.Reader, error)
 	form, err := common.ParseMultipartFormReusable(c)
 	if err != nil {
 		return nil, err
+	}
+	if req, err := relaycommon.GetTaskRequest(c); err == nil {
+		if err := relaycommon.ApplyNormalizedTaskMultipartVideoOutput(form.Value, req, relaycommon.MultipartVideoOutputOptions{}); err != nil {
+			return nil, err
+		}
 	}
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -708,6 +776,21 @@ func nestedValue(payload map[string]any, parent, key string) any {
 func mapValue(value any) map[string]any {
 	mapValue, _ := value.(map[string]any)
 	return mapValue
+}
+
+func taskMetadata(value any) map[string]any {
+	if metadata := mapValue(value); metadata != nil {
+		return metadata
+	}
+	rawMetadata, ok := value.(string)
+	if !ok || strings.TrimSpace(rawMetadata) == "" {
+		return nil
+	}
+	var metadata map[string]any
+	if err := common.UnmarshalJsonStr(rawMetadata, &metadata); err != nil {
+		return nil
+	}
+	return metadata
 }
 
 func arrayValue(value any) []any {

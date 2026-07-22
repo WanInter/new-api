@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestVideoModelCapabilityValidateDurationConstraints(t *testing.T) {
@@ -96,9 +97,30 @@ func TestVideoModelCapabilityValidateVideoAudioTotal(t *testing.T) {
 }
 
 func TestVideoModelCapabilityValidateResolutions(t *testing.T) {
-	capability := VideoModelCapability{Resolutions: []string{"480p", "720p", "1080p", "4k"}}
+	capability := VideoModelCapability{Resolutions: []string{"512p", "768p", "1024p", "32768p", "4k"}}
+	require.NoError(t, capability.Validate())
+
+	assert.EqualError(t, VideoModelCapability{Resolutions: []string{"4K"}}.Validate(), `resolution "4K" must use a canonical quality label such as 720p or 4k`)
+	assert.EqualError(t, VideoModelCapability{Resolutions: []string{"2160p"}}.Validate(), `resolution "2160p" must use a canonical quality label such as 720p or 4k`)
+	assert.EqualError(t, VideoModelCapability{Resolutions: []string{"720"}}.Validate(), `resolution "720" must use a canonical quality label such as 720p or 4k`)
+	assert.EqualError(t, VideoModelCapability{Resolutions: []string{"32769p"}}.Validate(), `resolution "32769p" must use a canonical quality label such as 720p or 4k`)
+	assert.EqualError(t, VideoModelCapability{Resolutions: []string{"720p", "720p"}}.Validate(), `resolution "720p" must not be duplicated`)
+}
+
+func TestVideoModelCapabilityValidateAspectRatios(t *testing.T) {
+	capability := VideoModelCapability{AspectRatios: []string{"1:1", "3:4", "16:9", "32768:1", "adaptive"}}
 	assert.NoError(t, capability.Validate())
 
-	assert.EqualError(t, VideoModelCapability{Resolutions: []string{"4K"}}.Validate(), `resolution "4K" must be one of 480p, 720p, 1080p, 4k`)
-	assert.EqualError(t, VideoModelCapability{Resolutions: []string{"720p", "720p"}}.Validate(), `resolution "720p" must not be duplicated`)
+	assert.EqualError(t, VideoModelCapability{AspectRatios: []string{"32:18"}}.Validate(), `aspect_ratio "32:18" must use canonical W:H format or adaptive`)
+	assert.EqualError(t, VideoModelCapability{AspectRatios: []string{"32769:1"}}.Validate(), `aspect_ratio "32769:1" must use canonical W:H format or adaptive`)
+	assert.EqualError(t, VideoModelCapability{AspectRatios: []string{"16:9", "16:9"}}.Validate(), `aspect_ratio "16:9" must not be duplicated`)
+}
+
+func TestVideoModelCapabilityValidateSizes(t *testing.T) {
+	capability := VideoModelCapability{Sizes: []string{"720x1280", "1280x720", "32768x1"}}
+	assert.NoError(t, capability.Validate())
+
+	assert.EqualError(t, VideoModelCapability{Sizes: []string{"720X1280"}}.Validate(), `size "720X1280" must use canonical WxH format`)
+	assert.EqualError(t, VideoModelCapability{Sizes: []string{"32769x1"}}.Validate(), `size "32769x1" must use canonical WxH format`)
+	assert.EqualError(t, VideoModelCapability{Sizes: []string{"720x1280", "720x1280"}}.Validate(), `size "720x1280" must not be duplicated`)
 }

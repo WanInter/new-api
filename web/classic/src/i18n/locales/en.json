@@ -2138,7 +2138,6 @@
     "暂无精确模型计费规则": "No precise model pricing rules",
     "编辑规则": "Edit Rule",
     "主体类型": "Subject Type",
-    "删除规则": "Delete Rule",
     "确定删除此精确模型计费规则吗？": "Delete this precise model pricing rule?",
     "用户 ID": "User ID",
     "模型广场": "Model Marketplace",
@@ -2802,7 +2801,6 @@
     "编辑模式": "Edit Mode",
     "编辑用户": "Edit User",
     "编辑聊天配置": "Edit Chat Configuration",
-    "编辑规则": "Edit Rule",
     "编辑问答": "Edit FAQ",
     "缩词": "Shorten",
     "缺省 MaxTokens": "Default MaxTokens",
@@ -3992,6 +3990,13 @@
     "未找到采集请求": "No captured requests found",
     "清晰度": "Resolution",
     "支持的清晰度": "Supported resolutions",
-    "清晰度 {{resolution}} 不受支持，支持：{{supported_resolutions}}": "Resolution {{resolution}} is not supported. Supported: {{supported_resolutions}}"
+    "清晰度 {{resolution}} 不受支持，支持：{{supported_resolutions}}": "Resolution {{resolution}} is not supported. Supported: {{supported_resolutions}}",
+    "画面比例": "Aspect ratio",
+    "像素尺寸": "Pixel size",
+    "支持的画面比例": "Supported aspect ratios",
+    "支持的像素尺寸": "Supported pixel sizes",
+    "画面比例 {{aspect_ratio}} 不受支持，支持：{{supported_aspect_ratios}}": "Aspect ratio {{aspect_ratio}} is not supported. Supported: {{supported_aspect_ratios}}",
+    "像素尺寸 {{size}} 不受支持，支持：{{supported_sizes}}": "Pixel size {{size}} is not supported. Supported: {{supported_sizes}}",
+    "像素尺寸与画面比例冲突": "Pixel size conflicts with aspect ratio"
   }
 }

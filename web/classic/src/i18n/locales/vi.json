@@ -2106,7 +2106,6 @@
     "暂无精确模型计费规则": "Chưa có quy tắc định giá chính xác theo mô hình",
     "编辑规则": "Chỉnh sửa quy tắc",
     "主体类型": "Loại đối tượng",
-    "删除规则": "Xóa quy tắc",
     "确定删除此精确模型计费规则吗？": "Xóa quy tắc định giá chính xác theo mô hình này?",
     "用户 ID": "ID người dùng",
     "模型广场": "Thị trường mô hình",
@@ -2534,7 +2533,6 @@
     "用以支持通过微信进行登录注册": "Để hỗ trợ đăng nhập & đăng ký qua WeChat",
     "用以防止恶意用户利用临时邮箱批量注册": "Để ngăn chặn người dùng độc hại đăng ký hàng loạt bằng địa chỉ email tạm thời",
     "用户": "Người dùng",
-    "用户 ID": "ID người dùng",
     "用户 ID 字段（可选）": "Trường ID người dùng (tùy chọn)",
     "用户 ID 或用户名": "ID người dùng hoặc tên người dùng",
     "用户ID": "ID người dùng",
@@ -3061,7 +3059,6 @@
     "编辑渠道": "Chỉnh sửa kênh",
     "编辑用户": "Chỉnh sửa người dùng",
     "编辑聊天配置": "Chỉnh sửa cấu hình trò chuyện",
-    "编辑规则": "Chỉnh sửa quy tắc",
     "编辑通道": "Chỉnh sửa kênh",
     "编辑问答": "Chỉnh sửa hỏi đáp",
     "缩词": "Rút gọn",
@@ -4355,7 +4352,6 @@
     "请至少选择一个采集协议": "Hãy chọn ít nhất một giao thức thu thập",
     "验证后更新中继采集策略": "Xác minh để cập nhật chính sách thu thập lưu lượng chuyển tiếp",
     "请使用 Passkey 或双重验证确认对客户端采集报文的修改。": "Dùng passkey hoặc xác thực hai yếu tố để xác nhận thay đổi đối với thông điệp máy khách đã thu thập.",
-    "请求": "Yêu cầu",
     "验证后查看采集报文": "Xác minh để xem thông điệp đã thu thập",
     "请使用 Passkey 或双重验证查看此客户端采集报文。": "Dùng passkey hoặc xác thực hai yếu tố để xem thông điệp máy khách đã thu thập này.",
     "加载采集正文失败": "Không thể tải nội dung đã thu thập",
@@ -4374,6 +4370,13 @@
     "未找到采集请求": "Không tìm thấy yêu cầu đã thu thập",
     "清晰度": "Độ phân giải",
     "支持的清晰度": "Độ phân giải được hỗ trợ",
-    "清晰度 {{resolution}} 不受支持，支持：{{supported_resolutions}}": "Độ phân giải {{resolution}} không được hỗ trợ. Hỗ trợ: {{supported_resolutions}}"
+    "清晰度 {{resolution}} 不受支持，支持：{{supported_resolutions}}": "Độ phân giải {{resolution}} không được hỗ trợ. Hỗ trợ: {{supported_resolutions}}",
+    "画面比例": "Tỷ lệ khung hình",
+    "像素尺寸": "Kích thước điểm ảnh",
+    "支持的画面比例": "Tỷ lệ khung hình được hỗ trợ",
+    "支持的像素尺寸": "Kích thước điểm ảnh được hỗ trợ",
+    "画面比例 {{aspect_ratio}} 不受支持，支持：{{supported_aspect_ratios}}": "Tỷ lệ khung hình {{aspect_ratio}} không được hỗ trợ. Hỗ trợ: {{supported_aspect_ratios}}",
+    "像素尺寸 {{size}} 不受支持，支持：{{supported_sizes}}": "Kích thước điểm ảnh {{size}} không được hỗ trợ. Hỗ trợ: {{supported_sizes}}",
+    "像素尺寸与画面比例冲突": "Kích thước điểm ảnh không khớp với tỷ lệ khung hình"
   }
 }

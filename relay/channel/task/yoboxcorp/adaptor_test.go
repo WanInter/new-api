@@ -130,6 +130,60 @@ func TestBuildRequestUsesDreaminaTopLevelVideoContract(t *testing.T) {
 	assert.Equal(t, 1, pollCounts["asset-audio"])
 }
 
+func TestValidateRequestRecanonicalizesRawOutputAliasesAfterMerge(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"dreamina-seedance-2-0-hc",
+		"prompt":"animate",
+		"ratio":"32:18",
+		"aspect_ratio":"16:9",
+		"aspectRatio":"16:9",
+		"resolution":"720P",
+		"metadata":{
+			"size":"720x1280",
+			"ratio":"9:16",
+			"aspectRatio":"9:16",
+			"aspect_ratio":"9:16",
+			"resolution":"1080p",
+			"watermark":true
+		}
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "dreamina-seedance-2-0-hc",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "dreamina-seedance-2-0-hc",
+		},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+
+	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
+	req, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, "16:9", req.AspectRatio)
+	assert.Empty(t, req.Ratio)
+	assert.Empty(t, req.AspectRatioAlias)
+	assert.Empty(t, req.Size)
+	assert.Equal(t, "720p", req.Resolution)
+	assert.Equal(t, "16:9", req.Metadata["aspect_ratio"])
+	assert.Equal(t, "720p", req.Metadata["resolution"])
+	assert.Equal(t, true, req.Metadata["watermark"])
+	assert.NotContains(t, req.Metadata, "size")
+	assert.NotContains(t, req.Metadata, "ratio")
+	assert.NotContains(t, req.Metadata, "aspectRatio")
+
+	body, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	assert.Equal(t, "16:9", payload["ratio"])
+	assert.Equal(t, "720p", payload["resolution"])
+	assert.Equal(t, true, payload["watermark"])
+}
+
 func TestBuildRequestBodyReusesExistingAssetReferences(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatalf("unexpected asset request: %s %s", r.Method, r.URL.Path)

@@ -164,6 +164,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		return service.TaskErrorWrapperLocal(errors.New("model field is required"), "missing_model", http.StatusBadRequest)
 	}
 	mergeRequestOptions(c, &req)
+	if _, err := relaycommon.NormalizeTaskSubmitVideoOutput(&req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_video_output", http.StatusBadRequest)
+	}
 	info.Action = constant.TaskActionGenerate
 	c.Set("task_request", req)
 	return nil

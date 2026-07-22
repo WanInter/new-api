@@ -307,7 +307,9 @@ func isEmptyVideoCapability(capability dto.VideoModelCapability) bool {
 		capability.VideoAudioTotal == nil &&
 		capability.Duration == nil &&
 		capability.FixedDuration == nil &&
+		len(capability.AspectRatios) == 0 &&
 		len(capability.Resolutions) == 0 &&
+		len(capability.Sizes) == 0 &&
 		capability.RequireJSON == nil &&
 		capability.RequireText == nil &&
 		capability.ContentPrecedence == nil

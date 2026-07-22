@@ -4955,6 +4955,17 @@
     "Effective": "有効値",
     "Resolution": "解像度",
     "Resolution {{resolution}} is not supported. Supported: {{supported_resolutions}}": "解像度 {{resolution}} はサポートされていません。対応：{{supported_resolutions}}",
-    "Supported resolutions": "対応解像度"
+    "Supported resolutions": "対応解像度",
+    "Aspect ratio": "アスペクト比",
+    "Pixel size": "ピクセルサイズ",
+    "Supported aspect ratios": "対応アスペクト比",
+    "Supported pixel sizes": "対応ピクセルサイズ",
+    "Aspect ratio {{aspect_ratio}} is not supported. Supported: {{supported_aspect_ratios}}": "アスペクト比 {{aspect_ratio}} はサポートされていません。対応：{{supported_aspect_ratios}}",
+    "Pixel size {{size}} is not supported. Supported: {{supported_sizes}}": "ピクセルサイズ {{size}} はサポートされていません。対応：{{supported_sizes}}",
+    "Use W:H aspect ratios or adaptive": "W:H のアスペクト比または adaptive を使用してください",
+    "Use WxH pixel sizes": "WxH のピクセルサイズを使用してください",
+    "Use a quality label such as 720p or 4k": "720p または 4k などの品質ラベルを使用してください",
+    "Do not repeat output values": "出力値を重複させないでください",
+    "Pixel size conflicts with aspect ratio": "ピクセルサイズがアスペクト比と一致しません"
   }
 }

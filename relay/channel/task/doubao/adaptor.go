@@ -36,6 +36,7 @@ type ContentItem struct {
 	VideoURL *MediaURL `json:"video_url,omitempty"`
 	AudioURL *MediaURL `json:"audio_url,omitempty"`
 	Role     string    `json:"role,omitempty"`
+	Name     string    `json:"name,omitempty"`
 }
 
 type MediaURL struct {
@@ -206,16 +207,16 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if isByteforModel(relayInfoModelName(info)) {
 		return map[string]float64{"seconds": float64(byteforBillingSeconds(req))}
 	}
-	if hasVideoInMetadata(req.Metadata) {
-		if ratio, ok := GetVideoInputRatio(info.OriginModelName); ok {
+	if hasDoubaoVideoInput(&req) {
+		if ratio, ok := GetVideoInputRatio(relayInfoModelName(info)); ok {
 			return map[string]float64{"video_input": ratio}
 		}
 	}
 	return nil
 }
 
-// hasVideoInMetadata 直接检查 metadata 的 content 数组是否包含 video_url 条目，
-// 避免构建完整的上游 requestPayload。
+// hasVideoInMetadata checks the native content compatibility path without
+// constructing a provider payload.
 func hasVideoInMetadata(metadata map[string]interface{}) bool {
 	if metadata == nil {
 		return false
@@ -356,20 +357,7 @@ func (a *TaskAdaptor) GetChannelName() string {
 
 func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*requestPayload, error) {
 	r := requestPayload{
-		Model:   req.Model,
-		Content: []ContentItem{},
-	}
-
-	// Add images if present
-	if req.HasImage() {
-		for _, imgURL := range req.Images {
-			r.Content = append(r.Content, ContentItem{
-				Type: "image_url",
-				ImageURL: &MediaURL{
-					URL: imgURL,
-				},
-			})
-		}
+		Model: req.Model,
 	}
 
 	metadata := req.Metadata
@@ -385,11 +373,16 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	if req.Resolution != "" {
 		r.Resolution = req.Resolution
 	}
-	// Ark calls this field ratio. Keep size as the legacy override, but accept
-	// the public video API's aspect_ratio field when size is not supplied.
-	r.Ratio = firstNonEmpty(req.Size, req.AspectRatio, r.Ratio)
+	// Ark calls this field ratio. The shared normalizer puts the public value
+	// into AspectRatio (including a ratio derived from an exact pixel size), so
+	// it must win over a provider-era ratio-shaped size such as 16:9.
+	r.Ratio = doubaoOutputRatio(req, r.Ratio)
 
 	r.Content = lo.Reject(r.Content, func(c ContentItem, _ int) bool { return c.Type == "text" })
+	// The Ark content protocol accepts all three URL media classes. Preserve
+	// native metadata.content entries (including their provider-specific role),
+	// then add the unified request fields and their compatibility aliases.
+	r.Content = append(r.Content, doubaoUnifiedMediaContent(req)...)
 	r.Content = append(r.Content, ContentItem{
 		Type: "text",
 		Text: req.Prompt,
@@ -398,11 +391,126 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	return &r, nil
 }
 
+func doubaoUnifiedMediaContent(req *relaycommon.TaskSubmitReq) []ContentItem {
+	if req == nil {
+		return nil
+	}
+
+	content := make([]ContentItem, 0)
+	for _, url := range doubaoImageInputs(req) {
+		content = append(content, ContentItem{Type: "image_url", ImageURL: &MediaURL{URL: url}})
+	}
+	for _, url := range doubaoVideoInputs(req) {
+		content = append(content, ContentItem{Type: "video_url", VideoURL: &MediaURL{URL: url}})
+	}
+	for _, url := range doubaoAudioInputs(req) {
+		content = append(content, ContentItem{Type: "audio_url", AudioURL: &MediaURL{URL: url}})
+	}
+	for _, item := range req.Content {
+		if item.ImageURL != nil {
+			content = appendDoubaoContentURL(content, "image_url", item.ImageURL.URL, item.Role, item.Name)
+		}
+		if item.VideoURL != nil {
+			content = appendDoubaoContentURL(content, "video_url", item.VideoURL.URL, item.Role, item.Name)
+		}
+		if item.AudioURL != nil {
+			content = appendDoubaoContentURL(content, "audio_url", item.AudioURL.URL, item.Role, item.Name)
+		}
+	}
+	return content
+}
+
+func doubaoImageInputs(req *relaycommon.TaskSubmitReq) []string {
+	if req == nil {
+		return nil
+	}
+	return uniqueDoubaoMediaURLs(
+		req.Images,
+		[]string{req.Image},
+		req.ImageURLs,
+		[]string{req.InputReference},
+		req.InputStartFrames,
+		req.InputImageReferences,
+		req.MetadataStartFrames,
+	)
+}
+
+func doubaoVideoInputs(req *relaycommon.TaskSubmitReq) []string {
+	if req == nil {
+		return nil
+	}
+	return uniqueDoubaoMediaURLs(req.Videos, req.VideoURLs)
+}
+
+func doubaoAudioInputs(req *relaycommon.TaskSubmitReq) []string {
+	if req == nil {
+		return nil
+	}
+	return uniqueDoubaoMediaURLs(req.Audios, req.AudioURLs)
+}
+
+func uniqueDoubaoMediaURLs(groups ...[]string) []string {
+	values := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, urls := range groups {
+		for _, url := range urls {
+			url = strings.TrimSpace(url)
+			if url == "" {
+				continue
+			}
+			if _, ok := seen[url]; ok {
+				continue
+			}
+			seen[url] = struct{}{}
+			values = append(values, url)
+		}
+	}
+	return values
+}
+
+func appendDoubaoContentURL(content []ContentItem, mediaType, url, role, name string) []ContentItem {
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return content
+	}
+	item := ContentItem{
+		Type: mediaType,
+		Role: strings.TrimSpace(role),
+		Name: strings.TrimSpace(name),
+	}
+	switch mediaType {
+	case "image_url":
+		item.ImageURL = &MediaURL{URL: url}
+	case "video_url":
+		item.VideoURL = &MediaURL{URL: url}
+	case "audio_url":
+		item.AudioURL = &MediaURL{URL: url}
+	}
+	return append(content, item)
+}
+
+func hasDoubaoVideoInput(req *relaycommon.TaskSubmitReq) bool {
+	if req == nil {
+		return false
+	}
+	if len(doubaoVideoInputs(req)) > 0 || hasVideoInMetadata(req.Metadata) {
+		return true
+	}
+	for _, item := range req.Content {
+		if item.VideoURL != nil && strings.TrimSpace(item.VideoURL.URL) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func convertToByteforRequestPayload(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) *byteforRequestPayload {
 	payload := &byteforRequestPayload{
-		Model:      relayInfoModelName(info),
-		Prompt:     req.Prompt,
-		Size:       firstNonEmpty(req.Size, req.AspectRatio, metadataString(req.Metadata, "size", "ratio", "aspect_ratio")),
+		Model:  relayInfoModelName(info),
+		Prompt: req.Prompt,
+		// Bytefor calls its ratio field size. Do not forward a pixel WxH value as
+		// that field: NormalizeTaskSubmitVideoOutput derives AspectRatio first.
+		Size:       doubaoOutputRatio(req, metadataString(req.Metadata, "size", "ratio", "aspect_ratio")),
 		Resolution: firstNonEmpty(req.Resolution, metadataString(req.Metadata, "resolution")),
 		Duration:   byteforDuration(req),
 	}
@@ -646,4 +754,38 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func legacyArkRatioFromSize(size string) string {
+	size = strings.TrimSpace(size)
+	if size == "" || isPixelDimension(size) {
+		return ""
+	}
+	return size
+}
+
+func doubaoOutputRatio(req *relaycommon.TaskSubmitReq, fallback string) string {
+	if req == nil {
+		return legacyArkRatioFromSize(fallback)
+	}
+	if ratio := strings.TrimSpace(req.AspectRatio); ratio != "" {
+		return ratio
+	}
+	// Exact pixel dimensions are represented by the derived canonical
+	// AspectRatio. They must not fall through to a legacy or metadata value.
+	if isPixelDimension(req.Size) {
+		return ""
+	}
+	return firstNonEmpty(legacyArkRatioFromSize(req.Size), legacyArkRatioFromSize(fallback))
+}
+
+func isPixelDimension(value string) bool {
+	value = strings.NewReplacer("X", "x", "×", "x", "*", "x").Replace(strings.TrimSpace(value))
+	parts := strings.Split(value, "x")
+	if len(parts) != 2 {
+		return false
+	}
+	width, widthErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+	height, heightErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+	return widthErr == nil && heightErr == nil && width > 0 && height > 0
 }

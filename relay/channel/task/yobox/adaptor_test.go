@@ -117,6 +117,123 @@ func TestConvertToRequestPayloadSeedance20ForwardsVideoAndAudioReferences(t *tes
 	assert.NotContains(t, input, "audio")
 }
 
+func TestConvertToRequestPayloadSeedance20ForwardsContentMediaReferences(t *testing.T) {
+	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Model:    "seedance-2.0",
+		Prompt:   "animate the character",
+		Duration: 5,
+		Content: []relaycommon.TaskContentItem{
+			{Type: "image_url", ImageURL: &relaycommon.TaskContentURL{URL: "https://example.com/reference.png"}},
+			{Type: "video_url", VideoURL: &relaycommon.TaskContentURL{URL: "https://example.com/motion.mp4"}},
+			{Type: "audio_url", AudioURL: &relaycommon.TaskContentURL{URL: "https://example.com/music.mp3"}},
+		},
+	}, &relaycommon.RelayInfo{})
+	require.NoError(t, err)
+
+	body, ok := payload.(map[string]any)
+	require.True(t, ok)
+	input, ok := body["input"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, []map[string]any{{"url": "https://example.com/reference.png"}}, input["image_references"])
+	assert.Equal(t, []map[string]any{{"url": "https://example.com/motion.mp4"}}, input["video_references"])
+	assert.Equal(t, []map[string]any{{"url": "https://example.com/music.mp3"}}, input["audio_references"])
+}
+
+func TestValidateMappedRequestRejectsVideoAudioForMappedSeedance2(t *testing.T) {
+	testCases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "top level media",
+			body: `{
+				"model":"public-seedance",
+				"prompt":"animate",
+				"videos":["https://example.com/reference.mp4"],
+				"audios":["https://example.com/reference.mp3"]
+			}`,
+		},
+		{
+			name: "content media",
+			body: `{
+				"model":"public-seedance",
+				"prompt":"animate",
+				"content":[{"type":"video_url","video_url":{"url":"https://example.com/reference.mp4"}}]
+			}`,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(testCase.body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "public-seedance",
+				TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+			}
+			adaptor := &TaskAdaptor{}
+
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+			info.ChannelMeta = &relaycommon.ChannelMeta{UpstreamModelName: "seedance2", IsModelMapped: true}
+
+			taskErr := adaptor.ValidateMappedRequest(c, info)
+			require.NotNil(t, taskErr)
+			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+			assert.Equal(t, "invalid_request", taskErr.Code)
+			assert.Contains(t, taskErr.Message, "does not support video or audio")
+		})
+	}
+}
+
+func TestValidateMappedRequestAllowsVideoAudioForMappedSeedance20(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"public-seedance",
+		"prompt":"animate",
+		"videos":["https://example.com/reference.mp4"],
+		"audios":["https://example.com/reference.mp3"]
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "public-seedance",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+	adaptor := &TaskAdaptor{}
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	info.ChannelMeta = &relaycommon.ChannelMeta{UpstreamModelName: "seedance-2.0", IsModelMapped: true}
+
+	assert.Nil(t, adaptor.ValidateMappedRequest(c, info))
+}
+
+func TestValidateMappedRequestRejectsUnsupportedSizeForMappedSeedance20(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"public-seedance",
+		"prompt":"animate",
+		"size":"960x540"
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	adaptor := &TaskAdaptor{}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "public-seedance",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	info.ChannelMeta = &relaycommon.ChannelMeta{UpstreamModelName: "seedance-2.0", IsModelMapped: true}
+
+	taskErr := adaptor.ValidateMappedRequest(c, info)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	assert.Equal(t, "invalid_video_output", taskErr.Code)
+	assert.Contains(t, taskErr.Message, `960x540`)
+}
+
 func TestConvertToRequestPayloadNoFaceOmitsMediaStrength(t *testing.T) {
 	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&relaycommon.TaskSubmitReq{
 		Model:    "seedance-2.0-fast-noface",
@@ -155,6 +272,163 @@ func TestConvertToRequestPayloadSeedance20DoesNotInventOptionalParameters(t *tes
 	assert.NotContains(t, input, "resolution")
 	assert.NotContains(t, input, "audio")
 	assert.NotContains(t, input, "n")
+}
+
+func TestConvertToRequestPayloadSeedance20CanonicalizesAspectRatioAliases(t *testing.T) {
+	testCases := []struct {
+		name     string
+		metadata map[string]any
+		expected string
+	}{
+		{name: "legacy ratio", metadata: map[string]any{"ratio": "9:16"}, expected: "9:16"},
+		{name: "camel case alias", metadata: map[string]any{"aspectRatio": "16:9"}, expected: "16:9"},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload, err := (&TaskAdaptor{}).convertToRequestPayload(&relaycommon.TaskSubmitReq{
+				Model:    "seedance-2.0-noface",
+				Prompt:   "run",
+				Metadata: testCase.metadata,
+			}, &relaycommon.RelayInfo{})
+			require.NoError(t, err)
+
+			body, ok := payload.(map[string]any)
+			require.True(t, ok)
+			input, ok := body["input"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, testCase.expected, input["aspect_ratio"])
+			assert.NotContains(t, input, "ratio")
+			assert.NotContains(t, input, "aspectRatio")
+		})
+	}
+}
+
+func TestValidateSeedance20RejectsUnsupportedSize(t *testing.T) {
+	testCases := []struct {
+		name     string
+		bodyJSON string
+	}{
+		{
+			name:     "no explicit parameters",
+			bodyJSON: `{"model":"seedance-2.0-noface","prompt":"test","seconds":"5","size":"960x540"}`,
+		},
+		{
+			name:     "with matching explicit output fields",
+			bodyJSON: `{"model":"seedance-2.0-noface","prompt":"test","size":"960x540","aspect_ratio":"16:9","resolution":"540p"}`,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(testCase.bodyJSON))
+			c.Request.Header.Set("Content-Type", "application/json")
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "seedance-2.0-noface",
+				TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+			}
+
+			taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
+			require.NotNil(t, taskErr)
+			assert.Equal(t, "invalid_video_output", taskErr.Code)
+			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+			assert.Contains(t, taskErr.Message, `960x540`)
+			assert.Contains(t, taskErr.Message, "not supported")
+		})
+	}
+}
+
+func TestValidateSeedance20RejectsUnknownSizeWithExplicitResolution(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"seedance-2.0-noface",
+		"prompt":"test",
+		"seconds":"5",
+		"size":"960x540",
+		"aspect_ratio":"16:9",
+		"resolution":"720p"
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "seedance-2.0-noface",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_video_output", taskErr.Code)
+	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	assert.Contains(t, taskErr.Message, `960x540`)
+	assert.Contains(t, taskErr.Message, "not supported")
+}
+
+func TestValidateSeedance20RejectsUnknownNestedSizeWithoutExplicitParameters(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"seedance-2.0-noface",
+		"prompt":"test",
+		"input":{"size":"960x540"}
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "seedance-2.0-noface",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_video_output", taskErr.Code)
+	assert.Contains(t, taskErr.Message, `960x540`)
+	assert.Contains(t, taskErr.Message, "not supported")
+}
+
+func TestValidateSeedance20ConvertsKnownSizeAliases(t *testing.T) {
+	testCases := []struct {
+		name        string
+		size        string
+		nested      bool
+		aspectRatio string
+		resolution  string
+	}{
+		{name: "portrait", size: "720x1280", aspectRatio: "9:16", resolution: "720p"},
+		{name: "landscape", size: "1280x720", aspectRatio: "16:9", resolution: "720p"},
+		{name: "square", size: "720x720", aspectRatio: "1:1", resolution: "720p"},
+		{name: "nested portrait", size: "720x1280", nested: true, aspectRatio: "9:16", resolution: "720p"},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			bodyJSON := fmt.Sprintf(`{"model":"seedance-2.0-noface","prompt":"test","size":"%s"}`, testCase.size)
+			if testCase.nested {
+				bodyJSON = fmt.Sprintf(`{"model":"seedance-2.0-noface","prompt":"test","input":{"size":"%s"}}`, testCase.size)
+			}
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(bodyJSON))
+			c.Request.Header.Set("Content-Type", "application/json")
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "seedance-2.0-noface",
+				TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+			}
+
+			require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
+			req, err := relaycommon.GetTaskRequest(c)
+			require.NoError(t, err)
+			payload, err := (&TaskAdaptor{}).convertToRequestPayload(&req, info)
+			require.NoError(t, err)
+
+			body, ok := payload.(map[string]any)
+			require.True(t, ok)
+			input, ok := body["input"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, testCase.aspectRatio, input["aspect_ratio"])
+			assert.Equal(t, testCase.resolution, input["resolution"])
+		})
+	}
 }
 
 func TestConvertToRequestPayloadHappyHorseSupportsNineReferences(t *testing.T) {

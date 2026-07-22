@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/system_setting"
@@ -283,6 +284,63 @@ func TestBuildRequestBodyMapsMultipartDurationAliasWithoutChangingValues(t *test
 	require.NoError(t, err)
 	require.Equal(t, []string{"0", "14.5s"}, form.Value["seconds"])
 	require.NotContains(t, form.Value, "duration")
+}
+
+func TestBuildRequestBodyNormalizesMultipartVideoOutputAndMetadata(t *testing.T) {
+	var input bytes.Buffer
+	inputWriter := multipart.NewWriter(&input)
+	require.NoError(t, inputWriter.WriteField("model", "public-video-model"))
+	require.NoError(t, inputWriter.WriteField("prompt", "make it cinematic"))
+	require.NoError(t, inputWriter.WriteField("ratio", "32:18"))
+	require.NoError(t, inputWriter.WriteField("aspectRatio", "16:9"))
+	require.NoError(t, inputWriter.WriteField("size", "0960X0540"))
+	require.NoError(t, inputWriter.WriteField("resolution", "1080P"))
+	require.NoError(t, inputWriter.WriteField("metadata", `{
+		"ratio":"9:16",
+		"aspectRatio":"9:16",
+		"aspect_ratio":"9:16",
+		"size":"720x1280",
+		"resolution":"720P",
+		"provider_option":{"keep":true}
+	}`))
+	require.NoError(t, inputWriter.Close())
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(input.Bytes()))
+	c.Request.Header.Set("Content-Type", inputWriter.FormDataContentType())
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: "sora-upstream-model"},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+
+	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
+	body, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	_, params, err := mime.ParseMediaType(c.Request.Header.Get("Content-Type"))
+	require.NoError(t, err)
+	form, err := multipart.NewReader(bytes.NewReader(data), params["boundary"]).ReadForm(1 << 20)
+	require.NoError(t, err)
+	defer form.RemoveAll()
+
+	require.Equal(t, []string{"sora-upstream-model"}, form.Value["model"])
+	assert.Equal(t, []string{"960x540"}, form.Value["size"])
+	assert.Equal(t, []string{"16:9"}, form.Value["aspect_ratio"])
+	assert.Equal(t, []string{"16:9"}, form.Value["ratio"])
+	assert.Equal(t, []string{"16:9"}, form.Value["aspectRatio"])
+	assert.Equal(t, []string{"1080p"}, form.Value["resolution"])
+
+	var metadata map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(form.Value["metadata"][0], &metadata))
+	assert.Equal(t, "960x540", metadata["size"])
+	assert.Equal(t, "16:9", metadata["aspect_ratio"])
+	assert.Equal(t, "1080p", metadata["resolution"])
+	assert.NotContains(t, metadata, "ratio")
+	assert.NotContains(t, metadata, "aspectRatio")
+	assert.Equal(t, map[string]any{"keep": true}, metadata["provider_option"])
 }
 
 func TestEstimateBillingPreservesCanvasStandardDuration(t *testing.T) {
@@ -643,6 +701,128 @@ func TestApplyOtoySeedanceMiniReferenceRequestMapsZeroSecondsWithoutChangingIt(t
 
 	require.Equal(t, float64(0), body["duration"])
 	require.NotContains(t, body, "seconds")
+}
+
+func TestValidateRemixRequestNormalizesVideoOutput(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos/task_123/remix", strings.NewReader(`{
+		"prompt":"make it cinematic",
+		"ratio":"32:18",
+		"resolution":"720P"
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: "sora-2"},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{Action: constant.TaskActionRemix},
+	}
+
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
+
+	require.Nil(t, taskErr)
+	req, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, "16:9", req.AspectRatio)
+	assert.Equal(t, "720p", req.Resolution)
+
+	body, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	assert.Equal(t, "16:9", payload["aspect_ratio"])
+	assert.Equal(t, "16:9", payload["ratio"])
+	assert.Equal(t, "720p", payload["resolution"])
+}
+
+func TestBuildRequestBodySynchronizesNestedParametersResolution(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"sora-2",
+		"prompt":"make it cinematic",
+		"ratio":"32:18",
+		"resolution":"720P",
+		"parameters":{"resolution":"1080P","duration":15},
+		"metadata":{"ratio":"9:16","aspectRatio":"9:16","aspect_ratio":"9:16"}
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: "sora-2"},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+
+	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
+	body, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+
+	assert.Equal(t, "720p", payload["resolution"])
+	parameters, ok := payload["parameters"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "720p", parameters["resolution"])
+	assert.Equal(t, float64(15), parameters["duration"])
+	metadata, ok := payload["metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "16:9", metadata["aspect_ratio"])
+	assert.NotContains(t, metadata, "ratio")
+	assert.NotContains(t, metadata, "aspectRatio")
+}
+
+func TestBuildRequestBodyNormalizesEncodedMetadataVideoOutput(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"sora-2",
+		"prompt":"make it cinematic",
+		"ratio":"32:18",
+		"resolution":"720P",
+		"metadata":"{\"ratio\":\"9:16\",\"aspectRatio\":\"9:16\",\"aspect_ratio\":\"9:16\"}"
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: "sora-2"},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+
+	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
+	body, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	rawMetadata, ok := payload["metadata"].(string)
+	require.True(t, ok)
+	var metadata map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(rawMetadata, &metadata))
+
+	assert.Equal(t, "16:9", metadata["aspect_ratio"])
+	assert.Equal(t, "720p", metadata["resolution"])
+	assert.NotContains(t, metadata, "ratio")
+	assert.NotContains(t, metadata, "aspectRatio")
+}
+
+func TestValidateRemixRequestRejectsConflictingVideoOutput(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos/task_123/remix", strings.NewReader(`{
+		"prompt":"make it cinematic",
+		"size":"960x540",
+		"ratio":"9:16"
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{Action: constant.TaskActionRemix}})
+
+	require.NotNil(t, taskErr)
+	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	assert.Equal(t, "invalid_video_output", taskErr.Code)
+	assert.Contains(t, taskErr.Message, "conflicts with aspect_ratio")
 }
 
 func TestParseTaskResultTreatsDetailErrorAsFailure(t *testing.T) {

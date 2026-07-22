@@ -331,6 +331,71 @@ func TestValidateJSONRequestPassesThroughResolution(t *testing.T) {
 	assert.Equal(t, "1080p", *resolution)
 }
 
+func TestValidateJSONRequestNormalizesVideoOutputAliases(t *testing.T) {
+	testCases := []struct {
+		name            string
+		body            string
+		wantAspectRatio string
+		wantResolution  string
+	}{
+		{
+			name:            "ratio alias",
+			body:            `{"model":"seedance-2-720p-933","prompt":"test","ratio":"32:18","resolution":"720P"}`,
+			wantAspectRatio: "16:9",
+			wantResolution:  "720p",
+		},
+		{
+			name:            "camel aspect ratio alias",
+			body:            `{"model":"seedance-2-720p-933","prompt":"test","aspectRatio":"9:16","resolution":"1080P"}`,
+			wantAspectRatio: "9:16",
+			wantResolution:  "1080p",
+		},
+		{
+			name:            "metadata fallback",
+			body:            `{"model":"seedance-2-720p-933","prompt":"test","metadata":{"ratio":"4:3","resolution":"720P"}}`,
+			wantAspectRatio: "4:3",
+			wantResolution:  "720p",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			c := newJSONContext(t, testCase.body)
+			info := newRelayInfo()
+			adaptor := &TaskAdaptor{}
+			adaptor.Init(info)
+
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+			req, err := relaycommon.GetTaskRequest(c)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.wantAspectRatio, req.AspectRatio)
+			assert.Equal(t, testCase.wantResolution, req.Resolution)
+
+			body, err := adaptor.BuildRequestBody(c, info)
+			require.NoError(t, err)
+			payload := parseBuiltJSONBody(t, c, body)
+			require.NotNil(t, payload.AspectRatio)
+			require.NotNil(t, payload.Resolution)
+			assert.Equal(t, testCase.wantAspectRatio, *payload.AspectRatio)
+			assert.Equal(t, testCase.wantResolution, *payload.Resolution)
+		})
+	}
+}
+
+func TestValidateJSONRequestRejectsConflictingSizeAndRatio(t *testing.T) {
+	c := newJSONContext(t, `{"model":"seedance-2-720p-933","prompt":"test","size":"960x540","ratio":"9:16"}`)
+	info := newRelayInfo()
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+
+	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_video_output", taskErr.Code)
+	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	assert.Contains(t, taskErr.Message, "conflicts with aspect_ratio")
+}
+
 func TestValidateJSONRequestRejectsReferenceAfterText(t *testing.T) {
 	c := newJSONContext(t, `{
 		"model":"seedance-2-720p-933",

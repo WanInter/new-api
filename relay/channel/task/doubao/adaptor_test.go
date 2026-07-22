@@ -131,6 +131,79 @@ func TestBuildRequestBodyPreservesTopLevelAspectRatio(t *testing.T) {
 	assert.Equal(t, []string{"https://example.com/reference.png"}, payload.Images)
 }
 
+func TestCanonicalAspectRatioWinsLegacySizeForDoubaoPayloads(t *testing.T) {
+	testCases := []struct {
+		name     string
+		request  relaycommon.TaskSubmitReq
+		expected string
+	}{
+		{
+			name:     "pixel size uses its canonical public aspect ratio",
+			request:  relaycommon.TaskSubmitReq{Size: "960x540", AspectRatio: "16:9"},
+			expected: "16:9",
+		},
+		{
+			name:     "canonical aspect ratio wins legacy ratio-shaped size",
+			request:  relaycommon.TaskSubmitReq{Size: "16:9", AspectRatio: "9:16"},
+			expected: "9:16",
+		},
+		{
+			name:     "legacy ratio-shaped size remains supported without canonical aspect ratio",
+			request:  relaycommon.TaskSubmitReq{Size: "16:9"},
+			expected: "16:9",
+		},
+		{
+			name:     "pixel size does not fall back to metadata ratio",
+			request:  relaycommon.TaskSubmitReq{Size: "960×540", Metadata: map[string]any{"ratio": "1:1"}},
+			expected: "",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload, err := (&TaskAdaptor{}).convertToRequestPayload(&testCase.request)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.expected, payload.Ratio)
+		})
+	}
+}
+
+func TestByteforSizeUsesCanonicalAspectRatio(t *testing.T) {
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "bytefor-2.0-fast",
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "bytefor-2.0-fast"},
+	}
+
+	testCases := []struct {
+		name     string
+		request  relaycommon.TaskSubmitReq
+		expected string
+	}{
+		{
+			name:     "canonical aspect ratio wins legacy ratio-shaped size",
+			request:  relaycommon.TaskSubmitReq{Size: "16:9", AspectRatio: "9:16"},
+			expected: "9:16",
+		},
+		{
+			name:     "pixel size is not sent as bytefor size without canonical aspect ratio",
+			request:  relaycommon.TaskSubmitReq{Size: "960x540"},
+			expected: "",
+		},
+		{
+			name:     "pixel size uses its canonical public aspect ratio",
+			request:  relaycommon.TaskSubmitReq{Size: "960x540", AspectRatio: "16:9"},
+			expected: "16:9",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload := convertToByteforRequestPayload(&testCase.request, info)
+			assert.Equal(t, testCase.expected, payload.Size)
+		})
+	}
+}
+
 func TestMaxAPISeedanceBetaUsesVolcengineArkProtocol(t *testing.T) {
 	bodyJSON := `{
 		"model":"public-seedance-beta",
@@ -190,6 +263,91 @@ func TestMaxAPISeedanceBetaUsesVolcengineArkProtocol(t *testing.T) {
 	}, content[2])
 	assert.Equal(t, "reference_image", content[0].(map[string]interface{})["role"])
 	assert.Equal(t, "reference_video", content[1].(map[string]interface{})["role"])
+}
+
+func TestBuildRequestBodyMapsUnifiedMediaForArk(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"public-seedance",
+		"prompt":"combine every reference",
+		"image_urls":"https://example.com/image-alias.png",
+		"input_reference":"https://example.com/input-reference.png",
+		"input":{"image_references":[{"url":"https://example.com/reference.png"}]},
+		"videos":"https://example.com/direct-video.mp4",
+		"audio_url":"https://example.com/direct-audio.mp3",
+		"metadata":{"start_frames":"https://example.com/metadata-start.png"},
+		"content":[
+			{"type":"image_url","image_url":{"url":"https://example.com/content-image.png"},"role":"reference_image","name":"one"},
+			{"type":"video_url","video_url":{"url":"https://example.com/content-video.mp4"},"role":"reference_video","name":"two"},
+			{"type":"audio_url","audio_url":{"url":"https://example.com/content-audio.mp3"},"role":"reference_audio","name":"three"}
+		]
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "public-seedance",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "doubao-seedance-2-0-260128",
+			IsModelMapped:     true,
+		},
+	}
+	adaptor := &TaskAdaptor{}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+
+	requestBody, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(requestBody)
+	require.NoError(t, err)
+
+	var payload requestPayload
+	require.NoError(t, common.Unmarshal(data, &payload))
+	require.Equal(t, "doubao-seedance-2-0-260128", payload.Model)
+	require.Len(t, payload.Content, 10)
+	assert.Equal(t, "https://example.com/image-alias.png", payload.Content[0].ImageURL.URL)
+	assert.Equal(t, "https://example.com/input-reference.png", payload.Content[1].ImageURL.URL)
+	assert.Equal(t, "https://example.com/reference.png", payload.Content[2].ImageURL.URL)
+	assert.Equal(t, "https://example.com/metadata-start.png", payload.Content[3].ImageURL.URL)
+	assert.Equal(t, "https://example.com/direct-video.mp4", payload.Content[4].VideoURL.URL)
+	assert.Equal(t, "https://example.com/direct-audio.mp3", payload.Content[5].AudioURL.URL)
+	assert.Equal(t, "reference_image", payload.Content[6].Role)
+	assert.Equal(t, "one", payload.Content[6].Name)
+	assert.Equal(t, "reference_video", payload.Content[7].Role)
+	assert.Equal(t, "two", payload.Content[7].Name)
+	assert.Equal(t, "reference_audio", payload.Content[8].Role)
+	assert.Equal(t, "three", payload.Content[8].Name)
+	assert.Equal(t, ContentItem{Type: "text", Text: "combine every reference"}, payload.Content[9])
+
+	videoInputRatio, ok := GetVideoInputRatio("doubao-seedance-2-0-260128")
+	require.True(t, ok)
+	assert.Equal(t, map[string]float64{"video_input": videoInputRatio}, adaptor.EstimateBilling(c, info))
+}
+
+func TestConvertToRequestPayloadMapsDoubaoImageCompatibilityAliases(t *testing.T) {
+	testCases := []struct {
+		name    string
+		request relaycommon.TaskSubmitReq
+		url     string
+	}{
+		{name: "canonical images", request: relaycommon.TaskSubmitReq{Images: []string{"https://example.com/images.png"}}, url: "https://example.com/images.png"},
+		{name: "single image", request: relaycommon.TaskSubmitReq{Image: "https://example.com/image.png"}, url: "https://example.com/image.png"},
+		{name: "image URLs", request: relaycommon.TaskSubmitReq{ImageURLs: []string{"https://example.com/image-urls.png"}}, url: "https://example.com/image-urls.png"},
+		{name: "input reference", request: relaycommon.TaskSubmitReq{InputReference: "https://example.com/input-reference.png"}, url: "https://example.com/input-reference.png"},
+		{name: "input start frames", request: relaycommon.TaskSubmitReq{InputStartFrames: []string{"https://example.com/start-frame.png"}}, url: "https://example.com/start-frame.png"},
+		{name: "input image references", request: relaycommon.TaskSubmitReq{InputImageReferences: []string{"https://example.com/image-reference.png"}}, url: "https://example.com/image-reference.png"},
+		{name: "metadata start frames", request: relaycommon.TaskSubmitReq{MetadataStartFrames: []string{"https://example.com/metadata-start.png"}}, url: "https://example.com/metadata-start.png"},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload, err := (&TaskAdaptor{}).convertToRequestPayload(&testCase.request)
+
+			require.NoError(t, err)
+			require.NotEmpty(t, payload.Content)
+			assert.Equal(t, testCase.url, payload.Content[0].ImageURL.URL)
+		})
+	}
 }
 
 func TestConvertByteforRequestPreservesAllMediaAliasesAndDuplicates(t *testing.T) {

@@ -115,6 +115,9 @@ func (a *TaskAdaptor) validateJSONRequest(c *gin.Context, info *relaycommon.Rela
 
 	raw.Model = strings.TrimSpace(raw.Model)
 	raw.Prompt = prompt
+	if _, err := relaycommon.NormalizeTaskSubmitVideoOutput(&raw); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_video_output", http.StatusBadRequest)
+	}
 	aspectRatio, err := optionalJSONString(input, "aspect_ratio")
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
@@ -137,6 +140,12 @@ func (a *TaskAdaptor) validateJSONRequest(c *gin.Context, info *relaycommon.Rela
 		raw.Duration = *duration
 	}
 	storeValidatedTaskRequest(c, info, raw, images+videos+audios > 0)
+	if raw.AspectRatio != "" {
+		aspectRatio = &raw.AspectRatio
+	}
+	if raw.Resolution != "" {
+		resolution = &raw.Resolution
+	}
 
 	payload := axmgcJSONRequest{
 		Model:       raw.Model,

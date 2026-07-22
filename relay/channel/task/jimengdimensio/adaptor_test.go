@@ -1,13 +1,61 @@
 package jimengdimensio
 
 import (
+	"bytes"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestValidateMultipartRequestConsumesCanonicalImages(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("model", "jimeng-video-seedance-2.0-vip"))
+	require.NoError(t, writer.WriteField("prompt", "cat"))
+	require.NoError(t, writer.WriteField("images", "https://example.com/frame.png"))
+	require.NoError(t, writer.Close())
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(body.Bytes()))
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: "jimeng-video-seedance-2.0-vip"},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+
+	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
+	req, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	require.Equal(t, []string{"https://example.com/frame.png"}, req.Images)
+	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&req, info)
+	require.NoError(t, err)
+	require.Equal(t, "https://example.com/frame.png", payload.ImageFile1)
+}
+
+func TestValidateRequestRejectsUnsupportedVideoAndAudioReferences(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"jimeng-video-seedance-2.0-vip",
+		"prompt":"cat",
+		"videos":["https://example.com/reference.mp4"]
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}})
+	require.NotNil(t, taskErr)
+	require.Equal(t, "invalid_request", taskErr.Code)
+	require.Contains(t, taskErr.Message, "does not support video or audio")
+}
 
 func TestConvertToRequestPayloadKeepsMappedUpstreamModel(t *testing.T) {
 	adaptor := &TaskAdaptor{}
@@ -55,6 +103,86 @@ func TestConvertToRequestPayloadUsesAspectRatioMetadata(t *testing.T) {
 	}, info)
 	require.NoError(t, err)
 	require.Equal(t, "16:9", payload.Ratio)
+}
+
+func TestValidateRequestPrefersTopLevelOutputFields(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"jimeng-video-seedance-2.0-vip",
+		"prompt":"cat",
+		"ratio":"9:16",
+		"aspect_ratio":"9:16",
+		"resolution":"1080p",
+		"metadata":{"aspect_ratio":"16:9","resolution":"720p"}
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "jimeng-video-seedance-2.0-vip",
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "jimeng-video-seedance-2.0-vip"},
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+	adaptor := &TaskAdaptor{}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+
+	req, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	require.Equal(t, "9:16", req.AspectRatio)
+	require.Empty(t, req.Ratio)
+	require.Equal(t, "1080p", req.Resolution)
+
+	payload, err := adaptor.convertToRequestPayload(&req, info)
+	require.NoError(t, err)
+	require.Equal(t, "9:16", payload.Ratio)
+	require.Equal(t, "1080p", payload.Resolution)
+}
+
+func TestValidateRequestRejectsConflictingVideoOutputAliases(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"jimeng-video-seedance-2.0-vip",
+		"prompt":"cat",
+		"ratio":"16:9",
+		"aspectRatio":"9:16"
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
+
+	require.NotNil(t, taskErr)
+	require.Equal(t, "invalid_video_output", taskErr.Code)
+	require.Contains(t, taskErr.Message, "conflicts with aspect_ratio")
+}
+
+func TestValidateRequestRejectsUnsupportedPixelSize(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"jimeng-video-seedance-2.0-vip",
+		"prompt":"cat",
+		"size":"960x540",
+		"resolution":"720p"
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}})
+
+	require.NotNil(t, taskErr)
+	require.Equal(t, "invalid_video_output", taskErr.Code)
+	require.Contains(t, taskErr.Message, `size "960x540" is not supported`)
+}
+
+func TestConvertToRequestPayloadMapsDocumentedLegacySize(t *testing.T) {
+	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Prompt: "cat",
+		Size:   "1280x720",
+	}, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "jimeng-video-seedance-2.0-vip"}})
+
+	require.NoError(t, err)
+	require.Equal(t, "720p", payload.Resolution)
 }
 
 func TestConvertToOpenAIVideoUsesSoraCompatibleResponseShape(t *testing.T) {

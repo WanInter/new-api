@@ -198,6 +198,11 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			return nil, taskErr
 		}
 	}
+	if info.RelayMode == relayconstant.RelayModeVideoSubmit {
+		if err := relaycommon.ValidateTaskMultipartFiles(c, info); err != nil {
+			return nil, service.TaskErrorWrapperLocal(err, "invalid_media_input", http.StatusBadRequest)
+		}
+	}
 	// BillingRequestInput is frozen by tiered pricing. Rebuild it on every task
 	// attempt so a retry on a different adaptor/profile cannot reuse stale input.
 	info.BillingRequestInput = nil

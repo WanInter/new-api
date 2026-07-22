@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 )
@@ -20,10 +21,13 @@ type VideoRequestFeatures struct {
 	Videos      int    `json:"videos"`
 	Audios      int    `json:"audios"`
 	Duration    *int   `json:"duration,omitempty"`
+	AspectRatio string `json:"aspect_ratio,omitempty"`
+	Size        string `json:"size,omitempty"`
 	Resolution  string `json:"resolution,omitempty"`
 	ContentType string `json:"content_type,omitempty"`
 
-	profiledContent *videoMediaCounts
+	profiledContent         *videoMediaCounts
+	providerResolutionHints videoProviderResolutionHints
 }
 
 type videoMediaCounts struct {
@@ -34,13 +38,25 @@ type videoMediaCounts struct {
 	Invalid bool
 }
 
+// videoProviderResolutionHints holds nested wire-format fields that are not
+// part of the public video contract. They are deliberately kept private so
+// API responses and routing simulation remain channel-agnostic.
+type videoProviderResolutionHints struct {
+	soraParameters string
+	aggcParams     string
+}
+
 type VideoConstraintViolation struct {
-	Code                 string   `json:"code"`
-	Field                string   `json:"field,omitempty"`
-	Actual               *int     `json:"actual,omitempty"`
-	Expected             *int     `json:"expected,omitempty"`
-	Resolution           string   `json:"resolution,omitempty"`
-	SupportedResolutions []string `json:"supported_resolutions,omitempty"`
+	Code                  string   `json:"code"`
+	Field                 string   `json:"field,omitempty"`
+	Actual                *int     `json:"actual,omitempty"`
+	Expected              *int     `json:"expected,omitempty"`
+	AspectRatio           string   `json:"aspect_ratio,omitempty"`
+	SupportedAspectRatios []string `json:"supported_aspect_ratios,omitempty"`
+	Size                  string   `json:"size,omitempty"`
+	SupportedSizes        []string `json:"supported_sizes,omitempty"`
+	Resolution            string   `json:"resolution,omitempty"`
+	SupportedResolutions  []string `json:"supported_resolutions,omitempty"`
 }
 
 type EffectiveVideoCapability struct {
@@ -102,6 +118,22 @@ func MatchVideoCapability(features VideoRequestFeatures, capability dto.VideoMod
 			violations = append(violations, matchVideoMediaRange("duration", *features.Duration, capability.Duration)...)
 		}
 	}
+	if features.AspectRatio != "" && len(capability.AspectRatios) > 0 && !containsVideoAspectRatio(capability.AspectRatios, features.AspectRatio) {
+		violations = append(violations, VideoConstraintViolation{
+			Code:                  "aspect_ratio_not_supported",
+			Field:                 "aspect_ratio",
+			AspectRatio:           features.AspectRatio,
+			SupportedAspectRatios: append([]string(nil), capability.AspectRatios...),
+		})
+	}
+	if features.Size != "" && len(capability.Sizes) > 0 && !containsVideoSize(capability.Sizes, features.Size) {
+		violations = append(violations, VideoConstraintViolation{
+			Code:           "size_not_supported",
+			Field:          "size",
+			Size:           features.Size,
+			SupportedSizes: append([]string(nil), capability.Sizes...),
+		})
+	}
 	if features.Resolution != "" && len(capability.Resolutions) > 0 && !containsVideoResolution(capability.Resolutions, features.Resolution) {
 		violations = append(violations, VideoConstraintViolation{
 			Code:                 "resolution_not_supported",
@@ -127,6 +159,24 @@ func MatchVideoCapability(features VideoRequestFeatures, capability dto.VideoMod
 	return violations
 }
 
+func containsVideoAspectRatio(aspectRatios []string, aspectRatio string) bool {
+	for _, supported := range aspectRatios {
+		if supported == aspectRatio {
+			return true
+		}
+	}
+	return false
+}
+
+func containsVideoSize(sizes []string, size string) bool {
+	for _, supported := range sizes {
+		if supported == size {
+			return true
+		}
+	}
+	return false
+}
+
 func containsVideoResolution(resolutions []string, resolution string) bool {
 	for _, supported := range resolutions {
 		if supported == resolution {
@@ -146,6 +196,23 @@ func videoFeaturesForCapability(features VideoRequestFeatures, capability dto.Vi
 	features.Images = features.profiledContent.Images
 	features.Videos = features.profiledContent.Videos
 	features.Audios = features.profiledContent.Audios
+	return features
+}
+
+// videoFeaturesForChannelCapability lets a provider-specific nested resolution
+// participate in matching only for the channel that owns that wire shape. A
+// standard top-level or metadata resolution always wins over a provider hint.
+func videoFeaturesForChannelCapability(features VideoRequestFeatures, channel *model.Channel) VideoRequestFeatures {
+	if channel == nil || features.Resolution != "" {
+		return features
+	}
+
+	switch channel.Type {
+	case constant.ChannelTypeSora, constant.ChannelTypeOpenAI:
+		features.Resolution = features.providerResolutionHints.soraParameters
+	case constant.ChannelTypeAGGC:
+		features.Resolution = features.providerResolutionHints.aggcParams
+	}
 	return features
 }
 
@@ -204,7 +271,9 @@ func EvaluateChannelVideoRouting(channel *model.Channel, publicModel string, fea
 
 	result.Capability = &effective.Capability
 	result.Sources = effective.Sources
-	result.Violations = MatchVideoCapability(videoFeaturesForCapability(features, effective.Capability), effective.Capability)
+	features = videoFeaturesForCapability(features, effective.Capability)
+	features = videoFeaturesForChannelCapability(features, channel)
+	result.Violations = MatchVideoCapability(features, effective.Capability)
 	result.Eligible = len(result.Violations) == 0
 	return result
 }

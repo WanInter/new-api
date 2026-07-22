@@ -31,6 +31,17 @@ const (
 
 var ModelList = []string{"seedance-2.0"}
 
+// AGGC accepts a quality label in params.resolution, rather than an arbitrary
+// output geometry. These exact legacy sizes were historically accepted by this
+// adaptor. Keep the compatibility mapping explicit so an unknown WxH value is
+// never silently turned into a made-up quality tier.
+var aggcLegacySizeResolutions = map[string]string{
+	"1280x720":  "720p",
+	"720x1280":  "720p",
+	"1920x1080": "1080p",
+	"1080x1920": "1080p",
+}
+
 type scalarOrStringList []string
 
 func (values *scalarOrStringList) UnmarshalJSON(data []byte) error {
@@ -65,8 +76,8 @@ type jsonRequest struct {
 	ModelID          string                    `json:"model_id,omitempty"`
 	Type             string                    `json:"type,omitempty"`
 	Image            string                    `json:"image,omitempty"`
-	Images           []string                  `json:"images,omitempty"`
-	ImageURLs        []string                  `json:"image_urls,omitempty"`
+	Images           scalarOrStringList        `json:"images,omitempty"`
+	ImageURLs        scalarOrStringList        `json:"image_urls,omitempty"`
 	Video            scalarOrStringList        `json:"video,omitempty"`
 	Videos           scalarOrStringList        `json:"videos,omitempty"`
 	VideoURL         scalarOrStringList        `json:"video_url,omitempty"`
@@ -83,6 +94,7 @@ type jsonRequest struct {
 	AspectRatio      string                    `json:"aspect_ratio,omitempty"`
 	AspectRatioCamel string                    `json:"aspectRatio,omitempty"`
 	Ratio            string                    `json:"ratio,omitempty"`
+	Resolution       string                    `json:"resolution,omitempty"`
 	Params           map[string]any            `json:"params,omitempty"`
 	Metadata         map[string]any            `json:"metadata,omitempty"`
 }
@@ -155,6 +167,10 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err := common.UnmarshalBodyReusable(c, &raw); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
+	var commonRequest relaycommon.TaskSubmitReq
+	if err := common.UnmarshalBodyReusable(c, &commonRequest); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
 	prompt := strings.TrimSpace(raw.Prompt)
 	if prompt == "" {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("prompt is required"), "invalid_request", http.StatusBadRequest)
@@ -168,18 +184,80 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		metadata = map[string]any{}
 	}
 	copyAggcRawMetadata(raw, metadata)
+	appendAggcContentMedia(metadata, commonRequest.Content)
 	req := relaycommon.TaskSubmitReq{
-		Prompt:   prompt,
-		Model:    modelName,
-		Images:   mergeStrings(raw.Images, singleString(raw.Image), raw.ImageURLs),
-		Duration: normalizeDuration(raw.Duration, raw.Seconds, metadata),
-		Seconds:  raw.Seconds,
-		Metadata: metadata,
+		Prompt:           prompt,
+		Model:            modelName,
+		Images:           mergeStrings([]string(raw.Images), singleString(raw.Image), []string(raw.ImageURLs), aggcImageCompatibilityInputs(&commonRequest)),
+		Size:             raw.Size,
+		Ratio:            raw.Ratio,
+		AspectRatio:      raw.AspectRatio,
+		AspectRatioAlias: raw.AspectRatioCamel,
+		Resolution:       raw.Resolution,
+		Duration:         normalizeDuration(raw.Duration, raw.Seconds, metadata),
+		Seconds:          raw.Seconds,
+		Metadata:         metadata,
+	}
+	if _, err := relaycommon.NormalizeTaskSubmitVideoOutput(&req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_video_output", http.StatusBadRequest)
 	}
 	c.Set("task_request", req)
 	info.Action = constant.TaskActionTextGenerate
 	if len(req.Images) > 0 || len(stringList(metadata["video_urls"])) > 0 || len(stringList(metadata["audio_urls"])) > 0 {
 		info.Action = constant.TaskActionGenerate
+	}
+	return nil
+}
+
+func aggcImageCompatibilityInputs(req *relaycommon.TaskSubmitReq) []string {
+	if req == nil {
+		return nil
+	}
+	images := mergeStrings(
+		singleString(req.InputReference),
+		req.InputStartFrames,
+		req.InputImageReferences,
+		req.MetadataStartFrames,
+	)
+	for _, item := range req.Content {
+		if item.ImageURL != nil {
+			images = mergeStrings(images, singleString(item.ImageURL.URL))
+		}
+	}
+	return images
+}
+
+func appendAggcContentMedia(metadata map[string]any, content []relaycommon.TaskContentItem) {
+	if len(content) == 0 {
+		return
+	}
+	videos := make([]string, 0)
+	audios := make([]string, 0)
+	for _, item := range content {
+		if item.VideoURL != nil {
+			videos = append(videos, item.VideoURL.URL)
+		}
+		if item.AudioURL != nil {
+			audios = append(audios, item.AudioURL.URL)
+		}
+	}
+	if len(videos) > 0 {
+		metadata["video_urls"] = mergeStrings(stringList(metadata["video_urls"]), videos)
+	}
+	if len(audios) > 0 {
+		metadata["audio_urls"] = mergeStrings(stringList(metadata["audio_urls"]), audios)
+	}
+}
+
+// ValidateMappedRequest runs after the final channel/model has been selected,
+// before billing. AGGC cannot send arbitrary pixel dimensions as resolution.
+func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, _ *relaycommon.RelayInfo) *dto.TaskError {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "get_task_request_failed", http.StatusBadRequest)
+	}
+	if _, err := resolveAggcRequestResolution(&req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_video_output", http.StatusBadRequest)
 	}
 	return nil
 }
@@ -443,13 +521,17 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 		upstreamModelName = info.ChannelMeta.UpstreamModelName
 	}
 	modelName := firstNonEmpty(upstreamModelName, req.Model)
-	aspectRatio := normalizeAspectRatio(req.Metadata)
+	resolution, err := resolveAggcRequestResolution(req)
+	if err != nil {
+		return nil, err
+	}
+	aspectRatio := normalizeAspectRatio(req.AspectRatio, req.Ratio, req.Metadata)
 	if aspectRatio == "" {
 		aspectRatio = aspectRatioFromSizeOrOrientation(normalizeSize(req.Size, req.Metadata), stringValue(req.Metadata["orientation"]))
 	}
 	params := requestParams{
 		Duration:    normalizeDuration(req.Duration, req.Seconds, req.Metadata),
-		Resolution:  normalizeResolution(req.Metadata, req.Size),
+		Resolution:  resolution,
 		Orientation: stringValue(req.Metadata["orientation"]),
 		Watermark:   boolPointer(req.Metadata["watermark"]),
 		ImageURLs:   mergeStrings(req.Images, stringList(req.Metadata["image_urls"])),
@@ -518,38 +600,90 @@ func normalizeDuration(duration int, seconds string, metadata map[string]any) in
 	return duration
 }
 
-func normalizeAspectRatio(metadata map[string]any) string {
-	return firstNonEmpty(stringValue(metadata["aspectRatio"]), stringValue(metadata["aspect_ratio"]), stringValue(metadata["ratio"]))
+func normalizeAspectRatio(aspectRatio, ratio string, metadata map[string]any) string {
+	return firstNonEmpty(aspectRatio, ratio, stringValue(metadata["aspectRatio"]), stringValue(metadata["aspect_ratio"]), stringValue(metadata["ratio"]))
 }
 
 func normalizeSize(size string, metadata map[string]any) string {
 	return firstNonEmpty(size, stringValue(metadata["size"]))
 }
 
-func normalizeResolution(metadata map[string]any, size string) string {
-	resolution := firstNonEmpty(stringValue(metadata["resolution"]), stringValue(metadata["分辨率"]))
-	if resolution != "" {
-		return resolution
+func resolveAggcRequestResolution(req *relaycommon.TaskSubmitReq) (string, error) {
+	if req == nil {
+		return "", fmt.Errorf("video request is required")
 	}
-	return resolutionFromSize(normalizeSize(size, metadata))
+
+	if value := strings.TrimSpace(req.Resolution); value != "" {
+		return aggcResolutionLabel(value, "resolution")
+	}
+	if value, ok, err := aggcMetadataString(req.Metadata, "resolution"); err != nil {
+		return "", err
+	} else if ok && strings.TrimSpace(value) != "" {
+		return aggcResolutionLabel(value, "metadata.resolution")
+	}
+	if value, ok, err := aggcMetadataString(req.Metadata, "分辨率"); err != nil {
+		return "", err
+	} else if ok && strings.TrimSpace(value) != "" {
+		return aggcResolutionLabel(value, "metadata.分辨率")
+	}
+	if value := strings.TrimSpace(req.Size); value != "" {
+		return parseAggcLegacySize(value)
+	}
+	// Direct adaptor callers from older integrations may still provide size in
+	// metadata. Normalized relay requests have VideoOutput set, so they must
+	// rely on the canonical top-level field instead.
+	if req.VideoOutput == nil {
+		if value, ok, err := aggcMetadataString(req.Metadata, "size"); err != nil {
+			return "", err
+		} else if ok && strings.TrimSpace(value) != "" {
+			return parseAggcLegacySize(value)
+		}
+	}
+	return "", nil
 }
 
-func resolutionFromSize(size string) string {
-	s := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(size, "×", "x")))
-	parts := strings.Split(s, "x")
-	if len(parts) != 2 {
-		return ""
+func aggcMetadataString(metadata map[string]any, key string) (string, bool, error) {
+	if metadata == nil {
+		return "", false, nil
 	}
-	w, errW := strconv.Atoi(strings.TrimSpace(parts[0]))
-	h, errH := strconv.Atoi(strings.TrimSpace(parts[1]))
-	if errW != nil || errH != nil || w <= 0 || h <= 0 {
-		return ""
+	value, ok := metadata[key]
+	if !ok || value == nil {
+		return "", false, nil
 	}
-	shortSide := w
-	if h < shortSide {
-		shortSide = h
+	stringValue, ok := value.(string)
+	if !ok {
+		return "", false, fmt.Errorf("metadata.%s must be a string", key)
 	}
-	return fmt.Sprintf("%dp", shortSide)
+	return stringValue, true, nil
+}
+
+func aggcResolutionLabel(value, field string) (string, error) {
+	resolution, err := relaycommon.NormalizeVideoOutputResolution(value)
+	if err != nil {
+		return "", fmt.Errorf("%s %q is not supported by AGGC; use a quality label such as 720p", field, value)
+	}
+	return resolution, nil
+}
+
+func parseAggcLegacySize(size string) (string, error) {
+	// Historical clients sometimes used size: "720p". It remains an explicit
+	// quality label, not a pixel-size inference.
+	if resolution, err := aggcResolutionLabel(size, "size"); err == nil {
+		return resolution, nil
+	}
+
+	canonical, _, _, pixelSize, err := relaycommon.NormalizeVideoPixelSize(size)
+	if err != nil {
+		return "", fmt.Errorf("size %q is not a supported AGGC legacy size: %w", size, err)
+	}
+	if !pixelSize {
+		return "", fmt.Errorf("size %q is not supported by AGGC; use resolution instead", size)
+	}
+	resolution, ok := aggcLegacySizeResolutions[canonical]
+	if !ok {
+		return "", fmt.Errorf("size %q is not supported by AGGC; use resolution instead", size)
+	}
+	return resolution, nil
 }
 
 func aspectRatioFromSizeOrOrientation(size, orientation string) string {

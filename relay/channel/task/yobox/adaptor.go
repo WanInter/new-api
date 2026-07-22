@@ -123,8 +123,31 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		return service.TaskErrorWrapperLocal(fmt.Errorf("model field is required"), "missing_model", http.StatusBadRequest)
 	}
 	mergeYoboxRequestMetadata(c, &req)
+	if _, err := relaycommon.NormalizeTaskSubmitVideoOutput(&req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_video_output", http.StatusBadRequest)
+	}
+	if err := validateYoboxSeedance20Size(&req, info); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_video_output", http.StatusBadRequest)
+	}
 	info.Action = constant.TaskActionGenerate
 	c.Set("task_request", req)
+	return nil
+}
+
+// ValidateMappedRequest runs after channel model mapping. The legacy Seedance2
+// wire format accepts image references only, so video/audio inputs must fail
+// before pricing instead of being silently omitted from the outgoing payload.
+func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "get_task_request_failed", http.StatusBadRequest)
+	}
+	if err := validateYoboxSeedance2Media(&req, info); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	if err := validateYoboxSeedance20Size(&req, info); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_video_output", http.StatusBadRequest)
+	}
 	return nil
 }
 
@@ -298,18 +321,7 @@ func (a *TaskAdaptor) GetModelList() []string { return modelList }
 func (a *TaskAdaptor) GetChannelName() string { return "yobox" }
 
 func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (any, error) {
-	modelName := ""
-	if info != nil {
-		if info.ChannelMeta != nil {
-			modelName = strings.TrimSpace(info.UpstreamModelName)
-		}
-		if modelName == "" {
-			modelName = strings.TrimSpace(info.OriginModelName)
-		}
-	}
-	if modelName == "" {
-		modelName = strings.TrimSpace(req.Model)
-	}
+	modelName := yoboxRequestModelName(req, info)
 	if modelName == "" {
 		modelName = "seedance2"
 	}
@@ -357,16 +369,17 @@ func convertSeedance20Payload(req *relaycommon.TaskSubmitReq, modelName string) 
 	setYoboxResolution(input, req)
 
 	images := yoboxRequestImages(req, false)
+	_, contentVideos, contentAudios := yoboxContentMediaURLs(req.Content)
 	if _, hasInputReferences := input["image_references"]; !hasInputReferences {
 		images = append(images, req.InputImageReferences...)
 	}
 	if references := buildYoboxImageReferences(images); len(references) > 0 {
 		input["image_references"] = mergeYoboxReferences(input["image_references"], references)
 	}
-	if references := buildYoboxMediaReferences(req.Videos, req.VideoURLs); len(references) > 0 {
+	if references := buildYoboxMediaReferences(req.Videos, req.VideoURLs, contentVideos); len(references) > 0 {
 		input["video_references"] = mergeYoboxReferences(input["video_references"], references)
 	}
-	if references := buildYoboxMediaReferences(req.Audios, req.AudioURLs); len(references) > 0 {
+	if references := buildYoboxMediaReferences(req.Audios, req.AudioURLs, contentAudios); len(references) > 0 {
 		input["audio_references"] = mergeYoboxReferences(input["audio_references"], references)
 	}
 	if _, hasStartFrames := input["start_frames"]; !hasStartFrames && len(req.InputStartFrames) > 0 {
@@ -422,6 +435,69 @@ func isYoboxSeedance2Model(modelName string) bool {
 	default:
 		return false
 	}
+}
+
+func validateYoboxSeedance2Media(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) error {
+	if req == nil || !isYoboxSeedance2Model(yoboxRequestModelName(req, info)) {
+		return nil
+	}
+	if len(req.Videos) > 0 || len(req.VideoURLs) > 0 || len(req.Audios) > 0 || len(req.AudioURLs) > 0 {
+		return fmt.Errorf("Yobox Seedance2 does not support video or audio reference inputs")
+	}
+	for _, item := range req.Content {
+		if item.VideoURL != nil || item.AudioURL != nil {
+			return fmt.Errorf("Yobox Seedance2 does not support video or audio reference inputs")
+		}
+	}
+	return nil
+}
+
+func isYoboxSeedance20Model(modelName string) bool {
+	switch strings.TrimSpace(modelName) {
+	case "seedance-2.0", "seedance-2.0-fast", "seedance-2.0-noface", "seedance-2.0-fast-noface":
+		return true
+	default:
+		return false
+	}
+}
+
+func yoboxRequestModelName(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) string {
+	if info != nil {
+		if info.ChannelMeta != nil {
+			if modelName := strings.TrimSpace(info.UpstreamModelName); modelName != "" {
+				return modelName
+			}
+		}
+		if modelName := strings.TrimSpace(info.OriginModelName); modelName != "" {
+			return modelName
+		}
+	}
+	if req == nil {
+		return ""
+	}
+	return strings.TrimSpace(req.Model)
+}
+
+// Seedance 2.0 accepts aspect ratio and resolution as independent fields.
+// Its legacy size compatibility is limited to the aliases below, so an
+// unknown value must not be silently discarded or reinterpreted.
+func validateYoboxSeedance20Size(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) error {
+	if req == nil || !isYoboxSeedance20Model(yoboxRequestModelName(req, info)) {
+		return nil
+	}
+
+	size := yoboxRequestSize(req)
+	if size == "" || (yoboxAspectRatioFromSize(size) != "" && yoboxResolutionFromSize(size) != "") {
+		return nil
+	}
+	return fmt.Errorf("size %q is not supported for Yobox Seedance 2.0; use aspect_ratio and resolution without size", size)
+}
+
+func yoboxRequestSize(req *relaycommon.TaskSubmitReq) string {
+	if req == nil {
+		return ""
+	}
+	return firstNonEmpty(req.Size, stringValue(req.Metadata["size"]))
 }
 
 func copyYoboxMetadata(metadata map[string]any, excludedKeys ...string) map[string]any {
@@ -503,18 +579,26 @@ func setYoboxAspectRatio(input map[string]any, req *relaycommon.TaskSubmitReq) {
 	if req.AspectRatio != "" {
 		input["aspect_ratio"] = req.AspectRatio
 		delete(input, "ratio")
+		delete(input, "aspectRatio")
 		return
 	}
 	if _, hasAspectRatio := input["aspect_ratio"]; hasAspectRatio {
 		delete(input, "ratio")
+		delete(input, "aspectRatio")
 		return
 	}
 	if ratio, ok := input["ratio"]; ok {
 		input["aspect_ratio"] = ratio
 		delete(input, "ratio")
+		delete(input, "aspectRatio")
 		return
 	}
-	if aspectRatio := yoboxAspectRatioFromSize(req.Size); aspectRatio != "" {
+	if aspectRatio, ok := input["aspectRatio"]; ok {
+		input["aspect_ratio"] = aspectRatio
+		delete(input, "aspectRatio")
+		return
+	}
+	if aspectRatio := yoboxAspectRatioFromSize(yoboxRequestSize(req)); aspectRatio != "" {
 		input["aspect_ratio"] = aspectRatio
 	}
 }
@@ -527,7 +611,7 @@ func setYoboxResolution(input map[string]any, req *relaycommon.TaskSubmitReq) {
 	if _, hasResolution := input["resolution"]; hasResolution {
 		return
 	}
-	if resolution := yoboxResolutionFromSize(req.Size); resolution != "" {
+	if resolution := yoboxResolutionFromSize(yoboxRequestSize(req)); resolution != "" {
 		input["resolution"] = resolution
 	}
 }
@@ -545,7 +629,24 @@ func yoboxRequestImages(req *relaycommon.TaskSubmitReq, includeInputReferences b
 	if includeInputReferences {
 		images = append(images, req.InputImageReferences...)
 	}
+	contentImages, _, _ := yoboxContentMediaURLs(req.Content)
+	images = append(images, contentImages...)
 	return images
+}
+
+func yoboxContentMediaURLs(content []relaycommon.TaskContentItem) (images, videos, audios []string) {
+	for _, item := range content {
+		if item.ImageURL != nil && strings.TrimSpace(item.ImageURL.URL) != "" {
+			images = append(images, strings.TrimSpace(item.ImageURL.URL))
+		}
+		if item.VideoURL != nil && strings.TrimSpace(item.VideoURL.URL) != "" {
+			videos = append(videos, strings.TrimSpace(item.VideoURL.URL))
+		}
+		if item.AudioURL != nil && strings.TrimSpace(item.AudioURL.URL) != "" {
+			audios = append(audios, strings.TrimSpace(item.AudioURL.URL))
+		}
+	}
+	return images, videos, audios
 }
 
 func mergeYoboxReferences(existing any, additions []map[string]any) any {

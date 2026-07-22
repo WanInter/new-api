@@ -341,7 +341,7 @@ func appendOtoyAudioValues(target []string, values map[string][]string) []string
 }
 
 func otoyAspectRatioAndResolutionFromForm(values map[string][]string) (string, string, bool) {
-	if len(values["aspect_ratio"]) > 0 || len(values["resolution"]) > 0 {
+	if len(values["resolution"]) > 0 {
 		return "", "", false
 	}
 	return otoyAspectRatioAndResolutionFromSize(firstFormValue(values, "size"))
@@ -365,14 +365,16 @@ func applyOtoySeedanceMiniReferenceRequest(body map[string]interface{}) {
 }
 
 func applyOtoySizeMapping(body map[string]interface{}) {
-	if strings.TrimSpace(stringValue(body["aspect_ratio"])) != "" || strings.TrimSpace(stringValue(body["resolution"])) != "" {
+	if strings.TrimSpace(stringValue(body["resolution"])) != "" {
 		return
 	}
 	aspectRatio, resolution, ok := otoyAspectRatioAndResolutionFromSize(stringValue(body["size"]))
 	if !ok {
 		return
 	}
-	body["aspect_ratio"] = aspectRatio
+	if strings.TrimSpace(stringValue(body["aspect_ratio"])) == "" {
+		body["aspect_ratio"] = aspectRatio
+	}
 	body["resolution"] = resolution
 	delete(body, "size")
 }
