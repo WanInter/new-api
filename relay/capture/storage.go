@@ -30,12 +30,16 @@ var (
 
 func SetStorage(next Storage) {
 	storageMu.Lock()
-	defer storageMu.Unlock()
+	previous := storage
 	if next == nil {
 		storage = disabledStorage{}
-		return
+	} else {
+		storage = next
 	}
-	storage = next
+	storageMu.Unlock()
+	if closable, ok := previous.(interface{ Close() }); ok {
+		closable.Close()
+	}
 }
 
 func GetStorage() Storage {

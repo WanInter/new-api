@@ -15,13 +15,22 @@ import (
 const manifestFilename = "manifest.json"
 
 type LocalStorage struct {
-	baseDir string
+	baseDir     string
+	compression PayloadCompression
 }
 
 func NewLocalStorage(baseDir string) (*LocalStorage, error) {
+	return NewLocalStorageWithCompression(baseDir, PayloadCompressionNone)
+}
+
+func NewLocalStorageWithCompression(baseDir string, compression PayloadCompression) (*LocalStorage, error) {
 	baseDir = strings.TrimSpace(baseDir)
 	if baseDir == "" {
 		return nil, fmt.Errorf("relay capture local directory is required")
+	}
+	compression, err := ParsePayloadCompression(string(compression))
+	if err != nil {
+		return nil, err
 	}
 	abs, err := filepath.Abs(baseDir)
 	if err != nil {
@@ -30,7 +39,7 @@ func NewLocalStorage(baseDir string) (*LocalStorage, error) {
 	if err := os.MkdirAll(abs, 0o700); err != nil {
 		return nil, fmt.Errorf("create relay capture directory: %w", err)
 	}
-	return &LocalStorage{baseDir: abs}, nil
+	return &LocalStorage{baseDir: abs, compression: compression}, nil
 }
 
 func (s *LocalStorage) Save(_ context.Context, artifact Artifact) error {
@@ -59,12 +68,14 @@ func (s *LocalStorage) Save(_ context.Context, artifact Artifact) error {
 	defer os.RemoveAll(tempDir)
 
 	if artifact.Metadata.Request.Stored {
-		if err := writeEncryptedPart(filepath.Join(tempDir, PartRequest+".enc"), artifact.RequestBody); err != nil {
+		artifact.Metadata.Request.Compression = string(s.compression)
+		if err := writeEncryptedPart(filepath.Join(tempDir, PartRequest+".enc"), artifact.RequestBody, s.compression); err != nil {
 			return err
 		}
 	}
 	if artifact.Metadata.Response.Stored {
-		if err := writeEncryptedPart(filepath.Join(tempDir, PartResponse+".enc"), artifact.ResponseBody); err != nil {
+		artifact.Metadata.Response.Compression = string(s.compression)
+		if err := writeEncryptedPart(filepath.Join(tempDir, PartResponse+".enc"), artifact.ResponseBody, s.compression); err != nil {
 			return err
 		}
 	}
@@ -109,7 +120,11 @@ func (s *LocalStorage) Open(_ context.Context, id string, part string) (io.ReadC
 	if !partMeta.Stored {
 		return nil, metadata, os.ErrNotExist
 	}
-	body, err := readEncryptedPart(filepath.Join(directory, part+".enc"))
+	compression, err := ParsePayloadCompression(partMeta.Compression)
+	if err != nil {
+		return nil, metadata, err
+	}
+	body, err := readEncryptedPart(filepath.Join(directory, part+".enc"), compression)
 	if err != nil {
 		return nil, metadata, err
 	}
@@ -183,24 +198,20 @@ func (s *LocalStorage) findMetadata(filter ListFilter, id string) ([]Metadata, [
 	return items, directories, nil
 }
 
-func writeEncryptedPart(path string, body []byte) error {
-	ciphertext, err := common.EncryptSecret(string(body), "relay-capture")
+func writeEncryptedPart(path string, body []byte, compression PayloadCompression) error {
+	ciphertext, err := encryptPart(body, compression)
 	if err != nil {
 		return err
 	}
 	return writeSecureFile(path, []byte(ciphertext))
 }
 
-func readEncryptedPart(path string) ([]byte, error) {
+func readEncryptedPart(path string, compression PayloadCompression) ([]byte, error) {
 	ciphertext, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	plaintext, err := common.DecryptSecret(string(ciphertext), "relay-capture")
-	if err != nil {
-		return nil, err
-	}
-	return []byte(plaintext), nil
+	return decryptPart(ciphertext, compression)
 }
 
 func writeSecureFile(path string, data []byte) error {

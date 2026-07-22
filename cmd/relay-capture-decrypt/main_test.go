@@ -1,7 +1,9 @@
 package main
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"os"
 	"path/filepath"
 	"testing"
@@ -120,6 +122,28 @@ func TestRunFailsWithDifferentSecret(t *testing.T) {
 	require.Contains(t, stderr.String(), "no complete conversations were exported")
 }
 
+func TestRunExportsSegmentArchiveAsJSONL(t *testing.T) {
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "offline-segment-decrypt-test-secret"
+	t.Cleanup(func() { common.CryptoSecret = previousSecret })
+	t.Setenv("CRYPTO_SECRET", common.CryptoSecret)
+
+	captureRoot := t.TempDir()
+	archive := filepath.Join(captureRoot, "2026", "07", "22", "channel-1", "segments", "segment-fixture.tar.gz.enc")
+	writeSegmentFixture(t, archive)
+	output := filepath.Join(t.TempDir(), "conversations.jsonl")
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	require.Zero(t, run([]string{"--capture-dir", captureRoot, "--output", output}, &stdout, &stderr), stderr.String())
+	require.Contains(t, stdout.String(), "exported 1 conversation")
+	body, err := os.ReadFile(output)
+	require.NoError(t, err)
+	var record conversation
+	require.NoError(t, common.Unmarshal(bytes.TrimSpace(body), &record))
+	require.Equal(t, []map[string]any{{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}}, record.Messages)
+}
+
 func writeFixture(t *testing.T, directory string) {
 	t.Helper()
 	request, err := common.EncryptSecret(`{"messages":[{"role":"user","content":"hello"}]}`, relayCapturePurpose)
@@ -131,4 +155,36 @@ func writeFixture(t *testing.T, directory string) {
 	require.NoError(t, os.WriteFile(filepath.Join(directory, "manifest.json"), manifest, 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(directory, "request.enc"), []byte(request), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(directory, "response.enc"), []byte(response), 0o600))
+}
+
+func writeSegmentFixture(t *testing.T, filename string) {
+	t.Helper()
+	manifest := captureManifest{
+		ID:        "segment-fixture",
+		CreatedAt: 100,
+		Protocol:  "openai.chat_completions",
+		Request:   capturePart{Stored: true},
+		Response:  capturePart{Stored: true},
+	}
+	manifestBody, err := common.Marshal(manifest)
+	require.NoError(t, err)
+	var compressed bytes.Buffer
+	gzipWriter := gzip.NewWriter(&compressed)
+	tarWriter := tar.NewWriter(gzipWriter)
+	writeArchiveFile(t, tarWriter, "segment-fixture/manifest.json", manifestBody)
+	writeArchiveFile(t, tarWriter, "segment-fixture/request", []byte(`{"messages":[{"role":"user","content":"hello"}]}`))
+	writeArchiveFile(t, tarWriter, "segment-fixture/response", []byte(`{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`))
+	require.NoError(t, tarWriter.Close())
+	require.NoError(t, gzipWriter.Close())
+	ciphertext, err := common.EncryptSecret(compressed.String(), segmentArchivePurpose)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(filename), 0o700))
+	require.NoError(t, os.WriteFile(filename, []byte(ciphertext), 0o600))
+}
+
+func writeArchiveFile(t *testing.T, writer *tar.Writer, name string, body []byte) {
+	t.Helper()
+	require.NoError(t, writer.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: int64(len(body))}))
+	_, err := writer.Write(body)
+	require.NoError(t, err)
 }

@@ -73,6 +73,46 @@ func TestLocalStorageSaveListOpenAndDelete(t *testing.T) {
 	assert.NoError(t, storage.Health(context.Background()))
 }
 
+func TestLocalStorageGzipRoundTrip(t *testing.T) {
+	previousSecret := common.CryptoSecret
+	common.CryptoSecret = "relay-capture-gzip-test-secret"
+	t.Cleanup(func() { common.CryptoSecret = previousSecret })
+
+	storage, err := NewLocalStorageWithCompression(t.TempDir(), PayloadCompressionGzip)
+	require.NoError(t, err)
+	request := []byte(strings.Repeat(`{"message":"repeated text"}`, 128))
+	artifact := Artifact{
+		Metadata: Metadata{
+			ID:        "gzip-capture",
+			CreatedAt: 100,
+			ChannelID: 42,
+			Protocol:  "openai.chat_completions",
+			Request:   PartMeta{Stored: true},
+		},
+		RequestBody: request,
+	}
+	require.NoError(t, storage.Save(context.Background(), artifact))
+
+	result, err := storage.List(context.Background(), ListFilter{ID: artifact.Metadata.ID, Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, result.Items, 1)
+	assert.Equal(t, "gzip", result.Items[0].Request.Compression)
+
+	body, metadata, err := storage.Open(context.Background(), artifact.Metadata.ID, PartRequest)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, body.Close()) })
+	plaintext, err := io.ReadAll(body)
+	require.NoError(t, err)
+	assert.Equal(t, request, plaintext)
+	assert.Equal(t, "gzip", metadata.Request.Compression)
+
+	encrypted, err := os.ReadFile(filepath.Join(storage.baseDir, "1970", "01", "01", "channel-42", "gzip-capture", "request.enc"))
+	require.NoError(t, err)
+	compressed, err := common.DecryptSecret(string(encrypted), "relay-capture")
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(compressed, "\x1f\x8b"))
+}
+
 func assertEncryptedAtRest(t *testing.T, baseDir string, plaintext string) {
 	t.Helper()
 	foundEncryptedPart := false

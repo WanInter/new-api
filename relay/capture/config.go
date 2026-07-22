@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 var maxTextPayloadBytes atomic.Int64
@@ -34,9 +35,22 @@ func InitFromEnv(ctx context.Context) error {
 			return fmt.Errorf("CRYPTO_SECRET is required when relay capture storage is enabled")
 		}
 	}
+	layout := strings.ToLower(strings.TrimSpace(os.Getenv("RELAY_CAPTURE_S3_LAYOUT")))
+	if layout == "" {
+		layout = "objects"
+	}
+	compression := PayloadCompressionNone
+	if storageType == "local" || ((storageType == "s3" || storageType == "minio") && layout == "objects") {
+		var err error
+		compression, err = ParsePayloadCompression(os.Getenv("RELAY_CAPTURE_COMPRESSION"))
+		if err != nil {
+			SetStorage(nil)
+			return err
+		}
+	}
 	switch storageType {
 	case "local":
-		store, err := NewLocalStorage(os.Getenv("RELAY_CAPTURE_LOCAL_DIR"))
+		store, err := NewLocalStorageWithCompression(os.Getenv("RELAY_CAPTURE_LOCAL_DIR"), compression)
 		if err != nil {
 			SetStorage(nil)
 			return err
@@ -44,7 +58,7 @@ func InitFromEnv(ctx context.Context) error {
 		SetStorage(store)
 		return nil
 	case "s3", "minio":
-		store, err := NewS3Storage(ctx, S3Options{
+		options := S3Options{
 			Bucket:          os.Getenv("RELAY_CAPTURE_S3_BUCKET"),
 			Prefix:          os.Getenv("RELAY_CAPTURE_S3_PREFIX"),
 			Region:          os.Getenv("RELAY_CAPTURE_S3_REGION"),
@@ -52,7 +66,27 @@ func InitFromEnv(ctx context.Context) error {
 			AccessKeyID:     os.Getenv("RELAY_CAPTURE_S3_ACCESS_KEY_ID"),
 			SecretAccessKey: os.Getenv("RELAY_CAPTURE_S3_SECRET_ACCESS_KEY"),
 			UsePathStyle:    envBool("RELAY_CAPTURE_S3_USE_PATH_STYLE", storageType == "minio"),
-		})
+			Compression:     compression,
+		}
+		if layout == "segments" {
+			store, err := NewSegmentStorage(ctx, SegmentOptions{
+				S3:            options,
+				SpoolDir:      os.Getenv("RELAY_CAPTURE_S3_SPOOL_DIR"),
+				MaxBytes:      int64(envInt("RELAY_CAPTURE_S3_SEGMENT_MAX_MB", 64)) << 20,
+				FlushInterval: time.Duration(envInt("RELAY_CAPTURE_S3_FLUSH_SECONDS", 900)) * time.Second,
+			})
+			if err != nil {
+				SetStorage(nil)
+				return err
+			}
+			SetStorage(store)
+			return nil
+		}
+		if layout != "objects" {
+			SetStorage(nil)
+			return fmt.Errorf("unsupported relay capture S3 layout: %s", layout)
+		}
+		store, err := NewS3Storage(ctx, options)
 		if err != nil {
 			SetStorage(nil)
 			return err

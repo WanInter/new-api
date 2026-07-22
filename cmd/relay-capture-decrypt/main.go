@@ -3,6 +3,9 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,10 +18,15 @@ import (
 	"github.com/QuantumNous/new-api/common"
 )
 
-const relayCapturePurpose = "relay-capture"
+const (
+	relayCapturePurpose      = "relay-capture"
+	segmentArchivePurpose    = "relay-capture-segment"
+	segmentArchiveFileSuffix = ".tar.gz.enc"
+)
 
 type capturePart struct {
-	Stored bool `json:"stored"`
+	Compression string `json:"compression,omitempty"`
+	Stored      bool   `json:"stored"`
 }
 
 type captureManifest struct {
@@ -31,8 +39,13 @@ type captureManifest struct {
 }
 
 type artifact struct {
-	directory string
-	manifest  captureManifest
+	directory       string
+	manifest        captureManifest
+	archive         bool
+	requestBody     []byte
+	responseBody    []byte
+	requestPresent  bool
+	responsePresent bool
 }
 
 type conversation struct {
@@ -125,23 +138,37 @@ func findArtifacts(root string) ([]artifact, error) {
 		if walkErr != nil {
 			return walkErr
 		}
-		if entry.IsDir() || entry.Name() != "manifest.json" {
+		if entry.IsDir() {
 			return nil
 		}
-		item, err := loadArtifact(filepath.Dir(path))
-		if err != nil {
-			return err
+		switch {
+		case entry.Name() == "manifest.json":
+			item, err := loadArtifact(filepath.Dir(path))
+			if err != nil {
+				return err
+			}
+			items = append(items, item)
+		case strings.HasSuffix(entry.Name(), segmentArchiveFileSuffix):
+			archiveItems, err := loadSegmentArchive(path)
+			if err != nil {
+				return err
+			}
+			items = append(items, archiveItems...)
 		}
-		items = append(items, item)
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	if len(items) == 0 {
-		return nil, fmt.Errorf("no capture manifests found in %s", root)
+		return nil, fmt.Errorf("no capture artifacts found in %s", root)
 	}
-	sort.Slice(items, func(i, j int) bool { return items[i].manifest.CreatedAt < items[j].manifest.CreatedAt })
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].manifest.CreatedAt == items[j].manifest.CreatedAt {
+			return items[i].manifest.ID < items[j].manifest.ID
+		}
+		return items[i].manifest.CreatedAt < items[j].manifest.CreatedAt
+	})
 	return items, nil
 }
 
@@ -164,6 +191,12 @@ func (item artifact) conversations() ([]conversation, error) {
 	if !item.manifest.Request.Stored || !item.manifest.Response.Stored {
 		return nil, errors.New("request or response body was not stored")
 	}
+	if item.archive {
+		if !item.requestPresent || !item.responsePresent {
+			return nil, errors.New("archive is missing a stored request or response body")
+		}
+		return normalize(item.manifest.Protocol, item.requestBody, item.responseBody)
+	}
 	request, err := item.decrypt("request")
 	if err != nil {
 		return nil, err
@@ -184,7 +217,117 @@ func (item artifact) decrypt(part string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []byte(plaintext), nil
+	compression := item.manifest.Request.Compression
+	if part == "response" {
+		compression = item.manifest.Response.Compression
+	}
+	return decompressCapturePart([]byte(plaintext), compression)
+}
+
+func decompressCapturePart(body []byte, compression string) ([]byte, error) {
+	switch strings.ToLower(strings.TrimSpace(compression)) {
+	case "", "none":
+		return body, nil
+	case "gzip":
+		reader, err := gzip.NewReader(bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		decompressed, readErr := io.ReadAll(reader)
+		closeErr := reader.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		return decompressed, nil
+	default:
+		return nil, fmt.Errorf("unsupported capture compression %q", compression)
+	}
+}
+
+func loadSegmentArchive(filename string) ([]artifact, error) {
+	ciphertext, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+	compressed, err := common.DecryptSecret(string(ciphertext), segmentArchivePurpose)
+	if err != nil {
+		return nil, err
+	}
+	reader, err := gzip.NewReader(bytes.NewReader([]byte(compressed)))
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+
+	items := make(map[string]*artifact)
+	tarReader := tar.NewReader(reader)
+	for {
+		header, err := tarReader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		parts := strings.Split(header.Name, "/")
+		if len(parts) != 2 || !validCaptureID(parts[0]) || (header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA) {
+			return nil, errors.New("invalid relay capture segment entry")
+		}
+		body, err := io.ReadAll(tarReader)
+		if err != nil {
+			return nil, err
+		}
+		item := items[parts[0]]
+		if item == nil {
+			item = &artifact{archive: true}
+			items[parts[0]] = item
+		}
+		switch parts[1] {
+		case "manifest.json":
+			if item.manifest.ID != "" {
+				return nil, errors.New("duplicate relay capture segment manifest")
+			}
+			if err := common.Unmarshal(body, &item.manifest); err != nil {
+				return nil, err
+			}
+			if item.manifest.ID != parts[0] || item.manifest.Protocol == "" {
+				return nil, errors.New("invalid relay capture segment manifest")
+			}
+		case "request":
+			if item.requestPresent {
+				return nil, errors.New("duplicate relay capture segment request")
+			}
+			item.requestBody = body
+			item.requestPresent = true
+		case "response":
+			if item.responsePresent {
+				return nil, errors.New("duplicate relay capture segment response")
+			}
+			item.responseBody = body
+			item.responsePresent = true
+		default:
+			return nil, errors.New("invalid relay capture segment part")
+		}
+	}
+
+	result := make([]artifact, 0, len(items))
+	for _, item := range items {
+		if item.manifest.ID == "" {
+			return nil, errors.New("relay capture segment is missing a manifest")
+		}
+		if item.manifest.Request.Stored != item.requestPresent || item.manifest.Response.Stored != item.responsePresent {
+			return nil, errors.New("relay capture segment payload metadata mismatch")
+		}
+		result = append(result, *item)
+	}
+	return result, nil
+}
+
+func validCaptureID(id string) bool {
+	return id != "" && !strings.Contains(id, "..") && !strings.ContainsAny(id, "/\\")
 }
 
 func normalize(protocol string, request []byte, response []byte) ([]conversation, error) {

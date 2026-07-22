@@ -16,6 +16,7 @@ type PartMeta struct {
 	ContentType string `json:"content_type,omitempty"`
 	Size        int64  `json:"size,omitempty"`
 	SHA256      string `json:"sha256,omitempty"`
+	Compression string `json:"compression,omitempty"`
 	Stored      bool   `json:"stored"`
 }
 

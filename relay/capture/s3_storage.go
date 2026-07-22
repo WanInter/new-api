@@ -17,9 +17,10 @@ import (
 )
 
 type S3Storage struct {
-	client *s3.Client
-	bucket string
-	prefix string
+	client      *s3.Client
+	bucket      string
+	prefix      string
+	compression PayloadCompression
 }
 
 type S3Options struct {
@@ -30,11 +31,16 @@ type S3Options struct {
 	AccessKeyID     string
 	SecretAccessKey string
 	UsePathStyle    bool
+	Compression     PayloadCompression
 }
 
 func NewS3Storage(ctx context.Context, options S3Options) (*S3Storage, error) {
 	if strings.TrimSpace(options.Bucket) == "" {
 		return nil, fmt.Errorf("relay capture S3 bucket is required")
+	}
+	compression, err := ParsePayloadCompression(string(options.Compression))
+	if err != nil {
+		return nil, err
 	}
 	loadOptions := []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithRegion(defaultString(options.Region, "us-east-1")),
@@ -59,9 +65,10 @@ func NewS3Storage(ctx context.Context, options S3Options) (*S3Storage, error) {
 		}
 	})
 	return &S3Storage{
-		client: client,
-		bucket: strings.TrimSpace(options.Bucket),
-		prefix: strings.Trim(strings.TrimSpace(options.Prefix), "/"),
+		client:      client,
+		bucket:      strings.TrimSpace(options.Bucket),
+		prefix:      strings.Trim(strings.TrimSpace(options.Prefix), "/"),
+		compression: compression,
 	}, nil
 }
 
@@ -71,11 +78,13 @@ func (s *S3Storage) Save(ctx context.Context, artifact Artifact) error {
 	}
 	prefix := s.artifactPrefix(artifact.Metadata)
 	if artifact.Metadata.Request.Stored {
+		artifact.Metadata.Request.Compression = string(s.compression)
 		if err := s.putEncryptedPart(ctx, path.Join(prefix, PartRequest+".enc"), artifact.RequestBody); err != nil {
 			return err
 		}
 	}
 	if artifact.Metadata.Response.Stored {
+		artifact.Metadata.Response.Compression = string(s.compression)
 		if err := s.putEncryptedPart(ctx, path.Join(prefix, PartResponse+".enc"), artifact.ResponseBody); err != nil {
 			return err
 		}
@@ -136,11 +145,15 @@ func (s *S3Storage) Open(ctx context.Context, id string, part string) (io.ReadCl
 	if err != nil {
 		return nil, metadata, err
 	}
-	plaintext, err := common.DecryptSecret(string(ciphertext), "relay-capture")
+	compression, err := ParsePayloadCompression(partMeta.Compression)
 	if err != nil {
 		return nil, metadata, err
 	}
-	return io.NopCloser(strings.NewReader(plaintext)), metadata, nil
+	plaintext, err := decryptPart(ciphertext, compression)
+	if err != nil {
+		return nil, metadata, err
+	}
+	return io.NopCloser(strings.NewReader(string(plaintext))), metadata, nil
 }
 
 func (s *S3Storage) DeleteBefore(ctx context.Context, timestamp int64) (int, error) {
@@ -186,7 +199,7 @@ func (s *S3Storage) artifactPrefix(metadata Metadata) string {
 }
 
 func (s *S3Storage) putEncryptedPart(ctx context.Context, key string, body []byte) error {
-	ciphertext, err := common.EncryptSecret(string(body), "relay-capture")
+	ciphertext, err := encryptPart(body, s.compression)
 	if err != nil {
 		return err
 	}

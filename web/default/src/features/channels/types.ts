@@ -124,6 +124,7 @@ export interface RelayCapturePartMeta {
   content_type?: string
   size?: number
   sha256?: string
+  compression?: string
   stored: boolean
 }
 
