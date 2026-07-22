@@ -23,7 +23,6 @@ import { useTranslation } from 'react-i18next';
 import {
   Banner,
   Button,
-  Checkbox,
   Descriptions,
   Divider,
   Input,
@@ -58,8 +57,6 @@ import { CHANNEL_OPTIONS } from '../../constants';
 import ImageRoutingPanel from './ImageRoutingPanel';
 
 const { Title, Text } = Typography;
-const VIDEO_RESOLUTIONS = ['480p', '720p', '1080p', '4k'];
-
 const EMPTY_CAPABILITY_FORM = {
   images_min: '',
   images_max: '',
@@ -67,13 +64,125 @@ const EMPTY_CAPABILITY_FORM = {
   videos_max: '',
   audios_min: '',
   audios_max: '',
+  video_audio_total_min: '',
+  video_audio_total_max: '',
   duration_min: '',
   duration_max: '',
   fixed_duration: '',
+  aspect_ratios: [],
   resolutions: [],
+  sizes: [],
   require_json: 'inherit',
   require_text: 'inherit',
   content_precedence: 'inherit',
+};
+
+const MAX_VIDEO_OUTPUT_DIMENSION = 32768;
+
+const parseVideoOutputDimension = (value) => {
+  const trimmed = String(value).trim();
+  if (!/^\d+$/.test(trimmed)) return undefined;
+  const parsed = Number(trimmed);
+  return parsed > 0 && parsed <= MAX_VIDEO_OUTPUT_DIMENSION
+    ? parsed
+    : undefined;
+};
+
+const greatestCommonDivisor = (left, right) => {
+  while (right !== 0) {
+    [left, right] = [right, left % right];
+  }
+  return left;
+};
+
+const normalizeVideoOutputListValue = (field, value) => {
+  const trimmed = String(value).trim();
+  if (field === 'aspect_ratios') {
+    const normalized = trimmed.toLowerCase();
+    if (normalized === 'adaptive') return normalized;
+    const parts = normalized.split(':');
+    if (parts.length !== 2) return undefined;
+    const width = parseVideoOutputDimension(parts[0]);
+    const height = parseVideoOutputDimension(parts[1]);
+    if (width === undefined || height === undefined) return undefined;
+    const divisor = greatestCommonDivisor(width, height);
+    return `${width / divisor}:${height / divisor}`;
+  }
+  if (field === 'resolutions') {
+    const normalized = trimmed.toLowerCase();
+    if (normalized === '4k' || normalized === '2160p') return '4k';
+    if (!normalized.endsWith('p')) return undefined;
+    const height = parseVideoOutputDimension(normalized.slice(0, -1));
+    return height === undefined ? undefined : `${height}p`;
+  }
+  const parts = trimmed.split('x');
+  if (parts.length !== 2) return undefined;
+  const width = parseVideoOutputDimension(parts[0]);
+  const height = parseVideoOutputDimension(parts[1]);
+  if (width === undefined || height === undefined) return undefined;
+  return `${width}x${height}`;
+};
+
+const normalizeVideoOutputList = (field, values) =>
+  values.map(
+    (value) => normalizeVideoOutputListValue(field, value) || value.trim(),
+  );
+
+const normalizeVideoSimulationOutput = ({
+  aspect_ratio = '',
+  size = '',
+  resolution = '',
+}) => {
+  const normalizedAspectRatio = aspect_ratio.trim()
+    ? normalizeVideoOutputListValue('aspect_ratios', aspect_ratio)
+    : '';
+  if (aspect_ratio.trim() && !normalizedAspectRatio) {
+    return { error: 'invalid_aspect_ratio' };
+  }
+
+  const normalizedSize = size.trim()
+    ? normalizeVideoOutputListValue('sizes', size)
+    : '';
+  if (size.trim() && !normalizedSize) {
+    return { error: 'invalid_size' };
+  }
+
+  const normalizedResolution = resolution.trim()
+    ? normalizeVideoOutputListValue('resolutions', resolution)
+    : '';
+  if (resolution.trim() && !normalizedResolution) {
+    return { error: 'invalid_resolution' };
+  }
+
+  if (normalizedAspectRatio && normalizedSize) {
+    const [width, height] = normalizedSize.split('x').map(Number);
+    const divisor = greatestCommonDivisor(width, height);
+    const sizeAspectRatio = `${width / divisor}:${height / divisor}`;
+    if (
+      normalizedAspectRatio === 'adaptive' ||
+      normalizedAspectRatio !== sizeAspectRatio
+    ) {
+      return { error: 'size_aspect_ratio_conflict' };
+    }
+  }
+
+  return {
+    output: {
+      aspect_ratio: normalizedAspectRatio,
+      size: normalizedSize,
+      resolution: normalizedResolution,
+    },
+  };
+};
+
+const validateVideoOutputList = (field, values) => {
+  const seen = new Set();
+  for (const value of values) {
+    const normalized = normalizeVideoOutputListValue(field, value);
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+  }
+  return true;
 };
 
 const channelTypeNames = Object.fromEntries(
@@ -103,6 +212,14 @@ const formatDurationCapability = (capability) => {
 const formatResolutionCapability = (capability) =>
   capability?.resolutions?.length ? capability.resolutions.join(', ') : '—';
 
+const formatAspectRatioCapability = (capability) =>
+  capability?.aspect_ratios?.length
+    ? capability.aspect_ratios.join(', ')
+    : '—';
+
+const formatSizeCapability = (capability) =>
+  capability?.sizes?.length ? capability.sizes.join(', ') : '—';
+
 const numberToDraft = (value) =>
   value === undefined || value === null ? '' : String(value);
 
@@ -118,10 +235,14 @@ const capabilityToForm = (capability) => ({
   videos_max: numberToDraft(capability?.videos?.max),
   audios_min: numberToDraft(capability?.audios?.min),
   audios_max: numberToDraft(capability?.audios?.max),
+  video_audio_total_min: numberToDraft(capability?.video_audio_total?.min),
+  video_audio_total_max: numberToDraft(capability?.video_audio_total?.max),
   duration_min: numberToDraft(capability?.duration?.min),
   duration_max: numberToDraft(capability?.duration?.max),
   fixed_duration: numberToDraft(capability?.fixed_duration),
+  aspect_ratios: capability?.aspect_ratios || [],
   resolutions: capability?.resolutions || [],
+  sizes: capability?.sizes || [],
   require_json: booleanToDraft(capability?.require_json),
   require_text: booleanToDraft(capability?.require_text),
   content_precedence: booleanToDraft(capability?.content_precedence),
@@ -148,9 +269,16 @@ const formToCapability = (form) => ({
   images: rangeFromDraft(form.images_min, form.images_max),
   videos: rangeFromDraft(form.videos_min, form.videos_max),
   audios: rangeFromDraft(form.audios_min, form.audios_max),
+  video_audio_total: rangeFromDraft(
+    form.video_audio_total_min,
+    form.video_audio_total_max,
+  ),
   duration: rangeFromDraft(form.duration_min, form.duration_max),
   fixed_duration: draftToNumber(form.fixed_duration),
+  aspect_ratios:
+    form.aspect_ratios.length > 0 ? form.aspect_ratios : undefined,
   resolutions: form.resolutions.length > 0 ? form.resolutions : undefined,
+  sizes: form.sizes.length > 0 ? form.sizes : undefined,
   require_json: draftToBoolean(form.require_json),
   require_text: draftToBoolean(form.require_text),
   content_precedence: draftToBoolean(form.content_precedence),
@@ -164,6 +292,8 @@ const validateCapabilityForm = (form, t) => {
     'videos_max',
     'audios_min',
     'audios_max',
+    'video_audio_total_min',
+    'video_audio_total_max',
   ];
   const positiveFields = ['duration_min', 'duration_max', 'fixed_duration'];
   if (
@@ -184,6 +314,7 @@ const validateCapabilityForm = (form, t) => {
     ['images_min', 'images_max'],
     ['videos_min', 'videos_max'],
     ['audios_min', 'audios_max'],
+    ['video_audio_total_min', 'video_audio_total_max'],
     ['duration_min', 'duration_max'],
   ];
   if (
@@ -203,7 +334,7 @@ const validateCapabilityForm = (form, t) => {
     return t('固定时长不能与范围时长同时设置');
   }
   const hasOverride = Object.entries(form).some(([field, value]) =>
-    field === 'resolutions'
+    field === 'aspect_ratios' || field === 'resolutions' || field === 'sizes'
       ? value.length > 0
       : value !== '' && value !== 'inherit',
   );
@@ -226,6 +357,14 @@ const violationText = (violation, t) => {
     images_above_max: t('最多支持 {{expected}} 张图片', options),
     videos_above_max: t('最多支持 {{expected}} 个视频', options),
     audios_above_max: t('最多支持 {{expected}} 个音频', options),
+    video_audio_total_below_min: t(
+      '视频与音频合计至少需要 {{expected}} 个',
+      options,
+    ),
+    video_audio_total_above_max: t(
+      '视频与音频合计最多支持 {{expected}} 个',
+      options,
+    ),
     duration_mismatch: t('仅支持 {{expected}} 秒时长', options),
     duration_below_min: t('时长至少为 {{expected}} 秒', options),
     duration_above_max: t('时长最多为 {{expected}} 秒', options),
@@ -234,6 +373,20 @@ const violationText = (violation, t) => {
       {
         resolution: violation.resolution,
         supported_resolutions: violation.supported_resolutions?.join(', '),
+      },
+    ),
+    aspect_ratio_not_supported: t(
+      '画面比例 {{aspect_ratio}} 不受支持，支持：{{supported_aspect_ratios}}',
+      {
+        aspect_ratio: violation.aspect_ratio,
+        supported_aspect_ratios: violation.supported_aspect_ratios?.join(', '),
+      },
+    ),
+    size_not_supported: t(
+      '像素尺寸 {{size}} 不受支持，支持：{{supported_sizes}}',
+      {
+        size: violation.size,
+        supported_sizes: violation.supported_sizes?.join(', '),
       },
     ),
     content_type_mismatch: t('仅支持 application/json 请求'),
@@ -328,8 +481,20 @@ const CandidateDetails = ({ candidate, onClose, t }) => (
                 value: formatRange(candidate.capability?.audios),
               },
               {
+                key: t('视频与音频合计'),
+                value: formatRange(candidate.capability?.video_audio_total),
+              },
+              {
                 key: t('时长'),
                 value: formatDurationCapability(candidate.capability),
+              },
+              {
+                key: t('画面比例'),
+                value: formatAspectRatioCapability(candidate.capability),
+              },
+              {
+                key: t('像素尺寸'),
+                value: formatSizeCapability(candidate.capability),
               },
               {
                 key: t('清晰度'),
@@ -440,19 +605,53 @@ const BooleanOverrideField = ({ label, value, onChange, t }) => (
 
 const CapabilityRuleEditor = ({ candidate, onClose, onSaved, t }) => {
   const [form, setForm] = useState(EMPTY_CAPABILITY_FORM);
+  const [outputErrors, setOutputErrors] = useState({});
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     setForm(capabilityToForm(candidate?.editable_rule?.capability));
+    setOutputErrors({});
   }, [candidate]);
 
   const updateField = (field, value) => {
     setForm((current) => ({ ...current, [field]: value ?? '' }));
   };
 
+  const normalizeOutputField = (field, values) => {
+    const valid = validateVideoOutputList(field, values);
+    setOutputErrors((current) => ({
+      ...current,
+      [field]: valid ? '' : t('格式错误'),
+    }));
+    if (valid) {
+      updateField(field, normalizeVideoOutputList(field, values));
+    }
+  };
+
   const saveOverride = async () => {
     if (!candidate) return;
-    const validationError = validateCapabilityForm(form, t);
+    const outputFields = ['aspect_ratios', 'resolutions', 'sizes'];
+    const invalidOutputField = outputFields.find(
+      (field) => !validateVideoOutputList(field, form[field]),
+    );
+    if (invalidOutputField) {
+      setOutputErrors((current) => ({
+        ...current,
+        [invalidOutputField]: t('格式错误'),
+      }));
+      return;
+    }
+    const normalizedForm = {
+      ...form,
+      aspect_ratios: normalizeVideoOutputList(
+        'aspect_ratios',
+        form.aspect_ratios,
+      ),
+      resolutions: normalizeVideoOutputList('resolutions', form.resolutions),
+      sizes: normalizeVideoOutputList('sizes', form.sizes),
+    };
+    setForm(normalizedForm);
+    const validationError = validateCapabilityForm(normalizedForm, t);
     if (validationError) {
       showError(validationError);
       return;
@@ -462,7 +661,7 @@ const CapabilityRuleEditor = ({ candidate, onClose, onSaved, t }) => {
       const response = await API.put('/api/channel/routing_rules/capability', {
         channel_id: candidate.channel_id,
         upstream_model: candidate.mapping?.model,
-        capability: formToCapability(form),
+        capability: formToCapability(normalizedForm),
         revision: candidate.editable_rule?.revision || 0,
       });
       if (!response.data.success) throw new Error(response.data.message);
@@ -588,27 +787,105 @@ const CapabilityRuleEditor = ({ candidate, onClose, onSaved, t }) => {
             effective={candidate.capability?.audios}
             t={t}
           />
+          <RangeOverrideFields
+            label={t('视频与音频合计')}
+            prefix='video_audio_total'
+            form={form}
+            onChange={updateField}
+            effective={candidate.capability?.video_audio_total}
+            t={t}
+          />
 
           <Divider margin='16px' />
 
           <section>
+            <Text strong>{t('支持的画面比例')}</Text>
+            <Input
+              className='mt-2'
+              value={form.aspect_ratios.join(', ')}
+              placeholder='16:9, 9:16'
+              onChange={(value) =>
+                updateField(
+                  'aspect_ratios',
+                  value
+                    .split(',')
+                    .map((item) => item.trim())
+                    .filter(Boolean),
+                )
+              }
+              onBlur={() =>
+                normalizeOutputField('aspect_ratios', form.aspect_ratios)
+              }
+            />
+            {outputErrors.aspect_ratios && (
+              <Text type='danger' size='small'>
+                {outputErrors.aspect_ratios}
+              </Text>
+            )}
+            {candidate.capability?.aspect_ratios?.length > 0 && (
+              <div className='mt-2'>
+                <Text type='tertiary' size='small'>
+                  {t('生效')}: {candidate.capability.aspect_ratios.join(', ')}
+                </Text>
+              </div>
+            )}
+          </section>
+
+          <section>
+            <Text strong>{t('支持的像素尺寸')}</Text>
+            <Input
+              className='mt-2'
+              value={form.sizes.join(', ')}
+              placeholder='1280x720, 720x1280'
+              onChange={(value) =>
+                updateField(
+                  'sizes',
+                  value
+                    .split(',')
+                    .map((item) => item.trim())
+                    .filter(Boolean),
+                )
+              }
+              onBlur={() => normalizeOutputField('sizes', form.sizes)}
+            />
+            {outputErrors.sizes && (
+              <Text type='danger' size='small'>
+                {outputErrors.sizes}
+              </Text>
+            )}
+            {candidate.capability?.sizes?.length > 0 && (
+              <div className='mt-2'>
+                <Text type='tertiary' size='small'>
+                  {t('生效')}: {candidate.capability.sizes.join(', ')}
+                </Text>
+              </div>
+            )}
+          </section>
+
+          <section>
             <Text strong>{t('支持的清晰度')}</Text>
-            <Space wrap className='mt-2'>
-              {VIDEO_RESOLUTIONS.map((resolution) => (
-                <Checkbox
-                  key={resolution}
-                  checked={form.resolutions.includes(resolution)}
-                  onChange={(event) => {
-                    const resolutions = event.target.checked
-                      ? [...form.resolutions, resolution]
-                      : form.resolutions.filter((item) => item !== resolution);
-                    updateField('resolutions', resolutions);
-                  }}
-                >
-                  {resolution}
-                </Checkbox>
-              ))}
-            </Space>
+            <Input
+              className='mt-2'
+              value={form.resolutions.join(', ')}
+              placeholder='480p, 720p, 768p, 1080p, 4k'
+              onChange={(value) =>
+                updateField(
+                  'resolutions',
+                  value
+                    .split(',')
+                    .map((item) => item.trim())
+                    .filter(Boolean),
+                )
+              }
+              onBlur={() =>
+                normalizeOutputField('resolutions', form.resolutions)
+              }
+            />
+            {outputErrors.resolutions && (
+              <Text type='danger' size='small'>
+                {outputErrors.resolutions}
+              </Text>
+            )}
             {candidate.capability?.resolutions?.length > 0 && (
               <div className='mt-2'>
                 <Text type='tertiary' size='small'>
@@ -704,11 +981,14 @@ const ChannelRouting = () => {
   const [savingChannelSettings, setSavingChannelSettings] = useState(null);
   const [simulationResult, setSimulationResult] = useState(null);
   const [simulationLoading, setSimulationLoading] = useState(false);
+  const [simulationOutputErrors, setSimulationOutputErrors] = useState({});
   const [simulation, setSimulation] = useState({
     images: 4,
     videos: 0,
     audios: 0,
     duration: 15,
+    aspect_ratio: '',
+    size: '',
     resolution: '',
     retry: 0,
   });
@@ -787,12 +1067,28 @@ const ChannelRouting = () => {
   }, [loadRules]);
 
   const runSimulation = async () => {
+    const normalizedOutput = normalizeVideoSimulationOutput(simulation);
+    if ('error' in normalizedOutput) {
+      const errors = {
+        invalid_aspect_ratio: { aspect_ratio: t('格式错误') },
+        invalid_size: { size: t('格式错误') },
+        invalid_resolution: { resolution: t('格式错误') },
+        size_aspect_ratio_conflict: {
+          aspect_ratio: t('像素尺寸与画面比例冲突'),
+          size: t('像素尺寸与画面比例冲突'),
+        },
+      };
+      setSimulationOutputErrors(errors[normalizedOutput.error]);
+      return;
+    }
+    setSimulationOutputErrors({});
     setSimulationLoading(true);
     try {
       const response = await API.post('/api/channel/routing_rules/simulate', {
         model,
         group,
         ...simulation,
+        ...normalizedOutput.output,
         content_type: 'application/json',
       });
       if (!response.data.success) throw new Error(response.data.message);
@@ -939,10 +1235,29 @@ const ChannelRouting = () => {
         render: (_, record) => formatRange(record.capability?.audios),
       },
       {
+        title: t('视频与音频合计'),
+        width: 128,
+        align: 'center',
+        render: (_, record) =>
+          formatRange(record.capability?.video_audio_total),
+      },
+      {
         title: t('时长'),
         width: 84,
         align: 'center',
         render: (_, record) => formatDurationCapability(record.capability),
+      },
+      {
+        title: t('画面比例'),
+        width: 120,
+        align: 'center',
+        render: (_, record) => formatAspectRatioCapability(record.capability),
+      },
+      {
+        title: t('像素尺寸'),
+        width: 120,
+        align: 'center',
+        render: (_, record) => formatSizeCapability(record.capability),
       },
       {
         title: t('清晰度'),
@@ -1046,7 +1361,7 @@ const ChannelRouting = () => {
         rowKey={(record) => `${record.group}-${record.channel_id}`}
         pagination={false}
         tableLayout='fixed'
-        scroll={{ x: 1628 }}
+        scroll={{ x: 2016 }}
         empty={t('未找到分流候选渠道')}
       />
     </Spin>
@@ -1196,24 +1511,151 @@ const ChannelRouting = () => {
                   ),
                 )}
                 <div>
-                  <Text type='tertiary'>{t('清晰度')}</Text>
-                  <Select
+                  <label htmlFor='simulation-aspect-ratio'>
+                    <Text type='tertiary'>{t('画面比例')}</Text>
+                  </label>
+                  <Input
+                    id='simulation-aspect-ratio'
+                    className='mt-1 w-full'
+                    value={simulation.aspect_ratio}
+                    placeholder='16:9'
+                    validateStatus={
+                      simulationOutputErrors.aspect_ratio ? 'error' : 'default'
+                    }
+                    onChange={(value) => {
+                      setSimulationOutputErrors((current) => ({
+                        ...current,
+                        aspect_ratio: '',
+                      }));
+                      setSimulation((current) => ({
+                        ...current,
+                        aspect_ratio: value,
+                      }));
+                    }}
+                    onBlur={(event) => {
+                      const normalized = normalizeVideoOutputListValue(
+                        'aspect_ratios',
+                        event.target.value,
+                      );
+                      if (normalized) {
+                        setSimulationOutputErrors((current) => ({
+                          ...current,
+                          aspect_ratio: '',
+                        }));
+                        setSimulation((current) => ({
+                          ...current,
+                          aspect_ratio: normalized,
+                        }));
+                      } else if (event.target.value.trim()) {
+                        setSimulationOutputErrors((current) => ({
+                          ...current,
+                          aspect_ratio: t('格式错误'),
+                        }));
+                      }
+                    }}
+                  />
+                  {simulationOutputErrors.aspect_ratio && (
+                    <Text type='danger' size='small'>
+                      {simulationOutputErrors.aspect_ratio}
+                    </Text>
+                  )}
+                </div>
+                <div>
+                  <label htmlFor='simulation-size'>
+                    <Text type='tertiary'>{t('像素尺寸')}</Text>
+                  </label>
+                  <Input
+                    id='simulation-size'
+                    className='mt-1 w-full'
+                    value={simulation.size}
+                    placeholder='1280x720'
+                    validateStatus={
+                      simulationOutputErrors.size ? 'error' : 'default'
+                    }
+                    onChange={(value) => {
+                      setSimulationOutputErrors((current) => ({
+                        ...current,
+                        size: '',
+                      }));
+                      setSimulation((current) => ({ ...current, size: value }));
+                    }}
+                    onBlur={(event) => {
+                      const normalized = normalizeVideoOutputListValue(
+                        'sizes',
+                        event.target.value,
+                      );
+                      if (normalized) {
+                        setSimulationOutputErrors((current) => ({
+                          ...current,
+                          size: '',
+                        }));
+                        setSimulation((current) => ({
+                          ...current,
+                          size: normalized,
+                        }));
+                      } else if (event.target.value.trim()) {
+                        setSimulationOutputErrors((current) => ({
+                          ...current,
+                          size: t('格式错误'),
+                        }));
+                      }
+                    }}
+                  />
+                  {simulationOutputErrors.size && (
+                    <Text type='danger' size='small'>
+                      {simulationOutputErrors.size}
+                    </Text>
+                  )}
+                </div>
+                <div>
+                  <label htmlFor='simulation-resolution'>
+                    <Text type='tertiary'>{t('清晰度')}</Text>
+                  </label>
+                  <Input
+                    id='simulation-resolution'
                     className='mt-1 w-full'
                     value={simulation.resolution}
-                    onChange={(resolution) =>
+                    placeholder='720p, 768p, 4k'
+                    validateStatus={
+                      simulationOutputErrors.resolution ? 'error' : 'default'
+                    }
+                    onChange={(resolution) => {
+                      setSimulationOutputErrors((current) => ({
+                        ...current,
+                        resolution: '',
+                      }));
                       setSimulation((current) => ({
                         ...current,
                         resolution: resolution || '',
-                      }))
-                    }
-                    optionList={[
-                      { value: '', label: t('不限') },
-                      ...VIDEO_RESOLUTIONS.map((resolution) => ({
-                        value: resolution,
-                        label: resolution,
-                      })),
-                    ]}
+                      }));
+                    }}
+                    onBlur={(event) => {
+                      const normalized = normalizeVideoOutputListValue(
+                        'resolutions',
+                        event.target.value,
+                      );
+                      if (normalized) {
+                        setSimulationOutputErrors((current) => ({
+                          ...current,
+                          resolution: '',
+                        }));
+                        setSimulation((current) => ({
+                          ...current,
+                          resolution: normalized,
+                        }));
+                      } else if (event.target.value.trim()) {
+                        setSimulationOutputErrors((current) => ({
+                          ...current,
+                          resolution: t('格式错误'),
+                        }));
+                      }
+                    }}
                   />
+                  {simulationOutputErrors.resolution && (
+                    <Text type='danger' size='small'>
+                      {simulationOutputErrors.resolution}
+                    </Text>
+                  )}
                 </div>
                 <div className='flex items-end'>
                   <Button

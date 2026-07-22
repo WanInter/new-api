@@ -17,14 +17,16 @@ Axmgc；只有需要切换其他上游型号时才配置显式模型映射。
 供应商文档中的 ¥4.50/次是上游价格，不会自动成为 New API 的用户售价；
 启用渠道前还需在模型定价设置中配置该公开模型的本地按次价格。
 
-视频为固定 15 秒；调用方提交的其他时长会在转发前统一改为 15 秒。渠道支持
-最多 9 张图片、3 个视频和 3 个音频参考素材。
+当前已接入的 `seedance-2-720p-933` 上游模型文档标注为固定 15 秒，并列出最多
+9 张图片、3 个视频和 3 个音频参考素材。这些是上游模型约束，不是渠道适配器的
+本地限制；其他映射模型应以其自身上游响应为准。
 
-公开 API 使用 Sora/OpenAI 兼容的顶层 `prompt`、`seconds`、`images`、
-`video_urls` 和 `audio_urls` 字段。网关会将这些字段转换为 Axmgc 原生的
-`content`。提示词中按请求数组顺序使用 `@Image1` 至 `@Image9`、`@Video1`
-至 `@Video3` 和 `@Audio1` 至 `@Audio3` 引用素材。`content` 只保留给
-`asset_id` 等高级原生能力。
+公开 API 使用 Sora/OpenAI 兼容的顶层 `prompt`、`duration`、`images`、
+`videos` 和 `audios` 字段。网关会将素材字段转换为 Axmgc 原生的 `content`，并将
+兼容别名 `seconds` 映射为原生 `duration`。`image`、`input_reference`、
+`image_urls`、`video_urls` 和 `audio_urls` 也可兼容使用，但跨渠道调用应优先使用
+前述标准字段。提示词中按请求数组顺序使用 `@Image1`、`@Video1` 和 `@Audio1`
+引用素材。`content` 只保留给 `asset_id` 等高级原生能力。
 
 建议调用方为每个任务设置 `X-Idempotency-Key`；同一任务的重试应保留该
 值，避免重复创建视频。
@@ -45,8 +47,8 @@ curl https://axmgc.com/v1/models \
 ## JSON 提交：Sora/OpenAI 兼容格式
 
 素材 URL 必须能被 Axmgc 上游直接访问，不能使用本地路径、内网地址或依赖登录
-Cookie 的 URL。`seconds` 用于与其他 Sora/OpenAI 兼容模型保持统一；此模型始终
-实际生成 15 秒视频。
+Cookie 的 URL。调用方未传时长、分辨率或模型特有参数时，网关不会补默认值；由
+上游决定默认行为或返回参数错误。
 
 ```bash
 curl -X POST https://your-new-api.example/v1/videos \
@@ -56,15 +58,15 @@ curl -X POST https://your-new-api.example/v1/videos \
   -d '{
     "model": "seedance-2-720p-933",
     "prompt": "@Image1 是主角，@Image2 是场景，参考 @Video1 的运镜和 @Audio1 的音乐氛围。",
-    "seconds": "15",
+    "duration": 15,
     "images": [
       "https://cdn.example.com/role.png",
       "https://cdn.example.com/scene.jpg"
     ],
-    "video_urls": [
+    "videos": [
       "https://cdn.example.com/camera.mp4"
     ],
-    "audio_urls": [
+    "audios": [
       "https://cdn.example.com/bgm.mp3"
     ],
     "aspect_ratio": "16:9",

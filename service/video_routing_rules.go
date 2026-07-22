@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -8,9 +9,12 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
 
 const DefaultVideoRoutingRequestPath = "/v1/videos"
+
+const videoRoutingSimulationConstraintScope = "public_fields_only"
 
 var supportedVideoRoutingRequestPaths = []string{
 	DefaultVideoRoutingRequestPath,
@@ -46,23 +50,28 @@ type VideoRoutingRuleSet struct {
 }
 
 type VideoRoutingSimulationRequest struct {
-	Model       string `json:"model"`
-	Group       string `json:"group"`
-	Images      int    `json:"images"`
-	Videos      int    `json:"videos"`
-	Audios      int    `json:"audios"`
-	Duration    *int   `json:"duration,omitempty"`
-	Resolution  string `json:"resolution,omitempty"`
-	ContentType string `json:"content_type,omitempty"`
-	Retry       int    `json:"retry,omitempty"`
-	RequestPath string `json:"request_path,omitempty"`
+	Model            string `json:"model"`
+	Group            string `json:"group"`
+	Images           int    `json:"images"`
+	Videos           int    `json:"videos"`
+	Audios           int    `json:"audios"`
+	Duration         *int   `json:"duration,omitempty"`
+	Ratio            string `json:"ratio,omitempty"`
+	AspectRatio      string `json:"aspect_ratio,omitempty"`
+	AspectRatioAlias string `json:"aspectRatio,omitempty"`
+	Size             string `json:"size,omitempty"`
+	Resolution       string `json:"resolution,omitempty"`
+	ContentType      string `json:"content_type,omitempty"`
+	Retry            int    `json:"retry,omitempty"`
+	RequestPath      string `json:"request_path,omitempty"`
 }
 
 type VideoRoutingSimulationResult struct {
 	VideoRoutingRuleSet
-	Features       VideoRequestFeatures `json:"features"`
-	Retry          int                  `json:"retry"`
-	TargetPriority *int64               `json:"target_priority,omitempty"`
+	Features        VideoRequestFeatures `json:"features"`
+	ConstraintScope string               `json:"constraint_scope"`
+	Retry           int                  `json:"retry"`
+	TargetPriority  *int64               `json:"target_priority,omitempty"`
 }
 
 func GetVideoRoutingRuleSet(publicModel, group string) (VideoRoutingRuleSet, error) {
@@ -159,7 +168,43 @@ func channelSupportsVideoRoutingRequestPath(channel *model.Channel, requestPath 
 	return false
 }
 
+// NormalizeVideoRoutingSimulationRequest applies the same public output-field
+// contract as a task request. Simulations intentionally model only public
+// fields: provider-specific nested wire hints are evaluated only from a real
+// request after its target channel is known. Only exact pixel sizes participate
+// in routing, because a provider-specific legacy size string has no shared
+// capability meaning.
+func NormalizeVideoRoutingSimulationRequest(request *VideoRoutingSimulationRequest) error {
+	if request == nil {
+		return fmt.Errorf("video routing simulation request is required")
+	}
+
+	output, err := relaycommon.NormalizeTaskSubmitVideoOutput(&relaycommon.TaskSubmitReq{
+		Ratio:            request.Ratio,
+		AspectRatio:      request.AspectRatio,
+		AspectRatioAlias: request.AspectRatioAlias,
+		Size:             request.Size,
+		Resolution:       request.Resolution,
+	})
+	if err != nil {
+		return err
+	}
+
+	request.Ratio = ""
+	request.AspectRatioAlias = ""
+	request.AspectRatio = output.AspectRatio
+	request.Size = ""
+	if output.HasPixelSize() {
+		request.Size = output.Size
+	}
+	request.Resolution = output.EffectiveResolution()
+	return nil
+}
+
 func SimulateVideoRouting(request VideoRoutingSimulationRequest) (VideoRoutingSimulationResult, error) {
+	if err := NormalizeVideoRoutingSimulationRequest(&request); err != nil {
+		return VideoRoutingSimulationResult{}, err
+	}
 	requestPath := strings.TrimSpace(request.RequestPath)
 	if requestPath == "" {
 		requestPath = DefaultVideoRoutingRequestPath
@@ -167,11 +212,14 @@ func SimulateVideoRouting(request VideoRoutingSimulationRequest) (VideoRoutingSi
 	rules, err := getVideoRoutingRuleSetForPath(request.Model, request.Group, requestPath)
 	result := VideoRoutingSimulationResult{
 		VideoRoutingRuleSet: rules,
+		ConstraintScope:     videoRoutingSimulationConstraintScope,
 		Features: VideoRequestFeatures{
 			Images:      request.Images,
 			Videos:      request.Videos,
 			Audios:      request.Audios,
 			Duration:    request.Duration,
+			AspectRatio: request.AspectRatio,
+			Size:        request.Size,
 			Resolution:  request.Resolution,
 			ContentType: request.ContentType,
 		},

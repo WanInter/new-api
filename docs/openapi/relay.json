@@ -547,7 +547,7 @@
       "post": {
         "summary": "创建视频 ",
         "deprecated": false,
-        "description": "OpenAI 兼容的视频生成接口。\n\n参考文档: https://platform.openai.com/docs/api-reference/videos/create\n",
+        "description": "OpenAI 兼容的视频生成接口。\n\nimages、videos、audios 是 URL 或 data URI 字符串引用；multipart 可重复同名文本字段。仅 OpenAI、Sora 与 Shishi 渠道支持这些字段的标准二进制 multipart part，其他渠道应使用 URL/data URI 或渠道专用文件字段。\n\n参考文档: https://platform.openai.com/docs/api-reference/videos/create\n",
         "operationId": "createVideo",
         "tags": [
           "视频生成/Sora兼容格式"
@@ -555,6 +555,12 @@
         "parameters": [],
         "requestBody": {
           "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoRequest"
+              },
+              "examples": {}
+            },
             "multipart/form-data": {
               "schema": {
                 "type": "object",
@@ -574,17 +580,89 @@
                     "example": "8",
                     "type": "string"
                   },
+                  "duration": {
+                    "description": "标准时长字段（秒）",
+                    "example": 8,
+                    "type": "integer"
+                  },
+                  "size": {
+                    "description": "旧兼容或渠道原生尺寸；不是跨渠道通用分辨率",
+                    "example": "1280x720",
+                    "type": "string"
+                  },
+                  "aspect_ratio": {
+                    "description": "标准输出比例，使用 W:H 格式，例如 16:9",
+                    "example": "16:9",
+                    "type": "string"
+                  },
+                  "resolution": {
+                    "description": "标准输出质量档。规范格式为正整数加 p（如 768p）或 4k；具体渠道/能力规则决定可用档位；不是像素宽高",
+                    "example": "720p",
+                    "type": "string"
+                  },
+                  "ratio": {
+                    "deprecated": true,
+                    "description": "aspect_ratio 的旧兼容别名",
+                    "example": "16:9",
+                    "type": "string"
+                  },
+                  "aspectRatio": {
+                    "deprecated": true,
+                    "description": "aspect_ratio 的 camelCase 兼容别名",
+                    "example": "16:9",
+                    "type": "string"
+                  },
+                  "images": {
+                    "description": "图片 URL 或 data URI 字符串；可重复提交多项。仅 OpenAI、Sora 与 Shishi 渠道支持同名二进制 part",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "videos": {
+                    "description": "视频 URL 或 data URI 字符串；可重复提交多项。仅 OpenAI、Sora 与 Shishi 渠道支持同名二进制 part",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "audios": {
+                    "description": "音频 URL 或 data URI 字符串；可重复提交多项。仅 OpenAI、Sora 与 Shishi 渠道支持同名二进制 part",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
                   "input_reference": {
                     "format": "binary",
                     "type": "string",
-                    "description": "参考图片文件",
+                    "description": "渠道专用参考图片文件字段；仅所选渠道明确支持时可用",
                     "example": ""
                   }
+                },
+                "required": [
+                  "model",
+                  "prompt"
+                ]
+              },
+              "encoding": {
+                "images": {
+                  "style": "form",
+                  "explode": true
+                },
+                "videos": {
+                  "style": "form",
+                  "explode": true
+                },
+                "audios": {
+                  "style": "form",
+                  "explode": true
                 }
               },
               "examples": {}
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -1223,6 +1301,116 @@
         "deprecated": false,
         "description": "查询视频生成任务的状态和结果。\n\n任务状态：\n- `queued`: 排队中\n- `in_progress`: 生成中\n- `completed`: 已完成\n- `failed`: 失败\n",
         "operationId": "getVideoGeneration",
+        "tags": [
+          "视频生成"
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "任务 ID",
+            "required": true,
+            "example": "abcd1234efgh",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功获取任务状态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoTaskResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "404": {
+            "description": "任务不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/videos/generations": {
+      "post": {
+        "summary": "创建视频生成任务（复数兼容路径）",
+        "deprecated": false,
+        "description": "提交视频生成任务，支持文生视频和图生视频。\n\n返回任务 ID，可通过 GET 接口查询任务状态。\n",
+        "operationId": "createVideosGeneration",
+        "tags": [
+          "视频生成"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoRequest"
+              },
+              "example": {
+                "model": "kling-v1",
+                "prompt": "宇航员在月球上漫步",
+                "duration": 5,
+                "width": 1280,
+                "height": 720
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "成功创建视频生成任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/videos/generations/{task_id}": {
+      "get": {
+        "summary": "获取视频生成任务状态（复数兼容路径）",
+        "deprecated": false,
+        "description": "查询视频生成任务的状态和结果。\n\n任务状态：\n- `queued`: 排队中\n- `in_progress`: 生成中\n- `completed`: 已完成\n- `failed`: 失败\n",
+        "operationId": "getVideosGeneration",
         "tags": [
           "视频生成"
         ],
@@ -4164,6 +4352,10 @@
       "VideoRequest": {
         "type": "object",
         "description": "视频生成请求",
+        "required": [
+          "model",
+          "prompt"
+        ],
         "properties": {
           "model": {
             "type": "string",
@@ -4177,13 +4369,66 @@
           },
           "image": {
             "type": "string",
-            "description": "图片输入 (URL 或 Base64)",
+            "description": "单图兼容别名（URL 或 data URI）",
             "example": "https://example.com/image.jpg"
+          },
+          "images": {
+            "description": "标准图片引用，接受 URL/data URI 单字符串或字符串数组",
+            "oneOf": [
+              {"type": "string"},
+              {"type": "array", "items": {"type": "string"}}
+            ]
+          },
+          "videos": {
+            "description": "标准视频引用，接受 URL/data URI 单字符串或字符串数组；具体模型决定是否支持",
+            "oneOf": [
+              {"type": "string"},
+              {"type": "array", "items": {"type": "string"}}
+            ]
+          },
+          "audios": {
+            "description": "标准音频引用，接受 URL/data URI 单字符串或字符串数组；具体模型决定是否支持",
+            "oneOf": [
+              {"type": "string"},
+              {"type": "array", "items": {"type": "string"}}
+            ]
           },
           "duration": {
             "type": "number",
             "description": "视频时长（秒）",
             "example": 5
+          },
+          "seconds": {
+            "type": "string",
+            "description": "时长的旧兼容字符串字段",
+            "example": "5"
+          },
+          "size": {
+            "type": "string",
+            "description": "旧兼容或渠道原生尺寸；不是跨渠道通用分辨率",
+            "example": "1280x720"
+          },
+          "aspect_ratio": {
+            "type": "string",
+            "description": "标准输出比例，使用 W:H 格式，例如 16:9",
+            "example": "16:9"
+          },
+          "resolution": {
+            "type": "string",
+            "description": "标准输出质量档。规范格式为正整数加 p（如 768p）或 4k；具体渠道/能力规则决定可用档位；不是像素宽高",
+            "example": "720p"
+          },
+          "ratio": {
+            "type": "string",
+            "deprecated": true,
+            "description": "aspect_ratio 的旧兼容别名",
+            "example": "16:9"
+          },
+          "aspectRatio": {
+            "type": "string",
+            "deprecated": true,
+            "description": "aspect_ratio 的 camelCase 兼容别名",
+            "example": "16:9"
           },
           "width": {
             "type": "integer",

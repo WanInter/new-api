@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -88,12 +89,16 @@ func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string
 
 	formData := url.Values(form.Value)
 	req = TaskSubmitReq{
-		Prompt:   formData.Get("prompt"),
-		Model:    formData.Get("model"),
-		Mode:     formData.Get("mode"),
-		Image:    formData.Get("image"),
-		Size:     formData.Get("size"),
-		Metadata: make(map[string]interface{}),
+		Prompt:           formData.Get("prompt"),
+		Model:            formData.Get("model"),
+		Mode:             formData.Get("mode"),
+		Image:            formData.Get("image"),
+		Size:             formData.Get("size"),
+		Ratio:            formData.Get("ratio"),
+		AspectRatio:      formData.Get("aspect_ratio"),
+		AspectRatioAlias: formData.Get("aspectRatio"),
+		Resolution:       formData.Get("resolution"),
+		Metadata:         make(map[string]interface{}),
 	}
 
 	if durationStr := formData.Get("seconds"); durationStr != "" {
@@ -130,6 +135,9 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 	}
 
 	prompt = req.Prompt
+	if _, err := NormalizeTaskSubmitVideoOutput(&req); err != nil {
+		return createTaskError(err, "invalid_video_output", http.StatusBadRequest, true)
+	}
 
 	if strings.TrimSpace(req.Model) == "" {
 		return createTaskError(fmt.Errorf("model field is required"), "missing_model", http.StatusBadRequest, true)
@@ -160,8 +168,22 @@ func isKnownTaskField(field string) bool {
 		"mode":            true,
 		"image":           true,
 		"images":          true,
+		"image_urls":      true,
+		"video":           true,
+		"videos":          true,
+		"video_url":       true,
+		"video_urls":      true,
+		"audio":           true,
+		"audios":          true,
+		"audio_url":       true,
+		"audio_urls":      true,
 		"size":            true,
+		"ratio":           true,
+		"aspect_ratio":    true,
+		"aspectRatio":     true,
+		"resolution":      true,
 		"duration":        true,
+		"seconds":         true,
 		"input_reference": true, // Sora 特有字段
 	}
 	return knownFields[field]
@@ -181,6 +203,9 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 	if err := common.UnmarshalBodyReusable(c, &req); err != nil {
 		return createTaskError(err, "invalid_request", http.StatusBadRequest, true)
 	}
+	if _, err := NormalizeTaskSubmitVideoOutput(&req); err != nil {
+		return createTaskError(err, "invalid_video_output", http.StatusBadRequest, true)
+	}
 
 	if taskErr := validatePrompt(req.Prompt); taskErr != nil {
 		return taskErr
@@ -193,4 +218,82 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 
 	storeTaskRequest(c, info, action, req)
 	return nil
+}
+
+// ValidateTaskMultipartFiles prevents an adaptor from silently dropping a
+// binary multipart part. URL and data-URI values are still decoded through
+// TaskSubmitReq as usual. Every allowed field below is consumed by its
+// adaptor; all other task channels fail before billing.
+func ValidateTaskMultipartFiles(c *gin.Context, info *RelayInfo) error {
+	if c == nil || !strings.HasPrefix(strings.ToLower(c.GetHeader("Content-Type")), "multipart/form-data") {
+		return nil
+	}
+
+	form, err := common.ParseMultipartFormReusable(c)
+	if err != nil {
+		return err
+	}
+	defer form.RemoveAll()
+
+	unsupported := make([]string, 0, len(form.File))
+	for field, files := range form.File {
+		if len(files) > 0 && !channelAllowsTaskMultipartFile(info, field) {
+			unsupported = append(unsupported, field)
+		}
+	}
+	if len(unsupported) == 0 {
+		return nil
+	}
+	sort.Strings(unsupported)
+
+	return fmt.Errorf(
+		"binary multipart uploads for %s are not supported by this channel; use URL or data URI values, or a channel-specific file field instead",
+		strings.Join(unsupported, ", "),
+	)
+}
+
+func channelAllowsTaskMultipartFile(info *RelayInfo, field string) bool {
+	if info == nil || info.ChannelMeta == nil {
+		return false
+	}
+	switch info.ChannelType {
+	case constant.ChannelTypeOpenAI, constant.ChannelTypeSora, constant.ChannelTypeShishi:
+		return isOpenAICompatibleVideoFileField(field)
+	case constant.ChannelTypeGemini, constant.ChannelTypeVertexAi, constant.ChannelTypeJimeng:
+		return field == "input_reference"
+	case constant.ChannelTypeJimengDimensio:
+		return isJimengDimensioFileField(field)
+	default:
+		return false
+	}
+}
+
+// isOpenAICompatibleVideoFileField lists the binary fields that the
+// Sora-compatible adaptors deliberately preserve. The aliases are retained
+// for existing clients, but arbitrary multipart files must not bypass media
+// validation merely because the provider body is rebuilt transparently.
+func isOpenAICompatibleVideoFileField(field string) bool {
+	switch field {
+	case "image", "images", "image_urls", "input_reference",
+		"video", "videos", "video_url", "video_urls",
+		"audio", "audios", "audio_url", "audio_urls":
+		return true
+	default:
+		return false
+	}
+}
+
+func isJimengDimensioFileField(field string) bool {
+	for prefix, max := range map[string]int{
+		"image_file_": 9,
+		"video_file_": 3,
+		"audio_file_": 3,
+	} {
+		if !strings.HasPrefix(field, prefix) {
+			continue
+		}
+		index, err := strconv.Atoi(strings.TrimPrefix(field, prefix))
+		return err == nil && index >= 1 && index <= max
+	}
+	return false
 }

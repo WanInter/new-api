@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -9,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -60,6 +60,48 @@ func (e *VideoRequestFeaturesError) Unwrap() error {
 	return e.Err
 }
 
+// videoRequestOutputError marks a malformed public video output request. It
+// lets the distributor retain the API-level invalid_video_output error code
+// when validation happens during channel selection.
+type videoRequestOutputError struct {
+	err error
+}
+
+func (e *videoRequestOutputError) Error() string {
+	return e.err.Error()
+}
+
+func (e *videoRequestOutputError) Unwrap() error {
+	return e.err
+}
+
+// IsVideoRequestOutputError reports whether routing rejected the request's
+// normalized public video output fields.
+func IsVideoRequestOutputError(err error) bool {
+	var outputErr *videoRequestOutputError
+	return errors.As(err, &outputErr)
+}
+
+// videoRequestFeatureDTOError means the JSON itself was valid, but it could
+// not be represented by the common task DTO used only for routing features.
+// An unconstrained channel may still understand that upstream-specific shape.
+type videoRequestFeatureDTOError struct {
+	err error
+}
+
+func (e *videoRequestFeatureDTOError) Error() string {
+	return e.err.Error()
+}
+
+func (e *videoRequestFeatureDTOError) Unwrap() error {
+	return e.err
+}
+
+func isVideoRequestFeatureDTOError(err error) bool {
+	var dtoErr *videoRequestFeatureDTOError
+	return errors.As(err, &dtoErr)
+}
+
 func extractVideoRequestFeatures(c *gin.Context) (VideoRequestFeatures, error) {
 	features := VideoRequestFeatures{ContentType: c.GetHeader("Content-Type")}
 	contentType := strings.ToLower(features.ContentType)
@@ -89,7 +131,7 @@ func extractVideoRequestFeatures(c *gin.Context) (VideoRequestFeatures, error) {
 		if err != nil {
 			return features, err
 		}
-		return extractFormVideoRequestFeatures(values, nil, features), nil
+		return extractFormVideoRequestFeatures(values, nil, features)
 	default:
 		return features, nil
 	}
@@ -101,7 +143,11 @@ func extractJSONVideoRequestFeatures(body []byte, features VideoRequestFeatures)
 	}
 	var request relaycommon.TaskSubmitReq
 	if err := common.Unmarshal(body, &request); err != nil {
-		return features, err
+		return features, &videoRequestFeatureDTOError{err: err}
+	}
+	output, err := relaycommon.NormalizeTaskSubmitVideoOutput(&request)
+	if err != nil {
+		return features, &videoRequestOutputError{err: err}
 	}
 
 	features.Images = countNonEmptyFeatureStrings(request.Images) +
@@ -120,7 +166,12 @@ func extractJSONVideoRequestFeatures(body []byte, features VideoRequestFeatures)
 		features.profiledContent = &profiledContent
 	}
 	features.Duration = parseJSONDuration(body)
-	features.Resolution = parseJSONVideoResolution(body, request.Metadata)
+	features.AspectRatio = output.AspectRatio
+	if output.HasPixelSize() {
+		features.Size = output.Size
+	}
+	features.Resolution = output.EffectiveResolution()
+	features.providerResolutionHints = parseJSONVideoProviderResolutionHints(body)
 	return features, nil
 }
 
@@ -175,21 +226,66 @@ func extractMultipartVideoRequestFeatures(c *gin.Context, features VideoRequestF
 		return features, err
 	}
 	defer form.RemoveAll()
-	return extractFormVideoRequestFeatures(form.Value, form.File, features), nil
+	return extractFormVideoRequestFeatures(form.Value, form.File, features)
 }
 
-func extractFormVideoRequestFeatures(values url.Values, files map[string][]*multipart.FileHeader, features VideoRequestFeatures) VideoRequestFeatures {
+func extractFormVideoRequestFeatures(values url.Values, files map[string][]*multipart.FileHeader, features VideoRequestFeatures) (VideoRequestFeatures, error) {
 	features.Images = countFormMedia(values, files, "image", "images", "image_urls", "input_reference")
 	features.Videos = countFormMedia(values, files, "video", "videos", "video_url", "video_urls")
 	features.Audios = countFormMedia(values, files, "audio", "audios", "audio_url", "audio_urls")
+	// Jimeng Dimensio consumes its binary references from numbered file fields.
+	// Count them here so an exact media capability rule is enforced before the
+	// channel is selected.
+	features.Images += countNumberedFormFiles(files, "image_file_", 9)
+	features.Videos += countNumberedFormFiles(files, "video_file_", 3)
+	features.Audios += countNumberedFormFiles(files, "audio_file_", 3)
 	for _, field := range []string{"duration", "seconds"} {
 		if parsed, ok := parseDurationString(values.Get(field)); ok {
 			features.Duration = common.GetPointer(parsed)
 			break
 		}
 	}
-	features.Resolution = parseVideoResolution(values.Get("resolution"))
-	return features
+	request, err := taskSubmitReqFromFormValues(values)
+	if err != nil {
+		return features, &videoRequestFeatureDTOError{err: err}
+	}
+	output, err := relaycommon.NormalizeTaskSubmitVideoOutput(&request)
+	if err != nil {
+		return features, &videoRequestOutputError{err: err}
+	}
+	features.AspectRatio = output.AspectRatio
+	if output.HasPixelSize() {
+		features.Size = output.Size
+	}
+	features.Resolution = output.EffectiveResolution()
+	return features, nil
+}
+
+// taskSubmitReqFromFormValues mirrors common.UnmarshalBodyReusable's form
+// conversion so routing evaluates metadata output fallbacks exactly as the
+// selected task adaptor will.
+func taskSubmitReqFromFormValues(values url.Values) (relaycommon.TaskSubmitReq, error) {
+	formMap := make(map[string]any, len(values))
+	for key, entries := range values {
+		switch len(entries) {
+		case 0:
+			continue
+		case 1:
+			formMap[key] = entries[0]
+		default:
+			formMap[key] = entries
+		}
+	}
+
+	body, err := common.Marshal(formMap)
+	if err != nil {
+		return relaycommon.TaskSubmitReq{}, err
+	}
+	var request relaycommon.TaskSubmitReq
+	if err := common.Unmarshal(body, &request); err != nil {
+		return relaycommon.TaskSubmitReq{}, err
+	}
+	return request, nil
 }
 
 func countFormMedia(values url.Values, files map[string][]*multipart.FileHeader, fields ...string) int {
@@ -201,6 +297,14 @@ func countFormMedia(values url.Values, files map[string][]*multipart.FileHeader,
 			}
 		}
 		count += len(files[field])
+	}
+	return count
+}
+
+func countNumberedFormFiles(files map[string][]*multipart.FileHeader, prefix string, max int) int {
+	count := 0
+	for index := 1; index <= max; index++ {
+		count += len(files[prefix+strconv.Itoa(index)])
 	}
 	return count
 }
@@ -228,21 +332,24 @@ func parseJSONDuration(body []byte) *int {
 	return nil
 }
 
-func parseJSONVideoResolution(body []byte, metadata map[string]interface{}) string {
-	for _, field := range []string{"resolution", "parameters.resolution", "params.resolution"} {
-		if resolution := parseVideoResolution(gjson.GetBytes(body, field).String()); resolution != "" {
-			return resolution
-		}
+func parseJSONVideoProviderResolutionHints(body []byte) videoProviderResolutionHints {
+	return videoProviderResolutionHints{
+		soraParameters: parseJSONVideoResolutionHint(body, "parameters.resolution"),
+		aggcParams:     parseJSONVideoResolutionHint(body, "params.resolution"),
 	}
-	if resolution, ok := metadata["resolution"].(string); ok {
-		return parseVideoResolution(resolution)
+}
+
+func parseJSONVideoResolutionHint(body []byte, field string) string {
+	result := gjson.GetBytes(body, field)
+	if !result.Exists() || result.Type == gjson.Null {
+		return ""
 	}
-	return ""
+	return parseVideoResolution(result.String())
 }
 
 func parseVideoResolution(value string) string {
-	resolution, ok := dto.NormalizeVideoResolution(value)
-	if !ok {
+	resolution, err := relaycommon.NormalizeVideoOutputResolution(value)
+	if err != nil {
 		return ""
 	}
 	return resolution

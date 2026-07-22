@@ -81,6 +81,26 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionTextGenerate)
 }
 
+// ValidateMappedRequest runs after model mapping so model-specific Veo output
+// capabilities are checked before the request reaches billing.
+func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "get_task_request_failed", http.StatusBadRequest)
+	}
+	image, err := geminitask.ResolveVeoImageInput(c, &req)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_media_input", http.StatusBadRequest)
+	}
+	if image != nil && info != nil && info.TaskRelayInfo != nil {
+		info.Action = constant.TaskActionGenerate
+	}
+	if _, err := geminitask.ResolveVeoRequestOutput(&req, vertexVeoModelName(info)); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_video_output", http.StatusBadRequest)
+	}
+	return nil
+}
+
 // BuildRequestURL constructs the upstream URL.
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	adc := &vertexcore.Credentials{}
@@ -131,7 +151,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	req := v.(relaycommon.TaskSubmitReq)
 
 	seconds := geminitask.ResolveVeoDuration(req.Metadata, req.Duration, req.Seconds)
-	resolution := geminitask.ResolveVeoResolution(req.Metadata, req.Size)
+	resolution := geminitask.ResolveVeoRequestResolution(req.Resolution, req.Metadata, req.Size)
 	resRatio := geminitask.VeoResolutionRatio(info.UpstreamModelName, resolution)
 
 	return map[string]float64{
@@ -149,11 +169,13 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	req := v.(relaycommon.TaskSubmitReq)
 
 	instance := geminitask.VeoInstance{Prompt: req.Prompt}
-	if img := geminitask.ExtractMultipartImage(c, info); img != nil {
-		instance.Image = img
-	} else if len(req.Images) > 0 {
-		if parsed := geminitask.ParseImageInput(req.Images[0]); parsed != nil {
-			instance.Image = parsed
+	image, err := geminitask.ResolveVeoImageInput(c, &req)
+	if err != nil {
+		return nil, err
+	}
+	if image != nil {
+		instance.Image = image
+		if info != nil && info.TaskRelayInfo != nil {
 			info.Action = constant.TaskActionGenerate
 		}
 	}
@@ -165,11 +187,15 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if params.DurationSeconds == 0 && req.Duration > 0 {
 		params.DurationSeconds = req.Duration
 	}
-	if params.Resolution == "" && req.Size != "" {
-		params.Resolution = geminitask.SizeToVeoResolution(req.Size)
+	output, err := geminitask.ResolveVeoRequestOutput(&req, vertexVeoModelName(info))
+	if err != nil {
+		return nil, err
 	}
-	if params.AspectRatio == "" && req.Size != "" {
-		params.AspectRatio = geminitask.SizeToVeoAspectRatio(req.Size)
+	if output.Resolution != "" {
+		params.Resolution = output.Resolution
+	}
+	if output.AspectRatio != "" {
+		params.AspectRatio = output.AspectRatio
 	}
 	params.Resolution = strings.ToLower(params.Resolution)
 	params.SampleCount = 1
@@ -184,6 +210,18 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, err
 	}
 	return bytes.NewReader(data), nil
+}
+
+func vertexVeoModelName(info *relaycommon.RelayInfo) string {
+	if info == nil {
+		return ""
+	}
+	if info.ChannelMeta != nil {
+		if modelName := strings.TrimSpace(info.ChannelMeta.UpstreamModelName); modelName != "" {
+			return modelName
+		}
+	}
+	return strings.TrimSpace(info.OriginModelName)
 }
 
 // DoRequest delegates to common helper.

@@ -25,15 +25,22 @@ export type VideoModelCapability = {
   images?: VideoMediaRange
   videos?: VideoMediaRange
   audios?: VideoMediaRange
+  video_audio_total?: VideoMediaRange
   duration?: VideoMediaRange
   fixed_duration?: number
+  aspect_ratios?: VideoAspectRatio[]
   resolutions?: VideoResolution[]
+  sizes?: VideoPixelSize[]
   require_json?: boolean
   require_text?: boolean
   content_precedence?: boolean
 }
 
-export type VideoResolution = '480p' | '720p' | '1080p' | '4k'
+export type VideoAspectRatio = string
+
+export type VideoPixelSize = string
+
+export type VideoResolution = string
 
 export type VideoRoutingPolicy = {
   id: number
@@ -70,6 +77,10 @@ export type VideoConstraintViolation = {
   field?: string
   actual?: number
   expected?: number
+  aspect_ratio?: VideoAspectRatio
+  supported_aspect_ratios?: VideoAspectRatio[]
+  size?: VideoPixelSize
+  supported_sizes?: VideoPixelSize[]
   resolution?: VideoResolution
   supported_resolutions?: VideoResolution[]
 }
@@ -133,6 +144,8 @@ export type VideoRoutingSimulationRequest = {
   videos: number
   audios: number
   duration?: number
+  aspect_ratio?: VideoAspectRatio
+  size?: VideoPixelSize
   resolution?: VideoResolution
   content_type: string
   retry: number
@@ -145,9 +158,12 @@ export type VideoRoutingSimulationResult = VideoRoutingRuleSet & {
     videos: number
     audios: number
     duration?: number
+    aspect_ratio?: VideoAspectRatio
+    size?: VideoPixelSize
     resolution?: VideoResolution
     content_type?: string
   }
+  constraint_scope: 'public_fields_only'
   retry: number
   target_priority?: number
 }

@@ -3,6 +3,8 @@ import {
   capabilityRuleFormSchema,
   capabilityToFormValues,
   formValuesToCapability,
+  normalizeVideoOutputListValue,
+  normalizeVideoSimulationOutput,
 } from './capability-form'
 
 describe('routing capability override form', () => {
@@ -19,6 +21,35 @@ describe('routing capability override form', () => {
     )
   })
 
+  test('round-trips the combined video and audio total range', () => {
+    const values = capabilityToFormValues({
+      video_audio_total: { min: 0, max: 3 },
+    })
+
+    expect(values.video_audio_total_min).toBe('0')
+    expect(values.video_audio_total_max).toBe('3')
+    expect(JSON.stringify(formValuesToCapability(values))).toBe(
+      JSON.stringify({ video_audio_total: { min: 0, max: 3 } })
+    )
+  })
+
+  test('rejects a reversed combined video and audio total range', () => {
+    const result = capabilityRuleFormSchema.safeParse({
+      ...capabilityToFormValues(),
+      video_audio_total_min: '4',
+      video_audio_total_max: '3',
+    })
+
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(
+        result.error.issues.some(
+          (issue) => issue.path[0] === 'video_audio_total_max'
+        )
+      ).toBe(true)
+    }
+  })
+
   test('rejects reversed ranges and mixed duration modes', () => {
     const result = capabilityRuleFormSchema.safeParse({
       images_min: '4',
@@ -27,10 +58,14 @@ describe('routing capability override form', () => {
       videos_max: '',
       audios_min: '',
       audios_max: '',
+      video_audio_total_min: '',
+      video_audio_total_max: '',
       duration_min: '5',
       duration_max: '15',
       fixed_duration: '10',
+      aspect_ratios: [],
       resolutions: [],
+      sizes: [],
       require_json: 'inherit',
       require_text: 'inherit',
       content_precedence: 'inherit',
@@ -58,10 +93,14 @@ describe('routing capability override form', () => {
       videos_max: '',
       audios_min: '',
       audios_max: '',
+      video_audio_total_min: '',
+      video_audio_total_max: '',
       duration_min: '',
       duration_max: '',
       fixed_duration: '',
+      aspect_ratios: [],
       resolutions: [],
+      sizes: [],
       require_json: 'inherit',
       require_text: 'inherit',
       content_precedence: 'inherit',
@@ -71,13 +110,96 @@ describe('routing capability override form', () => {
   })
 
   test('serializes selected resolution capabilities', () => {
-    const values = capabilityToFormValues({ resolutions: ['720p', '4k'] })
+    const values = capabilityToFormValues({
+      resolutions: ['720p', '768p', '4k'],
+    })
 
     expect(JSON.stringify(values.resolutions)).toBe(
-      JSON.stringify(['720p', '4k'])
+      JSON.stringify(['720p', '768p', '4k'])
     )
     expect(JSON.stringify(formValuesToCapability(values))).toBe(
-      JSON.stringify({ resolutions: ['720p', '4k'] })
+      JSON.stringify({ resolutions: ['720p', '768p', '4k'] })
     )
+  })
+
+  test('normalizes public video output capability values', () => {
+    expect(normalizeVideoOutputListValue('aspect_ratios', ' 32:18 ')).toBe(
+      '16:9'
+    )
+    expect(normalizeVideoOutputListValue('sizes', '1280x0720')).toBe('1280x720')
+    expect(normalizeVideoOutputListValue('resolutions', '2160P')).toBe('4k')
+    expect(normalizeVideoOutputListValue('resolutions', '768p')).toBe('768p')
+  })
+
+  test('rejects invalid and duplicate normalized output capability values', () => {
+    const result = capabilityRuleFormSchema.safeParse({
+      ...capabilityToFormValues(),
+      aspect_ratios: ['16:9', '32:18'],
+      resolutions: ['invalid'],
+      sizes: ['1280X720'],
+    })
+
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      const paths = result.error.issues.map((issue) => issue.path.join('.'))
+      expect(paths.includes('aspect_ratios.1')).toBe(true)
+      expect(paths.includes('resolutions.0')).toBe(true)
+      expect(paths.includes('sizes.0')).toBe(true)
+    }
+  })
+
+  test('normalizes and validates video simulator output fields together', () => {
+    const cases = [
+      {
+        input: {
+          aspect_ratio: '32:18',
+          size: '1280x0720',
+          resolution: '2160P',
+        },
+        expected: {
+          output: {
+            aspect_ratio: '16:9',
+            size: '1280x720',
+            resolution: '4k',
+          },
+        },
+      },
+      {
+        input: { aspect_ratio: 'wide' },
+        expected: { error: 'invalid_aspect_ratio' },
+      },
+      {
+        input: { size: '1280X720' },
+        expected: { error: 'invalid_size' },
+      },
+      {
+        input: { resolution: 'hd' },
+        expected: { error: 'invalid_resolution' },
+      },
+      {
+        input: { aspect_ratio: '9:16', size: '1280x720' },
+        expected: { error: 'size_aspect_ratio_conflict' },
+      },
+      {
+        input: { aspect_ratio: 'adaptive', size: '1280x720' },
+        expected: { error: 'size_aspect_ratio_conflict' },
+      },
+      {
+        input: { size: '1280x720', resolution: '720p' },
+        expected: {
+          output: {
+            aspect_ratio: undefined,
+            size: '1280x720',
+            resolution: '720p',
+          },
+        },
+      },
+    ]
+
+    for (const testCase of cases) {
+      expect(JSON.stringify(normalizeVideoSimulationOutput(testCase.input))).toBe(
+        JSON.stringify(testCase.expected)
+      )
+    }
   })
 })

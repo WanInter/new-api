@@ -73,6 +73,11 @@ import {
 } from './api'
 import { CapabilityRuleEditor } from './components/capability-rule-editor'
 import { ImageRoutingPanel } from './components/image-routing-panel'
+import {
+  normalizeVideoOutputListValue,
+  normalizeVideoSimulationOutput,
+  type VideoSimulationOutputError,
+} from './lib/capability-form'
 import type {
   VideoMediaRange,
   VideoResolution,
@@ -112,6 +117,18 @@ function formatResolutionCapability(resolutions?: VideoResolution[]) {
   return resolutions?.length ? resolutions.join(', ') : '—'
 }
 
+function videoSimulationOutputErrorMessage(
+  error: VideoSimulationOutputError
+): string {
+  const messages: Record<VideoSimulationOutputError, string> = {
+    invalid_aspect_ratio: 'Use W:H aspect ratios or adaptive',
+    invalid_size: 'Use WxH pixel sizes',
+    invalid_resolution: 'Use a quality label such as 720p or 4k',
+    size_aspect_ratio_conflict: 'Pixel size conflicts with aspect ratio',
+  }
+  return messages[error]
+}
+
 function violationText(
   violation: NonNullable<VideoRoutingCandidate['violations']>[number],
   t: (key: string, options?: Record<string, unknown>) => string
@@ -122,6 +139,14 @@ function violationText(
     images_above_max: t('Supports at most {{expected}} images', values),
     videos_above_max: t('Supports at most {{expected}} videos', values),
     audios_above_max: t('Supports at most {{expected}} audios', values),
+    video_audio_total_below_min: t(
+      'Requires at least {{expected}} videos and audios in total',
+      values
+    ),
+    video_audio_total_above_max: t(
+      'Supports at most {{expected}} videos and audios in total',
+      values
+    ),
     duration_mismatch: t('Requires a duration of {{expected}} seconds', values),
     duration_below_min: t(
       'Requires a duration of at least {{expected}} seconds',
@@ -136,6 +161,20 @@ function violationText(
       {
         resolution: violation.resolution,
         supported_resolutions: violation.supported_resolutions?.join(', '),
+      }
+    ),
+    aspect_ratio_not_supported: t(
+      'Aspect ratio {{aspect_ratio}} is not supported. Supported: {{supported_aspect_ratios}}',
+      {
+        aspect_ratio: violation.aspect_ratio,
+        supported_aspect_ratios: violation.supported_aspect_ratios?.join(', '),
+      }
+    ),
+    size_not_supported: t(
+      'Pixel size {{size}} is not supported. Supported: {{supported_sizes}}',
+      {
+        size: violation.size,
+        supported_sizes: violation.supported_sizes?.join(', '),
       }
     ),
     content_type_mismatch: t('Requires an application/json request'),
@@ -217,7 +256,7 @@ function CandidateTable({
   }
   return (
     <div className='overflow-x-auto rounded-md border'>
-      <Table className='min-w-[1628px] table-fixed'>
+      <Table className='min-w-[1756px] table-fixed'>
         <TableHeader>
           <TableRow>
             <TableHead className='w-[520px]'>{t('Channel')}</TableHead>
@@ -230,6 +269,9 @@ function CandidateTable({
             </TableHead>
             <TableHead className='w-[72px] text-center'>
               {t('Audios')}
+            </TableHead>
+            <TableHead className='w-[128px] text-center leading-tight whitespace-normal'>
+              {t('Video + audio total')}
             </TableHead>
             <TableHead className='w-[84px] text-center'>
               {t('Duration')}
@@ -253,7 +295,7 @@ function CandidateTable({
           {candidates.length === 0 ? (
             <TableRow>
               <TableCell
-                colSpan={11}
+                colSpan={12}
                 className='text-muted-foreground h-28 text-center'
               >
                 {t('No routing candidates found')}
@@ -298,6 +340,9 @@ function CandidateTable({
                 </TableCell>
                 <TableCell className='text-center'>
                   {formatRange(candidate.capability?.audios)}
+                </TableCell>
+                <TableCell className='text-center'>
+                  {formatRange(candidate.capability?.video_audio_total)}
                 </TableCell>
                 <TableCell className='text-center'>
                   {formatDurationCapability(candidate.capability)}
@@ -457,8 +502,26 @@ function CandidateDetails({
                 <dd>{formatRange(candidate.capability?.videos)}</dd>
                 <dt className='text-muted-foreground'>{t('Audios')}</dt>
                 <dd>{formatRange(candidate.capability?.audios)}</dd>
+                <dt className='text-muted-foreground'>
+                  {t('Video + audio total')}
+                </dt>
+                <dd>{formatRange(candidate.capability?.video_audio_total)}</dd>
                 <dt className='text-muted-foreground'>{t('Duration')}</dt>
                 <dd>{formatDurationCapability(candidate.capability)}</dd>
+                <dt className='text-muted-foreground'>
+                  {t('Aspect ratio')}
+                </dt>
+                <dd>
+                  {candidate.capability?.aspect_ratios?.length
+                    ? candidate.capability.aspect_ratios.join(', ')
+                    : t('Any')}
+                </dd>
+                <dt className='text-muted-foreground'>{t('Pixel size')}</dt>
+                <dd>
+                  {candidate.capability?.sizes?.length
+                    ? candidate.capability.sizes.join(', ')
+                    : t('Any')}
+                </dd>
                 <dt className='text-muted-foreground'>{t('Resolution')}</dt>
                 <dd>
                   {candidate.capability?.resolutions?.length
@@ -643,7 +706,17 @@ export function RoutingRules() {
   }
 
   const runSimulation = () => {
-    simulationMutation.mutate({ ...simulation, model: selectedModel, group })
+    const normalizedOutput = normalizeVideoSimulationOutput(simulation)
+    if ('error' in normalizedOutput) {
+      toast.error(t(videoSimulationOutputErrorMessage(normalizedOutput.error)))
+      return
+    }
+    simulationMutation.mutate({
+      ...simulation,
+      ...normalizedOutput.output,
+      model: selectedModel,
+      group,
+    })
   }
 
   return (
@@ -835,35 +908,86 @@ export function RoutingRules() {
                       </div>
                     ))}
                     <div className='space-y-1.5'>
-                      <Label htmlFor='simulation-resolution'>
-                        {t('Resolution')}
+                      <Label htmlFor='simulation-aspect-ratio'>
+                        {t('Aspect ratio')}
                       </Label>
-                      <NativeSelect
-                        id='simulation-resolution'
-                        value={simulation.resolution || ''}
+                      <Input
+                        id='simulation-aspect-ratio'
+                        value={simulation.aspect_ratio || ''}
+                        placeholder='16:9'
                         onChange={(event) =>
                           setSimulation((current) => ({
                             ...current,
-                            resolution: (event.target.value || undefined) as
-                              | VideoResolution
-                              | undefined,
+                            aspect_ratio: event.target.value || undefined,
                           }))
                         }
-                      >
-                        <NativeSelectOption value=''>
-                          {t('Any')}
-                        </NativeSelectOption>
-                        {(['480p', '720p', '1080p', '4k'] as const).map(
-                          (resolution) => (
-                            <NativeSelectOption
-                              key={resolution}
-                              value={resolution}
-                            >
-                              {resolution}
-                            </NativeSelectOption>
+                        onBlur={(event) => {
+                          const normalized = normalizeVideoOutputListValue(
+                            'aspect_ratios',
+                            event.target.value
                           )
-                        )}
-                      </NativeSelect>
+                          if (normalized) {
+                            setSimulation((current) => ({
+                              ...current,
+                              aspect_ratio: normalized,
+                            }))
+                          }
+                        }}
+                      />
+                    </div>
+                    <div className='space-y-1.5'>
+                      <Label htmlFor='simulation-size'>{t('Pixel size')}</Label>
+                      <Input
+                        id='simulation-size'
+                        value={simulation.size || ''}
+                        placeholder='1280x720'
+                        onChange={(event) =>
+                          setSimulation((current) => ({
+                            ...current,
+                            size: event.target.value || undefined,
+                          }))
+                        }
+                        onBlur={(event) => {
+                          const normalized = normalizeVideoOutputListValue(
+                            'sizes',
+                            event.target.value
+                          )
+                          if (normalized) {
+                            setSimulation((current) => ({
+                              ...current,
+                              size: normalized,
+                            }))
+                          }
+                        }}
+                      />
+                    </div>
+                    <div className='space-y-1.5'>
+                      <Label htmlFor='simulation-resolution'>
+                        {t('Resolution')}
+                      </Label>
+                      <Input
+                        id='simulation-resolution'
+                        value={simulation.resolution || ''}
+                        placeholder='720p, 768p, 4k'
+                        onChange={(event) =>
+                          setSimulation((current) => ({
+                            ...current,
+                            resolution: event.target.value || undefined,
+                          }))
+                        }
+                        onBlur={(event) => {
+                          const normalized = normalizeVideoOutputListValue(
+                            'resolutions',
+                            event.target.value
+                          )
+                          if (normalized) {
+                            setSimulation((current) => ({
+                              ...current,
+                              resolution: normalized,
+                            }))
+                          }
+                        }}
+                      />
                     </div>
                     <div className='flex items-end'>
                       <Button

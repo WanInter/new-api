@@ -2128,7 +2128,6 @@
     "暂无精确模型计费规则": "Aucune règle de tarification précise par modèle",
     "编辑规则": "Modifier la règle",
     "主体类型": "Type de sujet",
-    "删除规则": "Supprimer la règle",
     "确定删除此精确模型计费规则吗？": "Supprimer cette règle de tarification précise par modèle ?",
     "用户 ID": "ID utilisateur",
     "模型广场": "Marché des modèles",
@@ -2787,7 +2786,6 @@
     "编辑模式": "Mode d'édition",
     "编辑用户": "Modifier l'utilisateur",
     "编辑聊天配置": "Modifier la configuration de discussion",
-    "编辑规则": "Modifier la règle",
     "编辑问答": "Modifier la FAQ",
     "缩词": "Raccourcir",
     "缺省 MaxTokens": "MaxTokens par défaut",
@@ -3713,6 +3711,8 @@
     "最多支持 {{expected}} 张图片": "Prend en charge au maximum {{expected}} images",
     "最多支持 {{expected}} 个视频": "Prend en charge au maximum {{expected}} vidéos",
     "最多支持 {{expected}} 个音频": "Prend en charge au maximum {{expected}} fichiers audio",
+    "视频与音频合计至少需要 {{expected}} 个": "Nécessite au total au moins {{expected}} vidéos et fichiers audio",
+    "视频与音频合计最多支持 {{expected}} 个": "Prend en charge au total au maximum {{expected}} vidéos et fichiers audio",
     "仅支持 {{expected}} 秒时长": "Nécessite une durée de {{expected}} secondes",
     "时长至少为 {{expected}} 秒": "Nécessite une durée d'au moins {{expected}} secondes",
     "时长最多为 {{expected}} 秒": "Prend en charge une durée maximale de {{expected}} secondes",
@@ -3779,6 +3779,7 @@
     "分流覆盖已重置": "Surcharge de routage réinitialisée",
     "重置分流覆盖失败": "Échec de la réinitialisation de la surcharge de routage",
     "视频路由": "Routage video",
+    "视频与音频合计": "Total vidéo et audio",
     "图片路由": "Routage image",
     "渠道不存在": "Canal introuvable",
     "渠道已禁用": "Canal desactive",
@@ -3840,6 +3841,13 @@
     "未找到采集请求": "Aucune requête capturée trouvée",
     "清晰度": "Résolution",
     "支持的清晰度": "Résolutions prises en charge",
-    "清晰度 {{resolution}} 不受支持，支持：{{supported_resolutions}}": "La résolution {{resolution}} n'est pas prise en charge. Prises en charge : {{supported_resolutions}}"
+    "清晰度 {{resolution}} 不受支持，支持：{{supported_resolutions}}": "La résolution {{resolution}} n'est pas prise en charge. Prises en charge : {{supported_resolutions}}",
+    "画面比例": "Format d'image",
+    "像素尺寸": "Taille en pixels",
+    "支持的画面比例": "Formats d'image pris en charge",
+    "支持的像素尺寸": "Tailles en pixels prises en charge",
+    "画面比例 {{aspect_ratio}} 不受支持，支持：{{supported_aspect_ratios}}": "Le format d'image {{aspect_ratio}} n'est pas pris en charge. Formats pris en charge : {{supported_aspect_ratios}}",
+    "像素尺寸 {{size}} 不受支持，支持：{{supported_sizes}}": "La taille en pixels {{size}} n’est pas prise en charge. Tailles prises en charge : {{supported_sizes}}",
+    "像素尺寸与画面比例冲突": "La taille en pixels ne correspond pas au format d'image"
   }
 }

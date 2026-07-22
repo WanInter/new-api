@@ -11,10 +11,12 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -140,46 +142,65 @@ func TestNormalizeVideoSeconds(t *testing.T) {
 	}
 }
 
-func TestNormalizeVideoSecondsFromFormUsesDurationFallback(t *testing.T) {
-	require.Equal(t, "15", normalizeVideoSecondsFromForm(map[string][]string{"duration": {"15s"}}))
-	require.Equal(t, "10", normalizeVideoSecondsFromForm(map[string][]string{"seconds": {"10s"}, "duration": {"15s"}}))
+func TestMapDurationToSoraSecondsPreservesValues(t *testing.T) {
+	tests := []struct {
+		name string
+		body map[string]any
+		want any
+	}{
+		{name: "integer duration", body: map[string]any{"duration": 15}, want: "15"},
+		{name: "fractional duration", body: map[string]any{"duration": 14.5}, want: "14.5"},
+		{name: "explicit zero duration", body: map[string]any{"duration": 0}, want: "0"},
+		{name: "duration takes precedence over seconds", body: map[string]any{"duration": 15, "seconds": 0}, want: "15"},
+		{name: "seconds string is not rewritten", body: map[string]any{"seconds": "15s"}, want: "15s"},
+		{name: "invalid duration is forwarded for upstream validation", body: map[string]any{"duration": map[string]any{"invalid": true}}, want: map[string]any{"invalid": true}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mapDurationToSoraSeconds(tt.body)
+			require.Equal(t, tt.want, tt.body["seconds"])
+			assert.NotContains(t, tt.body, "duration")
+		})
+	}
 }
 
-func TestBuildRequestBodyClampsCanvasStandardDuration(t *testing.T) {
+func TestBuildRequestBodyPreservesCanvasStandardDuration(t *testing.T) {
 	tests := []struct {
-		name             string
-		upstreamModel    string
-		body             string
-		expectedDuration float64
-		expectedSeconds  string
+		name            string
+		upstreamModel   string
+		body            string
+		expectedSeconds any
 	}{
 		{
-			name:             "target model clamps duration and seconds",
-			upstreamModel:    canvasStandardSeedanceModel,
-			body:             `{"model":"alias","prompt":"test","duration":20,"seconds":"18s"}`,
-			expectedDuration: 14,
-			expectedSeconds:  "14",
+			name:            "target model maps canonical duration",
+			upstreamModel:   canvasStandardSeedanceModel,
+			body:            `{"model":"alias","prompt":"test","duration":20,"seconds":"18s"}`,
+			expectedSeconds: "20",
 		},
 		{
-			name:             "target model preserves boundary",
-			upstreamModel:    canvasStandardSeedanceModel,
-			body:             `{"model":"alias","prompt":"test","duration":14}`,
-			expectedDuration: 14,
-			expectedSeconds:  "14",
+			name:            "target model preserves duration",
+			upstreamModel:   canvasStandardSeedanceModel,
+			body:            `{"model":"alias","prompt":"test","duration":14}`,
+			expectedSeconds: "14",
 		},
 		{
-			name:             "target model clamps fractional duration above boundary",
-			upstreamModel:    canvasStandardSeedanceModel,
-			body:             `{"model":"alias","prompt":"test","duration":14.5}`,
-			expectedDuration: 14,
-			expectedSeconds:  "14",
+			name:            "target model does not clamp fractional duration",
+			upstreamModel:   canvasStandardSeedanceModel,
+			body:            `{"model":"alias","prompt":"test","duration":14.5}`,
+			expectedSeconds: "14.5",
 		},
 		{
-			name:             "other models are not clamped",
-			upstreamModel:    "other-video-model",
-			body:             `{"model":"alias","prompt":"test","duration":20}`,
-			expectedDuration: 20,
-			expectedSeconds:  "20",
+			name:            "other models are not clamped",
+			upstreamModel:   "other-video-model",
+			body:            `{"model":"alias","prompt":"test","duration":20}`,
+			expectedSeconds: "20",
+		},
+		{
+			name:            "target model preserves explicit zero duration",
+			upstreamModel:   canvasStandardSeedanceModel,
+			body:            `{"model":"alias","prompt":"test","duration":0}`,
+			expectedSeconds: "0",
 		},
 	}
 
@@ -200,19 +221,19 @@ func TestBuildRequestBodyClampsCanvasStandardDuration(t *testing.T) {
 			var got map[string]any
 			require.NoError(t, common.Unmarshal(data, &got))
 			require.Equal(t, tt.upstreamModel, got["model"])
-			require.Equal(t, tt.expectedDuration, got["duration"])
 			require.Equal(t, tt.expectedSeconds, got["seconds"])
+			assert.NotContains(t, got, "duration")
 		})
 	}
 }
 
-func TestBuildRequestBodyClampsCanvasStandardMultipartDuration(t *testing.T) {
+func TestBuildRequestBodyPreservesCanvasStandardMultipartDuration(t *testing.T) {
 	var input bytes.Buffer
 	inputWriter := multipart.NewWriter(&input)
 	require.NoError(t, inputWriter.WriteField("model", "alias"))
 	require.NoError(t, inputWriter.WriteField("prompt", "test"))
 	require.NoError(t, inputWriter.WriteField("duration", "20s"))
-	require.NoError(t, inputWriter.WriteField("seconds", "18"))
+	require.NoError(t, inputWriter.WriteField("seconds", "18.5s"))
 	require.NoError(t, inputWriter.Close())
 
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -232,13 +253,99 @@ func TestBuildRequestBodyClampsCanvasStandardMultipartDuration(t *testing.T) {
 	form, err := multipart.NewReader(bytes.NewReader(data), params["boundary"]).ReadForm(1 << 20)
 	require.NoError(t, err)
 	require.Equal(t, []string{canvasStandardSeedanceModel}, form.Value["model"])
-	require.Equal(t, []string{"14"}, form.Value["seconds"])
-	require.Equal(t, []string{"14"}, form.Value["duration"])
+	require.Equal(t, []string{"20s"}, form.Value["seconds"])
+	require.NotContains(t, form.Value, "duration")
 }
 
-func TestEstimateBillingClampsCanvasStandardDuration(t *testing.T) {
+func TestBuildRequestBodyMapsMultipartDurationAliasWithoutChangingValues(t *testing.T) {
+	var input bytes.Buffer
+	inputWriter := multipart.NewWriter(&input)
+	require.NoError(t, inputWriter.WriteField("model", "alias"))
+	require.NoError(t, inputWriter.WriteField("prompt", "test"))
+	require.NoError(t, inputWriter.WriteField("duration", "0"))
+	require.NoError(t, inputWriter.WriteField("duration", "14.5s"))
+	require.NoError(t, inputWriter.Close())
+
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Set("task_request", relaycommon.TaskSubmitReq{Duration: 20})
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(input.Bytes()))
+	c.Request.Header.Set("Content-Type", inputWriter.FormDataContentType())
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	body, err := (&TaskAdaptor{}).BuildRequestBody(c, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: canvasStandardSeedanceModel},
+	})
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	_, params, err := mime.ParseMediaType(c.Request.Header.Get("Content-Type"))
+	require.NoError(t, err)
+	form, err := multipart.NewReader(bytes.NewReader(data), params["boundary"]).ReadForm(1 << 20)
+	require.NoError(t, err)
+	require.Equal(t, []string{"0", "14.5s"}, form.Value["seconds"])
+	require.NotContains(t, form.Value, "duration")
+}
+
+func TestBuildRequestBodyNormalizesMultipartVideoOutputAndMetadata(t *testing.T) {
+	var input bytes.Buffer
+	inputWriter := multipart.NewWriter(&input)
+	require.NoError(t, inputWriter.WriteField("model", "public-video-model"))
+	require.NoError(t, inputWriter.WriteField("prompt", "make it cinematic"))
+	require.NoError(t, inputWriter.WriteField("ratio", "32:18"))
+	require.NoError(t, inputWriter.WriteField("aspectRatio", "16:9"))
+	require.NoError(t, inputWriter.WriteField("size", "0960X0540"))
+	require.NoError(t, inputWriter.WriteField("resolution", "1080P"))
+	require.NoError(t, inputWriter.WriteField("metadata", `{
+		"ratio":"9:16",
+		"aspectRatio":"9:16",
+		"aspect_ratio":"9:16",
+		"size":"720x1280",
+		"resolution":"720P",
+		"provider_option":{"keep":true}
+	}`))
+	require.NoError(t, inputWriter.Close())
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(input.Bytes()))
+	c.Request.Header.Set("Content-Type", inputWriter.FormDataContentType())
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: "sora-upstream-model"},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+
+	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
+	body, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	_, params, err := mime.ParseMediaType(c.Request.Header.Get("Content-Type"))
+	require.NoError(t, err)
+	form, err := multipart.NewReader(bytes.NewReader(data), params["boundary"]).ReadForm(1 << 20)
+	require.NoError(t, err)
+	defer form.RemoveAll()
+
+	require.Equal(t, []string{"sora-upstream-model"}, form.Value["model"])
+	assert.Equal(t, []string{"960x540"}, form.Value["size"])
+	assert.Equal(t, []string{"16:9"}, form.Value["aspect_ratio"])
+	assert.Equal(t, []string{"16:9"}, form.Value["ratio"])
+	assert.Equal(t, []string{"16:9"}, form.Value["aspectRatio"])
+	assert.Equal(t, []string{"1080p"}, form.Value["resolution"])
+
+	var metadata map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(form.Value["metadata"][0], &metadata))
+	assert.Equal(t, "960x540", metadata["size"])
+	assert.Equal(t, "16:9", metadata["aspect_ratio"])
+	assert.Equal(t, "1080p", metadata["resolution"])
+	assert.NotContains(t, metadata, "ratio")
+	assert.NotContains(t, metadata, "aspectRatio")
+	assert.Equal(t, map[string]any{"keep": true}, metadata["provider_option"])
+}
+
+func TestEstimateBillingPreservesCanvasStandardDuration(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set("task_request", relaycommon.TaskSubmitReq{Duration: 20, Seconds: "4"})
 	info := &relaycommon.RelayInfo{
 		ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: canvasStandardSeedanceModel},
 		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
@@ -246,7 +353,7 @@ func TestEstimateBillingClampsCanvasStandardDuration(t *testing.T) {
 
 	ratios := (&TaskAdaptor{}).EstimateBilling(c, info)
 
-	require.Equal(t, float64(canvasStandardMaxVideoSeconds), ratios["seconds"])
+	require.Equal(t, float64(20), ratios["seconds"])
 }
 
 func TestApplyVeoReferenceImagesUsesIngredientsForMoreThanTwoImages(t *testing.T) {
@@ -287,6 +394,24 @@ func TestApplyVeoReferenceImagesUsesImagesForAtMostTwoImages(t *testing.T) {
 	}, body["images"])
 }
 
+func TestApplyVeoReferenceImagesPreservesRepeatedURLs(t *testing.T) {
+	body := map[string]any{
+		"images": []any{
+			"https://example.com/repeated.png",
+			"https://example.com/repeated.png",
+			"https://example.com/other.png",
+		},
+	}
+
+	applyVeoReferenceImages(body)
+
+	require.Equal(t, []string{
+		"https://example.com/repeated.png",
+		"https://example.com/repeated.png",
+		"https://example.com/other.png",
+	}, body["Ingredients_images"])
+}
+
 func TestEstimateVideoSecondsUsesSeedanceGatewayMetadataDuration(t *testing.T) {
 	seconds := estimateVideoSeconds(relaycommon.TaskSubmitReq{
 		Model:    "seedance-gateway",
@@ -296,10 +421,10 @@ func TestEstimateVideoSecondsUsesSeedanceGatewayMetadataDuration(t *testing.T) {
 	require.Equal(t, 15, seconds)
 }
 
-func TestEstimateVideoSecondsSeedanceGatewayDefaultsToFifteen(t *testing.T) {
+func TestEstimateVideoSecondsUsesGenericDefault(t *testing.T) {
 	seconds := estimateVideoSeconds(relaycommon.TaskSubmitReq{Model: "seedance-gateway"}, nil)
 
-	require.Equal(t, 15, seconds)
+	require.Equal(t, defaultUnprofiledVideoSeconds, seconds)
 }
 
 func TestModelListIncludesSeedanceGateway(t *testing.T) {
@@ -437,11 +562,18 @@ func TestApplyOtoySeedanceMiniReferenceRequest(t *testing.T) {
 		"resolution":      "720p",
 		"functionMode":    "omni_reference",
 		"response_format": "url",
+		"metadata":        map[string]any{"provider_option": true},
 		"file_paths": []any{
 			"https://example.com/ref-from-file-path.png",
 		},
 		"images": []any{
 			"https://example.com/ref.png",
+		},
+		"videos": []any{
+			"https://example.com/reference.mp4",
+		},
+		"audios": []any{
+			"https://example.com/reference.mp3",
 		},
 	}
 
@@ -449,15 +581,48 @@ func TestApplyOtoySeedanceMiniReferenceRequest(t *testing.T) {
 
 	require.NotContains(t, body, "seconds")
 	require.NotContains(t, body, "images")
-	require.NotContains(t, body, "file_paths")
-	require.NotContains(t, body, "functionMode")
-	require.NotContains(t, body, "ratio")
-	require.NotContains(t, body, "response_format")
-	require.Equal(t, "15", body["duration"])
+	require.NotContains(t, body, "videos")
+	require.NotContains(t, body, "audios")
+	require.Contains(t, body, "file_paths")
+	require.Contains(t, body, "functionMode")
+	require.Contains(t, body, "ratio")
+	require.Contains(t, body, "response_format")
+	require.Equal(t, map[string]any{"provider_option": true}, body["metadata"])
+	require.Equal(t, float64(15), body["duration"])
+	require.Equal(t, "720p", body["resolution"])
+	require.Equal(t, []string{"https://example.com/ref.png"}, body["image_urls"])
+	require.Equal(t, []string{"https://example.com/reference.mp4"}, body["video_urls"])
+	require.Equal(t, []string{"https://example.com/reference.mp3"}, body["audio_urls"])
+	require.NotContains(t, body, "type")
+	require.NotContains(t, body, "generate_audio")
+}
+
+func TestApplyOtoySeedanceMiniReferenceRequestMapsDocumentedSize(t *testing.T) {
+	body := map[string]any{
+		"size": "720x1280",
+	}
+
+	applyOtoySeedanceMiniReferenceRequest(body)
+
 	require.Equal(t, "9:16", body["aspect_ratio"])
-	require.Equal(t, []string{"https://example.com/ref.png", "https://example.com/ref-from-file-path.png"}, body["image_urls"])
-	require.Equal(t, "image-to-video", body["type"])
-	require.Equal(t, true, body["generate_audio"])
+	require.Equal(t, "720p", body["resolution"])
+	require.NotContains(t, body, "size")
+}
+
+func TestApplyOtoySeedanceMiniReferenceRequestPreservesRepeatedURLs(t *testing.T) {
+	body := map[string]any{
+		"images": []any{
+			"https://example.com/repeated.png",
+			"https://example.com/repeated.png",
+		},
+	}
+
+	applyOtoySeedanceMiniReferenceRequest(body)
+
+	require.Equal(t, []string{
+		"https://example.com/repeated.png",
+		"https://example.com/repeated.png",
+	}, body["image_urls"])
 }
 
 func TestWriteOtoySeedanceMiniReferenceMultipartFields(t *testing.T) {
@@ -472,6 +637,7 @@ func TestWriteOtoySeedanceMiniReferenceMultipartFields(t *testing.T) {
 		"resolution":      {"720p"},
 		"functionMode":    {"omni_reference"},
 		"response_format": {"url"},
+		"metadata":        {`{"provider_option":true}`},
 		"file_paths":      {"https://example.com/ref-from-file-path.png"},
 		"image_urls":      {"https://example.com/ref.png"},
 	})
@@ -484,18 +650,19 @@ func TestWriteOtoySeedanceMiniReferenceMultipartFields(t *testing.T) {
 	require.Equal(t, []string{"make a video"}, form.Value["prompt"])
 	require.Equal(t, []string{"custom-image-to-video"}, form.Value["type"])
 	require.Equal(t, []string{"15"}, form.Value["duration"])
-	require.Equal(t, []string{"9:16"}, form.Value["aspect_ratio"])
 	require.Equal(t, []string{"720p"}, form.Value["resolution"])
-	require.Equal(t, []string{"true"}, form.Value["generate_audio"])
-	require.Equal(t, []string{"https://example.com/ref.png", "https://example.com/ref-from-file-path.png"}, form.Value["image_urls"])
+	require.Equal(t, []string{"https://example.com/ref.png"}, form.Value["image_urls"])
 	require.NotContains(t, form.Value, "seconds")
-	require.NotContains(t, form.Value, "ratio")
-	require.NotContains(t, form.Value, "functionMode")
-	require.NotContains(t, form.Value, "response_format")
-	require.NotContains(t, form.Value, "file_paths")
+	require.NotContains(t, form.Value, "aspect_ratio")
+	require.NotContains(t, form.Value, "generate_audio")
+	require.Equal(t, []string{"9:16"}, form.Value["ratio"])
+	require.Equal(t, []string{"omni_reference"}, form.Value["functionMode"])
+	require.Equal(t, []string{"url"}, form.Value["response_format"])
+	require.Equal(t, []string{`{"provider_option":true}`}, form.Value["metadata"])
+	require.Equal(t, []string{"https://example.com/ref-from-file-path.png"}, form.Value["file_paths"])
 }
 
-func TestWriteOtoySeedanceMiniReferenceMultipartFieldsDefaultsType(t *testing.T) {
+func TestWriteOtoySeedanceMiniReferenceMultipartFieldsDoesNotAddDefaults(t *testing.T) {
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
 	writeOtoySeedanceMiniReferenceMultipartFields(writer, map[string][]string{
@@ -507,14 +674,155 @@ func TestWriteOtoySeedanceMiniReferenceMultipartFieldsDefaultsType(t *testing.T)
 	form, err := reader.ReadForm(1 << 20)
 	require.NoError(t, err)
 
-	require.Equal(t, []string{"image-to-video"}, form.Value["type"])
-	require.Equal(t, []string{"true"}, form.Value["generate_audio"])
+	require.NotContains(t, form.Value, "type")
+	require.NotContains(t, form.Value, "generate_audio")
 }
 
-func TestNormalizeVideoDurationStringAllowsAuto(t *testing.T) {
-	got, ok := normalizeVideoDurationString("auto")
+func TestWriteOtoySeedanceMiniReferenceMultipartFieldsMapsSecondsWithoutChangingValues(t *testing.T) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	writeOtoySeedanceMiniReferenceMultipartFields(writer, map[string][]string{
+		"seconds": {"0", "14.5s"},
+	})
+	require.NoError(t, writer.Close())
+
+	reader := multipart.NewReader(bytes.NewReader(buf.Bytes()), writer.Boundary())
+	form, err := reader.ReadForm(1 << 20)
+	require.NoError(t, err)
+
+	require.Equal(t, []string{"0", "14.5s"}, form.Value["duration"])
+	require.NotContains(t, form.Value, "seconds")
+}
+
+func TestApplyOtoySeedanceMiniReferenceRequestMapsZeroSecondsWithoutChangingIt(t *testing.T) {
+	body := map[string]any{"seconds": float64(0)}
+
+	applyOtoySeedanceMiniReferenceRequest(body)
+
+	require.Equal(t, float64(0), body["duration"])
+	require.NotContains(t, body, "seconds")
+}
+
+func TestValidateRemixRequestNormalizesVideoOutput(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos/task_123/remix", strings.NewReader(`{
+		"prompt":"make it cinematic",
+		"ratio":"32:18",
+		"resolution":"720P"
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: "sora-2"},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{Action: constant.TaskActionRemix},
+	}
+
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
+
+	require.Nil(t, taskErr)
+	req, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, "16:9", req.AspectRatio)
+	assert.Equal(t, "720p", req.Resolution)
+
+	body, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	assert.Equal(t, "16:9", payload["aspect_ratio"])
+	assert.Equal(t, "16:9", payload["ratio"])
+	assert.Equal(t, "720p", payload["resolution"])
+}
+
+func TestBuildRequestBodySynchronizesNestedParametersResolution(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"sora-2",
+		"prompt":"make it cinematic",
+		"ratio":"32:18",
+		"resolution":"720P",
+		"parameters":{"resolution":"1080P","duration":15},
+		"metadata":{"ratio":"9:16","aspectRatio":"9:16","aspect_ratio":"9:16"}
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: "sora-2"},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+
+	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
+	body, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+
+	assert.Equal(t, "720p", payload["resolution"])
+	parameters, ok := payload["parameters"].(map[string]any)
 	require.True(t, ok)
-	require.Equal(t, "auto", got)
+	assert.Equal(t, "720p", parameters["resolution"])
+	assert.Equal(t, float64(15), parameters["duration"])
+	metadata, ok := payload["metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "16:9", metadata["aspect_ratio"])
+	assert.NotContains(t, metadata, "ratio")
+	assert.NotContains(t, metadata, "aspectRatio")
+}
+
+func TestBuildRequestBodyNormalizesEncodedMetadataVideoOutput(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"sora-2",
+		"prompt":"make it cinematic",
+		"ratio":"32:18",
+		"resolution":"720P",
+		"metadata":"{\"ratio\":\"9:16\",\"aspectRatio\":\"9:16\",\"aspect_ratio\":\"9:16\"}"
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: "sora-2"},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+
+	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
+	body, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	rawMetadata, ok := payload["metadata"].(string)
+	require.True(t, ok)
+	var metadata map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(rawMetadata, &metadata))
+
+	assert.Equal(t, "16:9", metadata["aspect_ratio"])
+	assert.Equal(t, "720p", metadata["resolution"])
+	assert.NotContains(t, metadata, "ratio")
+	assert.NotContains(t, metadata, "aspectRatio")
+}
+
+func TestValidateRemixRequestRejectsConflictingVideoOutput(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos/task_123/remix", strings.NewReader(`{
+		"prompt":"make it cinematic",
+		"size":"960x540",
+		"ratio":"9:16"
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{Action: constant.TaskActionRemix}})
+
+	require.NotNil(t, taskErr)
+	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	assert.Equal(t, "invalid_video_output", taskErr.Code)
+	assert.Contains(t, taskErr.Message, "conflicts with aspect_ratio")
 }
 
 func TestParseTaskResultTreatsDetailErrorAsFailure(t *testing.T) {

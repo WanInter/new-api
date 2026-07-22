@@ -108,6 +108,23 @@ func TestConvertToRequestPayloadTextToVideo(t *testing.T) {
 	assert.Equal(t, "task_public", payload.SessionID)
 }
 
+func TestConvertToRequestPayloadPrefersTopLevelOutputFields(t *testing.T) {
+	payload, err := convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Model:       "kling-vod-3.0",
+		Prompt:      "a spacecraft takes off",
+		AspectRatio: "16:9",
+		Resolution:  "1080p",
+		Metadata: map[string]any{
+			"aspect_ratio": "9:16",
+			"resolution":   "720p",
+		},
+	}, newRelayInfo("kling-vod-3.0"), 1500000000)
+	require.NoError(t, err)
+
+	assert.Equal(t, "16:9", payload.OutputConfig.AspectRatio)
+	assert.Equal(t, "1080P", payload.OutputConfig.Resolution)
+}
+
 func TestConvertToRequestPayloadImageAndTailFrame(t *testing.T) {
 	payload, err := convertToRequestPayload(&relaycommon.TaskSubmitReq{
 		Model:    "kling-vod-2.1",
@@ -177,6 +194,76 @@ func TestConvertToRequestPayloadSupportsReferenceImages(t *testing.T) {
 	assert.Equal(t, "Reference", payload.FileInfos[0].Usage)
 	assert.Equal(t, "Base64", payload.FileInfos[1].Type)
 	assert.Equal(t, "YWJj", payload.FileInfos[1].Base64)
+}
+
+func TestConvertToRequestPayloadMapsUnifiedImageAliases(t *testing.T) {
+	payload, err := convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Model:          "kling-vod-3.0-omni",
+		Prompt:         "use the reference images",
+		ImageURLs:      []string{"https://example.com/legacy.png"},
+		InputReference: "https://example.com/input-reference.png",
+		Content: []relaycommon.TaskContentItem{
+			{Type: "image_url", ImageURL: &relaycommon.TaskContentURL{URL: "https://example.com/content.png"}},
+		},
+		Metadata: map[string]any{"image_usage": "Reference"},
+	}, newRelayInfo("kling-vod-3.0-omni"), 1500000000)
+	require.NoError(t, err)
+
+	require.Len(t, payload.FileInfos, 3)
+	assert.Equal(t, []string{
+		"https://example.com/legacy.png",
+		"https://example.com/input-reference.png",
+		"https://example.com/content.png",
+	}, []string{payload.FileInfos[0].URL, payload.FileInfos[1].URL, payload.FileInfos[2].URL})
+}
+
+func TestConvertToRequestPayloadRejectsUnsupportedUnifiedVideoAndAudioReferences(t *testing.T) {
+	testCases := []struct {
+		name string
+		req  relaycommon.TaskSubmitReq
+		want string
+	}{
+		{
+			name: "top level video",
+			req:  relaycommon.TaskSubmitReq{Videos: []string{"https://example.com/reference.mp4"}},
+			want: "video reference",
+		},
+		{
+			name: "top level audio",
+			req:  relaycommon.TaskSubmitReq{Audios: []string{"https://example.com/reference.mp3"}},
+			want: "audio reference",
+		},
+		{
+			name: "content video",
+			req: relaycommon.TaskSubmitReq{Content: []relaycommon.TaskContentItem{
+				{Type: "video_url", VideoURL: &relaycommon.TaskContentURL{URL: "https://example.com/reference.mp4"}},
+			}},
+			want: "video reference",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			testCase.req.Model = "kling-vod-3.0"
+			testCase.req.Prompt = "animate"
+			_, err := convertToRequestPayload(&testCase.req, newRelayInfo("kling-vod-3.0"), 1500000000)
+
+			require.ErrorContains(t, err, testCase.want)
+		})
+	}
+}
+
+func TestConvertToRequestPayloadRejectsConflictingNativeAndPublicImageInputs(t *testing.T) {
+	_, err := convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Model:  "kling-vod-3.0",
+		Prompt: "animate",
+		Images: []string{"https://example.com/public.png"},
+		Metadata: map[string]any{
+			"file_infos": []map[string]any{{"Type": "Url", "Category": "Image", "Url": "https://example.com/native.png"}},
+		},
+	}, newRelayInfo("kling-vod-3.0"), 1500000000)
+
+	require.ErrorContains(t, err, "cannot combine public image inputs with metadata.file_infos")
 }
 
 func TestDoResponseReturnsPublicTaskAndStoresUpstreamTask(t *testing.T) {

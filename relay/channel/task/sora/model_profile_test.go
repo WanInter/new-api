@@ -13,7 +13,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
 	"github.com/gin-gonic/gin"
@@ -112,13 +111,15 @@ func TestBuildRequestBodyConvertsMediaAliasesForProfiledContentModel(t *testing.
 	require.Len(t, content, 5)
 }
 
-func TestBuildRequestBodyPreservesExplicitProfiledContent(t *testing.T) {
+func TestBuildRequestBodyMergesExplicitProfiledContentWithCompatibilityMedia(t *testing.T) {
 	bodyJSON := `{
 		"model":"sdquan-2",
 		"prompt":"animate the image",
 		"duration":15,
 		"seconds":"15",
-		"images":["https://example.com/ignored.png"],
+		"images":["https://example.com/legacy-image.png"],
+		"videos":["https://example.com/legacy-video.mp4"],
+		"audios":["https://example.com/legacy-audio.mp3"],
 		"content":[
 			{"type":"image_url","image_url":{"url":"https://example.com/content.png"}},
 			{"type":"text","text":"animate the image"}
@@ -140,15 +141,30 @@ func TestBuildRequestBodyPreservesExplicitProfiledContent(t *testing.T) {
 	var got map[string]any
 	require.NoError(t, common.Unmarshal(data, &got))
 	assert.NotContains(t, got, "images")
+	assert.NotContains(t, got, "videos")
+	assert.NotContains(t, got, "audios")
 	assert.NotContains(t, got, "seconds")
 	content, ok := got["content"].([]any)
 	require.True(t, ok)
-	require.Len(t, content, 2)
+	require.Len(t, content, 5)
 	imageItem, ok := content[0].(map[string]any)
 	require.True(t, ok)
 	imageURL, ok := imageItem["image_url"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "https://example.com/content.png", imageURL["url"])
+	assert.Equal(t, "https://example.com/legacy-image.png", imageURL["url"])
+	assert.Equal(t, map[string]any{
+		"type":      "video_url",
+		"video_url": map[string]any{"url": "https://example.com/legacy-video.mp4"},
+	}, content[1])
+	assert.Equal(t, map[string]any{
+		"type":      "audio_url",
+		"audio_url": map[string]any{"url": "https://example.com/legacy-audio.mp3"},
+	}, content[2])
+	assert.Equal(t, map[string]any{
+		"type":      "image_url",
+		"image_url": map[string]any{"url": "https://example.com/content.png"},
+	}, content[3])
+	assert.Equal(t, map[string]any{"type": "text", "text": "animate the image"}, content[4])
 }
 
 func TestBuildRequestBodyAppliesRegisteredJSONTransforms(t *testing.T) {
@@ -167,12 +183,14 @@ func TestBuildRequestBodyAppliesRegisteredJSONTransforms(t *testing.T) {
 				"duration":15,
 				"seconds":"15",
 				"images":["https://example.com/1.png"],
-				"response_format":"url"
+				"response_format":"url",
+				"metadata":{"provider_option":true}
 			}`,
 			assertBody: func(t *testing.T, got map[string]any) {
 				assert.NotContains(t, got, "seconds")
-				assert.NotContains(t, got, "response_format")
-				assert.Equal(t, "image-to-video", got["type"])
+				assert.Equal(t, "url", got["response_format"])
+				assert.Equal(t, map[string]any{"provider_option": true}, got["metadata"])
+				assert.NotContains(t, got, "type")
 				assert.Equal(t, []any{"https://example.com/1.png"}, got["image_urls"])
 			},
 		},
@@ -275,7 +293,7 @@ func TestBuildRequestBodyPrefersMappedUpstreamTransform(t *testing.T) {
 	var got map[string]any
 	require.NoError(t, common.Unmarshal(data, &got))
 	assert.Equal(t, otoySeedanceMiniReferenceModel, got["model"])
-	assert.Equal(t, "image-to-video", got["type"])
+	assert.NotContains(t, got, "type")
 	assert.Equal(t, []any{
 		"https://example.com/1.png",
 		"https://example.com/2.png",
@@ -293,6 +311,7 @@ func TestBuildRequestBodyAppliesRegisteredMultipartTransform(t *testing.T) {
 	require.NoError(t, inputWriter.WriteField("seconds", "15"))
 	require.NoError(t, inputWriter.WriteField("images", "https://example.com/1.png"))
 	require.NoError(t, inputWriter.WriteField("response_format", "url"))
+	require.NoError(t, inputWriter.WriteField("metadata", `{"provider_option":true}`))
 	require.NoError(t, inputWriter.Close())
 
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -314,98 +333,40 @@ func TestBuildRequestBodyAppliesRegisteredMultipartTransform(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"15"}, form.Value["duration"])
 	assert.Equal(t, []string{"https://example.com/1.png"}, form.Value["image_urls"])
-	assert.Equal(t, []string{"image-to-video"}, form.Value["type"])
 	assert.NotContains(t, form.Value, "seconds")
-	assert.NotContains(t, form.Value, "response_format")
+	assert.NotContains(t, form.Value, "type")
+	assert.Equal(t, []string{"url"}, form.Value["response_format"])
+	assert.Equal(t, []string{`{"provider_option":true}`}, form.Value["metadata"])
 }
 
-func TestValidateProfiledContentRequest(t *testing.T) {
+func TestProfiledModelConstraintsAreNotRejectedLocally(t *testing.T) {
 	tests := []struct {
-		name        string
-		req         relaycommon.TaskSubmitReq
-		wantMessage string
+		name string
+		body string
 	}{
 		{
-			name: "valid image-only ax request",
-			req: relaycommon.TaskSubmitReq{
-				Model:  "ax2.0-9tu",
-				Prompt: "make a video",
-				Images: []string{"https://example.com/1.png"},
-			},
+			name: "ax accepts videos and more than nine images",
+			body: `{"model":"ax2.0-9tu","prompt":"animate","images":["1","2","3","4","5","6","7","8","9","10"],"videos":["video-1","video-2","video-3","video-4"]}`,
 		},
 		{
-			name: "ax rejects video references",
-			req: relaycommon.TaskSubmitReq{
-				Model:  "ax2.0-9tu",
-				Prompt: "make a video",
-				Videos: []string{"https://example.com/1.mp4"},
-			},
-			wantMessage: "at most 0 video references",
+			name: "sdquan does not require an image locally",
+			body: `{"model":"sdquan-2","prompt":"animate","audios":["audio-1","audio-2","audio-3","audio-4"]}`,
 		},
 		{
-			name: "sdquan rejects a fifth image",
-			req: relaycommon.TaskSubmitReq{
-				Model:  "sdquan-2",
-				Prompt: "make a video",
-				Images: []string{"1", "2", "3", "4", "5"},
-			},
-			wantMessage: "at most 4 image references",
-		},
-		{
-			name: "sdquan rejects a second audio reference",
-			req: relaycommon.TaskSubmitReq{
-				Model:  "sdquan-2",
-				Prompt: "make a video",
-				Images: []string{"1"},
-				Audios: []string{"1", "2"},
-			},
-			wantMessage: "at most 1 audio references",
-		},
-		{
-			name: "sdquan requires image",
-			req: relaycommon.TaskSubmitReq{
-				Model:  "sdquan-2",
-				Prompt: "make a video",
-			},
-			wantMessage: "requires at least one image reference",
-		},
-		{
-			name: "explicit content requires text",
-			req: relaycommon.TaskSubmitReq{
-				Model:  "ax2.0-9tu",
-				Prompt: "top-level prompt does not replace explicit content text",
-				Content: []relaycommon.TaskContentItem{{
-					Type:     "image_url",
-					ImageURL: &relaycommon.TaskContentURL{URL: "https://example.com/1.png"},
-				}},
-			},
-			wantMessage: "at least one non-empty text item",
-		},
-		{
-			name: "image limit",
-			req: relaycommon.TaskSubmitReq{
-				Model:  "ax2.0-9tu",
-				Prompt: "make a video",
-				Images: []string{"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"},
-			},
-			wantMessage: "at most 9 image references",
+			name: "explicit content does not require a text item locally",
+			body: `{"model":"ax2.0-9tu","prompt":"animate","content":[{"type":"image_url","image_url":{"url":"https://example.com/image.png"}}]}`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(tt.body))
 			c.Request.Header.Set("Content-Type", "application/json")
-			c.Set("task_request", tt.req)
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
 
-			taskErr := validateSoraModelRequest(c, &relaycommon.RelayInfo{})
-			if tt.wantMessage == "" {
-				assert.Nil(t, taskErr)
-				return
-			}
-			require.NotNil(t, taskErr)
-			assert.Contains(t, taskErr.Message, tt.wantMessage)
+			info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+			require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
 		})
 	}
 }
@@ -440,15 +401,14 @@ func TestValidateRequestAndSetActionDetectsContentImage(t *testing.T) {
 	assert.Equal(t, constant.TaskActionGenerate, info.Action)
 }
 
-func TestValidateRequestAndSetActionUsesProfiledSizeConstraints(t *testing.T) {
+func TestValidateRequestAndSetActionDoesNotApplyModelSizeConstraints(t *testing.T) {
 	tests := []struct {
-		name        string
-		model       string
-		size        string
-		wantMessage string
+		name  string
+		model string
+		size  string
 	}{
 		{name: "sora standard accepts landscape", model: sora2Model, size: "1280x720"},
-		{name: "sora standard rejects pro size", model: sora2Model, size: "1792x1024", wantMessage: "sora-2 size is invalid"},
+		{name: "sora standard forwards pro size", model: sora2Model, size: "1792x1024"},
 		{name: "sora pro accepts pro size", model: sora2ProModel, size: "1792x1024"},
 	}
 
@@ -461,83 +421,41 @@ func TestValidateRequestAndSetActionUsesProfiledSizeConstraints(t *testing.T) {
 			t.Cleanup(func() { common.CleanupBodyStorage(c) })
 			info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
 
-			taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
-			require.Nil(t, taskErr)
-			taskErr = (&TaskAdaptor{}).ValidateMappedRequest(c, info)
-
-			if tt.wantMessage == "" {
-				assert.Nil(t, taskErr)
-				return
-			}
-			require.NotNil(t, taskErr)
-			assert.Equal(t, "invalid_size", taskErr.Code)
-			assert.Contains(t, taskErr.Message, tt.wantMessage)
+			require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
 		})
 	}
 }
 
-func TestValidateMappedRequestUsesMappedUpstreamProfile(t *testing.T) {
-	tests := []struct {
-		name          string
-		upstreamModel string
-		req           relaycommon.TaskSubmitReq
-		wantMessage   string
-	}{
-		{
-			name:          "sdquan alias still requires image",
-			upstreamModel: sdquanImageVideoModel,
-			req: relaycommon.TaskSubmitReq{
-				Model:  "public-sdquan-alias",
-				Prompt: "animate",
-			},
-			wantMessage: "requires at least one image reference",
-		},
-		{
-			name:          "ax alias still enforces image limit",
-			upstreamModel: axMultimodalVideoModel,
-			req: relaycommon.TaskSubmitReq{
-				Model:  "public-ax-alias",
-				Prompt: "animate",
-				Images: []string{"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"},
-			},
-			wantMessage: "at most 9 image references",
-		},
-		{
-			name:          "ax alias still requires content text",
-			upstreamModel: axMultimodalVideoModel,
-			req: relaycommon.TaskSubmitReq{
-				Model:  "public-ax-alias",
-				Prompt: "top-level prompt",
-				Content: []relaycommon.TaskContentItem{{
-					Type:     "image_url",
-					ImageURL: &relaycommon.TaskContentURL{URL: "https://example.com/1.png"},
-				}},
-			},
-			wantMessage: "at least one non-empty text item",
-		},
-	}
+func TestBuildRequestBodyUsesMappedContentTransformWithoutModelLimits(t *testing.T) {
+	bodyJSON := `{
+		"model":"public-ax-alias",
+		"prompt":"animate",
+		"images":["1","2","3","4","5","6","7","8","9","10"],
+		"videos":["video-1","video-2","video-3","video-4"],
+		"audios":["audio-1","audio-2","audio-3","audio-4"]
+	}`
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(bodyJSON))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
-			c.Request.Header.Set("Content-Type", "application/json")
-			c.Set("task_request", tt.req)
-			info := &relaycommon.RelayInfo{
-				OriginModelName: tt.req.Model,
-				ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: tt.upstreamModel},
-				TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
-			}
+	body, err := (&TaskAdaptor{}).BuildRequestBody(c, &relaycommon.RelayInfo{
+		OriginModelName: "public-ax-alias",
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: axMultimodalVideoModel},
+	})
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
 
-			taskErr := (&TaskAdaptor{}).ValidateMappedRequest(c, info)
-
-			require.NotNil(t, taskErr)
-			assert.Contains(t, taskErr.Message, tt.wantMessage)
-		})
-	}
+	var got map[string]any
+	require.NoError(t, common.Unmarshal(data, &got))
+	assert.Equal(t, axMultimodalVideoModel, got["model"])
+	content, ok := got["content"].([]any)
+	require.True(t, ok)
+	assert.Len(t, content, 19)
 }
 
-func TestValidateMappedRequestRejectsMultipartForJSONOnlyModels(t *testing.T) {
+func TestProfiledModelsDoNotRejectMultipartLocally(t *testing.T) {
 	for _, modelName := range []string{axMultimodalVideoModel, sdquanImageVideoModel} {
 		t.Run(modelName, func(t *testing.T) {
 			var input bytes.Buffer
@@ -546,7 +464,6 @@ func TestValidateMappedRequestRejectsMultipartForJSONOnlyModels(t *testing.T) {
 			require.NoError(t, writer.WriteField("prompt", "animate"))
 			require.NoError(t, writer.WriteField("duration", "5"))
 			require.NoError(t, writer.WriteField("images", "https://example.com/1.png"))
-			require.NoError(t, writer.WriteField("content", `[{"type":"text","text":"animate"}]`))
 			require.NoError(t, writer.Close())
 
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -560,15 +477,12 @@ func TestValidateMappedRequestRejectsMultipartForJSONOnlyModels(t *testing.T) {
 			}
 
 			taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
-			require.NotNil(t, taskErr)
-			assert.Equal(t, http.StatusUnsupportedMediaType, taskErr.StatusCode)
-			assert.Equal(t, "unsupported_content_type", taskErr.Code)
-			assert.Contains(t, taskErr.Message, "only supports application/json")
+			require.Nil(t, taskErr)
 		})
 	}
 }
 
-func TestValidateMappedRequestCountsAllLegacyImageFields(t *testing.T) {
+func TestBuildRequestBodyConvertsAllLegacyImageFieldsWithoutLimit(t *testing.T) {
 	bodyJSON := `{
 		"model":"ax2.0-9tu",
 		"prompt":"animate",
@@ -588,15 +502,19 @@ func TestValidateMappedRequestCountsAllLegacyImageFields(t *testing.T) {
 		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
 	}
 
-	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
-	require.Nil(t, taskErr)
-	taskErr = (&TaskAdaptor{}).ValidateMappedRequest(c, info)
+	body, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
 
-	require.NotNil(t, taskErr)
-	assert.Contains(t, taskErr.Message, "at most 9 image references")
+	var got map[string]any
+	require.NoError(t, common.Unmarshal(data, &got))
+	content, ok := got["content"].([]any)
+	require.True(t, ok)
+	assert.Len(t, content, 11)
 }
 
-func TestFixedDurationProfilesAlwaysEstimateFifteenSeconds(t *testing.T) {
+func TestProfiledModelsEstimateSubmittedDuration(t *testing.T) {
 	for _, modelName := range []string{axMultimodalVideoModel, sdquanImageVideoModel} {
 		for _, requestedDuration := range []int{0, 5, 30} {
 			t.Run(fmt.Sprintf("%s_duration_%d", modelName, requestedDuration), func(t *testing.T) {
@@ -610,13 +528,17 @@ func TestFixedDurationProfilesAlwaysEstimateFifteenSeconds(t *testing.T) {
 					Duration: requestedDuration,
 				}, info)
 
-				assert.Equal(t, 15, seconds)
+				expected := requestedDuration
+				if expected == 0 {
+					expected = defaultUnprofiledVideoSeconds
+				}
+				assert.Equal(t, expected, seconds)
 			})
 		}
 	}
 }
 
-func TestBuildRequestBodyForcesFixedDuration(t *testing.T) {
+func TestBuildRequestBodyPreservesProfiledDuration(t *testing.T) {
 	bodyJSON := `{
 		"model":"ax2.0-9tu",
 		"prompt":"animate",
@@ -638,45 +560,74 @@ func TestBuildRequestBodyForcesFixedDuration(t *testing.T) {
 
 	var got map[string]any
 	require.NoError(t, common.Unmarshal(data, &got))
-	assert.Equal(t, float64(15), got["duration"])
+	assert.Equal(t, float64(5), got["duration"])
 	assert.NotContains(t, got, "seconds")
 }
 
-func TestNormalizeBillingRequestBodyUsesEffectiveFixedDuration(t *testing.T) {
+func TestBuildRequestBodyMapsProfiledSecondsAliasToDurationWithoutChangingValue(t *testing.T) {
+	tests := []struct {
+		name    string
+		seconds string
+		want    any
+	}{
+		{name: "string value", seconds: `"5"`, want: "5"},
+		{name: "explicit numeric zero", seconds: "0", want: float64(0)},
+		{name: "fractional numeric value", seconds: "14.5", want: float64(14.5)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bodyJSON := `{
+				"model":"sdquan-2",
+				"prompt":"animate",
+				"seconds":` + tt.seconds + `,
+				"images":["https://example.com/1.png"]
+			}`
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(bodyJSON))
+			c.Request.Header.Set("Content-Type", "application/json")
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+			body, err := (&TaskAdaptor{}).BuildRequestBody(c, &relaycommon.RelayInfo{
+				OriginModelName: sdquanImageVideoModel,
+				ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: sdquanImageVideoModel},
+			})
+			require.NoError(t, err)
+			data, err := io.ReadAll(body)
+			require.NoError(t, err)
+
+			var got map[string]any
+			require.NoError(t, common.Unmarshal(data, &got))
+			assert.Equal(t, tt.want, got["duration"])
+			assert.NotContains(t, got, "seconds")
+		})
+	}
+}
+
+func TestEstimateBillingPreservesProfiledDuration(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:    "public-ax-alias",
+		Duration: 5,
+	})
 	info := &relaycommon.RelayInfo{
 		OriginModelName: "public-ax-alias",
 		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: axMultimodalVideoModel},
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
 	}
-	normalizedBody, err := (&TaskAdaptor{}).NormalizeBillingRequestBody(info, []byte(`{
-		"model":"public-ax-alias",
-		"prompt":"animate",
-		"duration":5,
-		"seconds":"5"
-	}`))
-	require.NoError(t, err)
 
-	var normalized map[string]any
-	require.NoError(t, common.Unmarshal(normalizedBody, &normalized))
-	assert.Equal(t, float64(15), normalized["duration"])
-	assert.NotContains(t, normalized, "seconds")
+	ratios := (&TaskAdaptor{}).EstimateBilling(c, info)
 
-	cost, trace, err := billingexpr.RunExprWithRequest(
-		`param("duration") == 15 ? tier("fixed_15s", 15) : tier("wrong_duration", 5)`,
-		billingexpr.TokenParams{},
-		billingexpr.RequestInput{Body: normalizedBody},
-	)
-	require.NoError(t, err)
-	assert.Equal(t, float64(15), cost)
-	assert.Equal(t, "fixed_15s", trace.MatchedTier)
+	assert.Equal(t, float64(5), ratios["seconds"])
 }
 
-func TestMappedProfilesCombineDefaultAndMaximumDuration(t *testing.T) {
+func TestModelProfilesDoNotOverrideRequestedDuration(t *testing.T) {
 	info := &relaycommon.RelayInfo{
 		OriginModelName: seedanceGatewayModel,
 		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: canvasStandardSeedanceModel},
 	}
 
-	seconds := estimateVideoSeconds(relaycommon.TaskSubmitReq{Model: seedanceGatewayModel}, info)
+	seconds := estimateVideoSeconds(relaycommon.TaskSubmitReq{Model: seedanceGatewayModel, Duration: 20}, info)
 
-	assert.Equal(t, canvasStandardMaxVideoSeconds, seconds)
+	assert.Equal(t, 20, seconds)
 }

@@ -17,7 +17,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/samber/lo"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -102,6 +101,23 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
 }
 
+// ValidateMappedRequest runs after model mapping and before billing. Jimeng
+// only accepts image references, represented upstream as either HTTP(S) URLs
+// or base64 data, so unsupported media must not be silently discarded.
+func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, _ *relaycommon.RelayInfo) *dto.TaskError {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "get_task_request_failed", http.StatusBadRequest)
+	}
+	if err := validateJimengMediaInputs(&req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_media_input", http.StatusBadRequest)
+	}
+	if err := validateJimengMultipartInputReferences(c, &req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_media_input", http.StatusBadRequest)
+	}
+	return nil
+}
+
 // BuildRequestURL constructs the upstream URL.
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	if isNewAPIRelay(info.ApiKey) {
@@ -140,9 +156,10 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 				info.Action = constant.TaskActionFirstTailGenerate
 			}
 
-			// 将上传的文件转换为base64格式
-			var images []string
-
+			// Convert uploaded files to the same raw-base64 representation used by
+			// JSON/data-URI image inputs. Keep text image fields so a URL/base64
+			// mixture can be rejected instead of being silently replaced.
+			images := make([]string, 0, len(files))
 			for _, fileHeader := range files {
 				// 检查文件大小
 				if fileHeader.Size > MaxFileSize {
@@ -151,18 +168,18 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 
 				file, err := fileHeader.Open()
 				if err != nil {
-					continue
+					return nil, fmt.Errorf("open input_reference file %q: %w", fileHeader.Filename, err)
 				}
 				fileBytes, err := io.ReadAll(file)
 				file.Close()
 				if err != nil {
-					continue
+					return nil, fmt.Errorf("read input_reference file %q: %w", fileHeader.Filename, err)
 				}
 				// 将文件内容转换为base64
 				base64Str := base64.StdEncoding.EncodeToString(fileBytes)
 				images = append(images, base64Str)
 			}
-			req.Images = images
+			req.Images = append(req.Images, images...)
 		}
 	}
 
@@ -380,6 +397,16 @@ func hmacSHA256(key []byte, data []byte) []byte {
 }
 
 func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (*requestPayload, error) {
+	if err := validateJimengMediaInputs(req); err != nil {
+		return nil, err
+	}
+	if req == nil {
+		return nil, fmt.Errorf("video request is required")
+	}
+	if info == nil {
+		return nil, fmt.Errorf("relay info is required")
+	}
+
 	r := requestPayload{
 		ReqKey: info.UpstreamModelName,
 		Prompt: req.Prompt,
@@ -392,21 +419,37 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 		r.Frames = 121 // 24*5+1 = 121
 	}
 
-	// Handle one-of image_urls or binary_data_base64
-	if req.HasImage() {
-		if strings.HasPrefix(req.Images[0], "http") {
-			r.ImageUrls = req.Images
-		} else {
-			r.BinaryDataBase64 = req.Images
-		}
-	}
 	if err := taskcommon.UnmarshalMetadata(req.Metadata, &r); err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
 	}
 
+	// Public image fields and their compatibility aliases are authoritative over
+	// provider metadata. Keep metadata intact for the official Jimeng request
+	// route when no public image field was supplied.
+	if images := jimengImageInputs(req); len(images) > 0 {
+		imageURLs, binaryData, err := splitJimengImageInputs(images)
+		if err != nil {
+			return nil, err
+		}
+		r.ImageUrls = imageURLs
+		r.BinaryDataBase64 = binaryData
+	}
+	if err := validateJimengPayloadImageInputs(&r); err != nil {
+		return nil, err
+	}
+	// ValidateBasicTaskRequest canonicalizes ratio/aspectRatio into
+	// req.AspectRatio. Metadata is only a compatibility fallback, so a
+	// canonical top-level value must not be lost when metadata is absent.
+	if req.AspectRatio != "" {
+		r.AspectRatio = req.AspectRatio
+	}
+
 	// 即梦视频3.0 ReqKey转换
 	// https://www.volcengine.com/docs/85621/1792707
-	imageLen := lo.Max([]int{len(req.Images), len(r.BinaryDataBase64), len(r.ImageUrls)})
+	imageLen := len(r.BinaryDataBase64)
+	if len(r.ImageUrls) > 0 {
+		imageLen = len(r.ImageUrls)
+	}
 	if strings.Contains(r.ReqKey, "jimeng_v30") {
 		if r.ReqKey == "jimeng_v30_pro" {
 			// 3.0 pro只有固定的jimeng_ti2v_v30_pro
@@ -424,6 +467,202 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 	}
 
 	return &r, nil
+}
+
+func validateJimengMediaInputs(req *relaycommon.TaskSubmitReq) error {
+	if req == nil {
+		return fmt.Errorf("video request is required")
+	}
+	if hasJimengVideoOrAudioInput(req) {
+		return fmt.Errorf("Jimeng does not support video or audio reference inputs")
+	}
+	_, _, err := splitJimengImageInputs(jimengImageInputs(req))
+	return err
+}
+
+// Multipart files are not represented in TaskSubmitReq. Inspect the one
+// Jimeng-specific file field during mapped validation so URL/file conflicts
+// and oversized uploads fail before the request reaches billing.
+func validateJimengMultipartInputReferences(c *gin.Context, req *relaycommon.TaskSubmitReq) error {
+	if c == nil || !strings.HasPrefix(strings.ToLower(c.GetHeader("Content-Type")), "multipart/form-data") {
+		return nil
+	}
+	form, err := common.ParseMultipartFormReusable(c)
+	if err != nil {
+		return fmt.Errorf("read Jimeng multipart input_reference: %w", err)
+	}
+	defer form.RemoveAll()
+
+	files := form.File["input_reference"]
+	if len(files) == 0 {
+		return nil
+	}
+	for _, file := range files {
+		if file.Size > MaxFileSize {
+			return fmt.Errorf("文件 %s 大小超过限制，最大允许 %d MB", file.Filename, MaxFileSize/(1024*1024))
+		}
+	}
+	imageURLs, _, err := splitJimengImageInputs(jimengImageInputs(req))
+	if err != nil {
+		return err
+	}
+	if len(imageURLs) > 0 {
+		return fmt.Errorf("Jimeng does not support mixing HTTP(S) image URLs with base64 image data in one request")
+	}
+	return nil
+}
+
+func hasJimengVideoOrAudioInput(req *relaycommon.TaskSubmitReq) bool {
+	if req == nil {
+		return false
+	}
+	for _, values := range [][]string{req.Videos, req.VideoURLs, req.Audios, req.AudioURLs} {
+		for _, value := range values {
+			if strings.TrimSpace(value) != "" {
+				return true
+			}
+		}
+	}
+	for _, item := range req.Content {
+		if item.VideoURL != nil && strings.TrimSpace(item.VideoURL.URL) != "" {
+			return true
+		}
+		if item.AudioURL != nil && strings.TrimSpace(item.AudioURL.URL) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// jimengImageInputs folds all public image spellings into the two Jimeng
+// upstream media fields. Values are de-duplicated because ValidateBasicTaskRequest
+// may promote image into images for backward compatibility.
+func jimengImageInputs(req *relaycommon.TaskSubmitReq) []string {
+	if req == nil {
+		return nil
+	}
+
+	images := make([]string, 0, len(req.Images)+len(req.ImageURLs)+len(req.Content)+len(req.InputStartFrames)+len(req.InputImageReferences)+len(req.MetadataStartFrames)+2)
+	for _, values := range [][]string{
+		req.Images,
+		{req.Image},
+		req.ImageURLs,
+		{req.InputReference},
+		req.InputStartFrames,
+		req.InputImageReferences,
+		req.MetadataStartFrames,
+	} {
+		for _, image := range values {
+			images = appendJimengImage(images, image)
+		}
+	}
+	for _, item := range req.Content {
+		if item.ImageURL != nil {
+			images = appendJimengImage(images, item.ImageURL.URL)
+		}
+	}
+	return images
+}
+
+func appendJimengImage(images []string, image string) []string {
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return images
+	}
+	for _, existing := range images {
+		if existing == image {
+			return images
+		}
+	}
+	return append(images, image)
+}
+
+// splitJimengImageInputs enforces the upstream one-of contract: all public
+// images must be HTTP(S) URLs or all must be base64 data. A data URI is
+// normalized to its raw base64 payload before it is sent upstream.
+func splitJimengImageInputs(images []string) ([]string, []string, error) {
+	imageURLs := make([]string, 0, len(images))
+	binaryData := make([]string, 0, len(images))
+	for _, image := range images {
+		image = strings.TrimSpace(image)
+		if image == "" {
+			continue
+		}
+		if isJimengHTTPURL(image) {
+			imageURLs = append(imageURLs, image)
+			continue
+		}
+		base64Data, err := normalizeJimengBase64Image(image)
+		if err != nil {
+			return nil, nil, err
+		}
+		binaryData = append(binaryData, base64Data)
+	}
+	if len(imageURLs) > 0 && len(binaryData) > 0 {
+		return nil, nil, fmt.Errorf("Jimeng does not support mixing HTTP(S) image URLs with base64 image data in one request")
+	}
+	return imageURLs, binaryData, nil
+}
+
+func validateJimengPayloadImageInputs(payload *requestPayload) error {
+	if payload == nil {
+		return fmt.Errorf("Jimeng request payload is required")
+	}
+	if len(payload.ImageUrls) > 0 && len(payload.BinaryDataBase64) > 0 {
+		return fmt.Errorf("Jimeng does not support both image_urls and binary_data_base64 in one request")
+	}
+	return nil
+}
+
+func isJimengHTTPURL(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://")
+}
+
+func normalizeJimengBase64Image(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(strings.ToLower(value), "data:") {
+		return parseJimengDataURI(value)
+	}
+	if !isJimengBase64(value) {
+		return "", fmt.Errorf("Jimeng image input must be an HTTP(S) URL, image data URI, or raw base64 data")
+	}
+	return value, nil
+}
+
+func parseJimengDataURI(value string) (string, error) {
+	comma := strings.Index(value, ",")
+	if comma < 0 {
+		return "", fmt.Errorf("Jimeng image data URI must contain base64 data")
+	}
+	metadata := value[len("data:"):comma]
+	base64Data := value[comma+1:]
+	parts := strings.Split(metadata, ";")
+	if len(parts) == 0 || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(parts[0])), "image/") {
+		return "", fmt.Errorf("Jimeng image data URI must use an image media type")
+	}
+	hasBase64 := false
+	for _, part := range parts[1:] {
+		if strings.EqualFold(strings.TrimSpace(part), "base64") {
+			hasBase64 = true
+			break
+		}
+	}
+	if !hasBase64 || !isJimengBase64(base64Data) {
+		return "", fmt.Errorf("Jimeng image data URI must contain valid base64 data")
+	}
+	return base64Data, nil
+}
+
+func isJimengBase64(value string) bool {
+	if value == "" {
+		return false
+	}
+	if _, err := base64.StdEncoding.DecodeString(value); err == nil {
+		return true
+	}
+	_, err := base64.RawStdEncoding.DecodeString(value)
+	return err == nil
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {

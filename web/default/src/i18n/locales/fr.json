@@ -3594,6 +3594,7 @@
     "Requires a duration of at least {{expected}} seconds": "Nécessite une durée d'au moins {{expected}} secondes",
     "Requires an application/json request": "Nécessite une requête application/json",
     "Requires at least {{expected}} images": "Nécessite au moins {{expected}} images",
+    "Requires at least {{expected}} videos and audios in total": "Nécessite au total au moins {{expected}} vidéos et fichiers audio",
     "Rerank": "Reclasser",
     "Reroll": "Relancer",
     "Research, analysis, scientific reasoning": "Recherche, analyse, raisonnement scientifique",
@@ -4105,6 +4106,7 @@
     "Supports at most {{expected}} audios": "Prend en charge au maximum {{expected}} fichiers audio",
     "Supports at most {{expected}} images": "Prend en charge au maximum {{expected}} images",
     "Supports at most {{expected}} videos": "Prend en charge au maximum {{expected}} vidéos",
+    "Supports at most {{expected}} videos and audios in total": "Prend en charge au total au maximum {{expected}} vidéos et fichiers audio",
     "Supports HTML markup or iframe embedding. Enter HTML code directly, or provide a complete URL to automatically embed it as an iframe.": "Prend en charge le balisage HTML ou l'intégration d'iframe. Entrez le code HTML directement, ou fournissez une URL complète pour l'intégrer automatiquement en tant qu'iframe.",
     "Supports one-click configuration and perfectly adapts to NewAPI multi-protocol configuration.": "Prend en charge la configuration en un clic et s'adapte parfaitement à la configuration multi-protocole NewAPI.",
     "Supports PNG, JPG, SVG, or WebP. Recommended size: 128×128 or smaller.": "Prend en charge PNG, JPG, SVG ou WebP. Taille recommandée : 128×128 ou moins.",
@@ -4713,6 +4715,7 @@
     "Vertex AI Key Format": "Format de clé Vertex AI",
     "Vertex AI service account key must be valid JSON": "La clé de compte de service Vertex AI doit être un JSON valide",
     "Video": "Vidéo",
+    "Video + audio total": "Total vidéo et audio",
     "Video length in seconds": "Durée de la vidéo en secondes",
     "Video Remix": "Remix vidéo",
     "Video task channel. Submit uses POST /api/v1/prot/generate, polling uses GET /api/v1/prot/query/{jobId}, and balance uses GET /api/v1/prot/balance. Remaining balance is shown as credits minus frozen_credits. Pricing is configured locally in New API, not synced from AGGC.": "Canal de tâches vidéo. La soumission utilise POST /api/v1/prot/generate, l’interrogation utilise GET /api/v1/prot/query/{jobId}, et le solde utilise GET /api/v1/prot/balance. Le solde restant est affiché comme credits moins frozen_credits. Les prix sont configurés localement dans New API, sans synchronisation depuis AGGC.",
@@ -4952,6 +4955,17 @@
     "Effective": "Effective",
     "Resolution": "Resolution",
     "Resolution {{resolution}} is not supported. Supported: {{supported_resolutions}}": "La resolution {{resolution}} n'est pas prise en charge. Prises en charge : {{supported_resolutions}}",
-    "Supported resolutions": "Resolutions prises en charge"
+    "Supported resolutions": "Resolutions prises en charge",
+    "Aspect ratio": "Format d'image",
+    "Pixel size": "Taille en pixels",
+    "Supported aspect ratios": "Formats d'image pris en charge",
+    "Supported pixel sizes": "Tailles en pixels prises en charge",
+    "Aspect ratio {{aspect_ratio}} is not supported. Supported: {{supported_aspect_ratios}}": "Le format d'image {{aspect_ratio}} n'est pas pris en charge. Formats pris en charge : {{supported_aspect_ratios}}",
+    "Pixel size {{size}} is not supported. Supported: {{supported_sizes}}": "La taille en pixels {{size}} n’est pas prise en charge. Tailles prises en charge : {{supported_sizes}}",
+    "Use W:H aspect ratios or adaptive": "Utilisez un format W:H ou adaptive",
+    "Use WxH pixel sizes": "Utilisez des dimensions en pixels WxH",
+    "Use a quality label such as 720p or 4k": "Utilisez une qualite telle que 720p ou 4k",
+    "Do not repeat output values": "Les valeurs de sortie ne doivent pas etre repetees",
+    "Pixel size conflicts with aspect ratio": "La taille en pixels ne correspond pas au format d'image"
   }
 }

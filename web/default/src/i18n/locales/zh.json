@@ -3594,6 +3594,7 @@
     "Requires a duration of at least {{expected}} seconds": "时长至少为 {{expected}} 秒",
     "Requires an application/json request": "仅支持 application/json 请求",
     "Requires at least {{expected}} images": "至少需要 {{expected}} 张图片",
+    "Requires at least {{expected}} videos and audios in total": "视频与音频合计至少需要 {{expected}} 个",
     "Rerank": "重新排序",
     "Reroll": "重绘",
     "Research, analysis, scientific reasoning": "研究、分析与科学推理",
@@ -4105,6 +4106,7 @@
     "Supports at most {{expected}} audios": "最多支持 {{expected}} 个音频",
     "Supports at most {{expected}} images": "最多支持 {{expected}} 张图片",
     "Supports at most {{expected}} videos": "最多支持 {{expected}} 个视频",
+    "Supports at most {{expected}} videos and audios in total": "视频与音频合计最多支持 {{expected}} 个",
     "Supports HTML markup or iframe embedding. Enter HTML code directly, or provide a complete URL to automatically embed it as an iframe.": "支持 HTML 标记或 iframe 嵌入。直接输入 HTML 代码，或提供完整的 URL 以将其自动嵌入为 iframe。",
     "Supports one-click configuration and perfectly adapts to NewAPI multi-protocol configuration.": "支持一键配置并完美适配 NewAPI 多协议配置",
     "Supports PNG, JPG, SVG, or WebP. Recommended size: 128×128 or smaller.": "支持 PNG、JPG、SVG 或 WebP，建议尺寸不超过 128×128。",
@@ -4713,6 +4715,7 @@
     "Vertex AI Key Format": "Vertex AI 密钥格式",
     "Vertex AI service account key must be valid JSON": "Vertex AI 服务账号密钥必须是有效 JSON",
     "Video": "视频",
+    "Video + audio total": "视频与音频合计",
     "Video length in seconds": "视频时长（秒）",
     "Video Remix": "视频 Remix",
     "Video task channel. Submit uses POST /api/v1/prot/generate, polling uses GET /api/v1/prot/query/{jobId}, and balance uses GET /api/v1/prot/balance. Remaining balance is shown as credits minus frozen_credits. Pricing is configured locally in New API, not synced from AGGC.": "视频任务渠道。提交使用 POST /api/v1/prot/generate，轮询使用 GET /api/v1/prot/query/{jobId}，余额使用 GET /api/v1/prot/balance。剩余额度按 credits - frozen_credits 展示。价格在本站 New API 本地配置，不从 AGGC 同步。",
@@ -4952,6 +4955,17 @@
     "Effective": "生效值",
     "Resolution": "清晰度",
     "Resolution {{resolution}} is not supported. Supported: {{supported_resolutions}}": "不支持清晰度 {{resolution}}。支持：{{supported_resolutions}}",
-    "Supported resolutions": "支持的清晰度"
+    "Supported resolutions": "支持的清晰度",
+    "Aspect ratio": "画面比例",
+    "Pixel size": "像素尺寸",
+    "Supported aspect ratios": "支持的画面比例",
+    "Supported pixel sizes": "支持的像素尺寸",
+    "Aspect ratio {{aspect_ratio}} is not supported. Supported: {{supported_aspect_ratios}}": "画面比例 {{aspect_ratio}} 不受支持。支持：{{supported_aspect_ratios}}",
+    "Pixel size {{size}} is not supported. Supported: {{supported_sizes}}": "像素尺寸 {{size}} 不受支持。支持：{{supported_sizes}}",
+    "Use W:H aspect ratios or adaptive": "请使用 W:H 画面比例或 adaptive",
+    "Use WxH pixel sizes": "请使用 WxH 像素尺寸",
+    "Use a quality label such as 720p or 4k": "请使用如 720p 或 4k 的清晰度标识",
+    "Do not repeat output values": "输出值不能重复",
+    "Pixel size conflicts with aspect ratio": "像素尺寸与画面比例冲突"
   }
 }

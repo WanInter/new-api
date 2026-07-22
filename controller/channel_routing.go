@@ -53,6 +53,10 @@ func SimulateChannelRouting(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
 		return
 	}
+	if err := service.NormalizeVideoRoutingSimulationRequest(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+		return
+	}
 	if err := validateVideoRoutingSimulationRequest(request); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
 		return
@@ -262,15 +266,6 @@ func validateVideoRoutingSimulationRequest(request service.VideoRoutingSimulatio
 	}
 	if request.Duration != nil && *request.Duration <= 0 {
 		return fmt.Errorf("duration must be positive")
-	}
-	if resolution := strings.TrimSpace(request.Resolution); resolution != "" {
-		normalized, ok := dto.NormalizeVideoResolution(resolution)
-		if !ok {
-			return fmt.Errorf("resolution must be one of 480p, 720p, 1080p, 4k")
-		}
-		if normalized != resolution {
-			return fmt.Errorf("resolution must use lowercase canonical form")
-		}
 	}
 	if request.Retry < 0 {
 		return fmt.Errorf("retry must be non-negative")

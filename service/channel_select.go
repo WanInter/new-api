@@ -85,9 +85,20 @@ func ChannelSupportsRequestConstraints(c *gin.Context, channel *model.Channel, m
 	}
 	features, err := GetVideoRequestFeatures(c)
 	if err != nil {
+		if isVideoRequestFeatureDTOError(err) {
+			return channelAllowsUnparsedVideoRequest(channel, modelName)
+		}
 		return false
 	}
 	return EvaluateChannelVideoRouting(channel, modelName, features).Eligible
+}
+
+// channelAllowsUnparsedVideoRequest permits only a channel that has no exact
+// capability rule. A rule cannot be enforced without reliable request
+// features, so strict models and explicitly configured channels stay blocked.
+func channelAllowsUnparsedVideoRequest(channel *model.Channel, modelName string) bool {
+	evaluation := EvaluateChannelVideoRouting(channel, modelName, VideoRequestFeatures{})
+	return evaluation.Eligible && !evaluation.Strict && evaluation.Capability == nil
 }
 
 func channelFilterForRequest(c *gin.Context, modelName string) (model.ChannelFilter, error) {
@@ -124,6 +135,11 @@ func channelFilterForRequest(c *gin.Context, modelName string) (model.ChannelFil
 	}
 	features, err := GetVideoRequestFeatures(c)
 	if err != nil {
+		if isVideoRequestFeatureDTOError(err) {
+			return func(channel *model.Channel) bool {
+				return channelAllowsUnparsedVideoRequest(channel, modelName)
+			}, nil
+		}
 		return nil, err
 	}
 	return func(channel *model.Channel) bool {

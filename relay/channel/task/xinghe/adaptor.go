@@ -23,31 +23,52 @@ import (
 	"github.com/pkg/errors"
 )
 
+type scalarOrStringList []string
+
+func (values *scalarOrStringList) UnmarshalJSON(data []byte) error {
+	var list []string
+	if err := common.Unmarshal(data, &list); err == nil {
+		*values = list
+		return nil
+	}
+	var scalar string
+	if err := common.Unmarshal(data, &scalar); err != nil {
+		return err
+	}
+	*values = []string{scalar}
+	return nil
+}
+
 type jsonRequest struct {
-	Prompt                  string         `json:"prompt"`
-	Model                   string         `json:"model,omitempty"`
-	Image                   string         `json:"image,omitempty"`
-	Images                  []string       `json:"images,omitempty"`
-	Duration                int            `json:"duration,omitempty"`
-	Seconds                 string         `json:"seconds,omitempty"`
-	Ratio                   string         `json:"ratio,omitempty"`
-	AspectRatio             string         `json:"aspect_ratio,omitempty"`
-	Resolution              string         `json:"resolution,omitempty"`
-	ImageURLs               []string       `json:"image_urls,omitempty"`
-	VideoURL                string         `json:"video_url,omitempty"`
-	VideoURLs               []string       `json:"video_urls,omitempty"`
-	VideosURLs              []string       `json:"videos_urls,omitempty"`
-	AudioURL                string         `json:"audio_url,omitempty"`
-	AudioURLs               []string       `json:"audio_urls,omitempty"`
-	AudiosURLs              []string       `json:"audios_urls,omitempty"`
-	VoiceReferenceAudioURLs []string       `json:"voice_reference_audio_urls,omitempty"`
-	AudioReferenceURLs      []string       `json:"audio_reference_urls,omitempty"`
-	ReferenceVideoURL       string         `json:"reference_video_url,omitempty"`
-	ReferenceVideoURLs      []string       `json:"reference_video_urls,omitempty"`
-	ImitationVideoURLs      []string       `json:"imitation_video_urls,omitempty"`
-	SourceVideoURLs         []string       `json:"source_video_urls,omitempty"`
-	ReferenceAssetURLs      []string       `json:"reference_asset_urls,omitempty"`
-	Metadata                map[string]any `json:"metadata,omitempty"`
+	Prompt                  string                        `json:"prompt"`
+	Model                   string                        `json:"model,omitempty"`
+	Image                   string                        `json:"image,omitempty"`
+	Images                  scalarOrStringList            `json:"images,omitempty"`
+	Content                 []relaycommon.TaskContentItem `json:"content,omitempty"`
+	Size                    string                        `json:"size,omitempty"`
+	Duration                int                           `json:"duration,omitempty"`
+	Seconds                 string                        `json:"seconds,omitempty"`
+	Ratio                   string                        `json:"ratio,omitempty"`
+	AspectRatio             string                        `json:"aspect_ratio,omitempty"`
+	AspectRatioCamel        string                        `json:"aspectRatio,omitempty"`
+	Resolution              string                        `json:"resolution,omitempty"`
+	ImageURLs               []string                      `json:"image_urls,omitempty"`
+	Videos                  scalarOrStringList            `json:"videos,omitempty"`
+	VideoURL                string                        `json:"video_url,omitempty"`
+	VideoURLs               []string                      `json:"video_urls,omitempty"`
+	VideosURLs              []string                      `json:"videos_urls,omitempty"`
+	Audios                  scalarOrStringList            `json:"audios,omitempty"`
+	AudioURL                string                        `json:"audio_url,omitempty"`
+	AudioURLs               []string                      `json:"audio_urls,omitempty"`
+	AudiosURLs              []string                      `json:"audios_urls,omitempty"`
+	VoiceReferenceAudioURLs []string                      `json:"voice_reference_audio_urls,omitempty"`
+	AudioReferenceURLs      []string                      `json:"audio_reference_urls,omitempty"`
+	ReferenceVideoURL       string                        `json:"reference_video_url,omitempty"`
+	ReferenceVideoURLs      []string                      `json:"reference_video_urls,omitempty"`
+	ImitationVideoURLs      []string                      `json:"imitation_video_urls,omitempty"`
+	SourceVideoURLs         []string                      `json:"source_video_urls,omitempty"`
+	ReferenceAssetURLs      []string                      `json:"reference_asset_urls,omitempty"`
+	Metadata                map[string]any                `json:"metadata,omitempty"`
 }
 
 type requestPayload struct {
@@ -120,12 +141,20 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
 	req := relaycommon.TaskSubmitReq{
-		Prompt:   raw.Prompt,
-		Model:    raw.Model,
-		Images:   raw.Images,
-		Duration: raw.Duration,
-		Seconds:  raw.Seconds,
-		Metadata: raw.Metadata,
+		Prompt:           raw.Prompt,
+		Model:            raw.Model,
+		Images:           []string(raw.Images),
+		Content:          raw.Content,
+		Videos:           []string(raw.Videos),
+		Audios:           []string(raw.Audios),
+		Size:             raw.Size,
+		Ratio:            raw.Ratio,
+		AspectRatio:      raw.AspectRatio,
+		AspectRatioAlias: raw.AspectRatioCamel,
+		Resolution:       raw.Resolution,
+		Duration:         raw.Duration,
+		Seconds:          raw.Seconds,
+		Metadata:         raw.Metadata,
 	}
 	if strings.TrimSpace(req.Model) == "" {
 		req.Model = info.OriginModelName
@@ -143,6 +172,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		req.Metadata = map[string]any{}
 	}
 	copyRawMetadata(raw, req.Metadata)
+	if _, err := relaycommon.NormalizeTaskSubmitVideoOutput(&req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_video_output", http.StatusBadRequest)
+	}
 	c.Set("task_request", req)
 	info.Action = constant.TaskActionGenerate
 	return nil
@@ -156,10 +188,10 @@ func copyRawMetadata(raw jsonRequest, metadata map[string]any) {
 	}
 	setString("ratio", raw.Ratio)
 	setString("aspect_ratio", raw.AspectRatio)
+	setString("aspectRatio", raw.AspectRatioCamel)
 	setString("resolution", raw.Resolution)
 	appendList := func(key string, values ...string) {
 		merged := append(stringList(metadata[key]), values...)
-		merged = limitStrings(merged, 32)
 		if len(merged) > 0 {
 			metadata[key] = merged
 		}
@@ -208,6 +240,31 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+a.apiKey)
+	return nil
+}
+
+// ValidateMappedRequest runs after model mapping, before pricing. Xinghe has
+// fixed media limits and model-specific output options, so silently clipping
+// inputs or falling back to defaults would bill for a request different from
+// the one the client submitted.
+func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "get_task_request_failed", http.StatusBadRequest)
+	}
+	modelName := upstreamModelName(info)
+	if modelName == "" {
+		modelName = req.Model
+	}
+	if _, err := resolveXingheRatio(&req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_video_output", http.StatusBadRequest)
+	}
+	if _, err := resolveXingheResolution(&req, modelName); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_video_output", http.StatusBadRequest)
+	}
+	if err := validateXingheMediaInputs(&req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_media_input", http.StatusBadRequest)
+	}
 	return nil
 }
 
@@ -327,18 +384,31 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 	if req.Model != "" && !isModelMapped(info) {
 		modelName = req.Model
 	}
+	ratio, err := resolveXingheRatio(req)
+	if err != nil {
+		return nil, err
+	}
+	resolution, err := resolveXingheResolution(req, modelName)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateXingheMediaInputs(req); err != nil {
+		return nil, err
+	}
+	images, videos, audios := xingheMediaURLs(req)
+	referenceVideos := xingheReferenceVideoURLs(req)
 	payload := &requestPayload{
 		Model:        modelName,
 		Prompt:       req.Prompt,
 		Duration:     normalizeDuration(req.Duration, req.Seconds, req.Metadata),
-		Ratio:        normalizeRatio(req.Metadata),
-		Resolution:   normalizeResolution(req.Metadata, modelName),
-		ImageURLs:    limitStrings(append(stringList(req.Metadata["image_urls"]), req.Images...), 9),
-		VideoURLs:    limitStrings(stringList(req.Metadata["video_urls"]), 3),
-		AudioURLs:    limitStrings(stringList(req.Metadata["audio_urls"]), 3),
+		Ratio:        ratio,
+		Resolution:   resolution,
+		ImageURLs:    limitStrings(images, 9),
+		VideoURLs:    limitStrings(videos, 3),
+		AudioURLs:    limitStrings(audios, 3),
 		ClientTaskID: publicTaskID(info),
 	}
-	payload.ReferenceVideoURLs = limitStrings(append(stringList(req.Metadata["reference_video_urls"]), stringList(req.Metadata["reference_asset_urls"])...), 3)
+	payload.ReferenceVideoURLs = limitStrings(referenceVideos, 3)
 	if len(payload.ImageURLs) == 0 && len(payload.VideoURLs) == 0 && len(payload.AudioURLs) == 0 && len(payload.ReferenceVideoURLs) == 0 {
 		return nil, fmt.Errorf("Xinghe video requires at least one image, video, or audio reference asset")
 	}
@@ -384,19 +454,84 @@ func normalizeDuration(duration int, seconds string, metadata map[string]any) in
 	return duration
 }
 
-func normalizeRatio(metadata map[string]any) string {
-	ratio := strings.TrimSpace(firstNonEmpty(stringValue(metadata["ratio"]), stringValue(metadata["aspect_ratio"])))
-	if ratio == "9:16" {
-		return "9:16"
+func resolveXingheRatio(req *relaycommon.TaskSubmitReq) (string, error) {
+	if req == nil {
+		return "", fmt.Errorf("video request is required")
 	}
-	return DefaultRatio
+	ratio := strings.TrimSpace(firstNonEmpty(req.AspectRatio, req.Ratio, stringValue(req.Metadata["ratio"]), stringValue(req.Metadata["aspect_ratio"])))
+	if ratio == "" {
+		return DefaultRatio, nil
+	}
+	if ratio == DefaultRatio || ratio == "9:16" {
+		return ratio, nil
+	}
+	return "", fmt.Errorf("Xinghe supports only 16:9 and 9:16 aspect ratios, got %q", ratio)
 }
 
-func normalizeResolution(metadata map[string]any, modelName string) string {
-	if strings.TrimSpace(stringValue(metadata["resolution"])) == "1080p" && strings.TrimSpace(modelName) == "xinghe-2.0" {
-		return "1080p"
+func resolveXingheResolution(req *relaycommon.TaskSubmitReq, modelName string) (string, error) {
+	if req == nil {
+		return "", fmt.Errorf("video request is required")
 	}
-	return DefaultResolution
+	resolution := strings.TrimSpace(firstNonEmpty(req.Resolution, stringValue(req.Metadata["resolution"])))
+	if resolution == "" || resolution == DefaultResolution {
+		return DefaultResolution, nil
+	}
+	if resolution == "1080p" && strings.TrimSpace(modelName) == "xinghe-2.0" {
+		return resolution, nil
+	}
+	return "", fmt.Errorf("Xinghe model %q does not support resolution %q", modelName, resolution)
+}
+
+func validateXingheMediaInputs(req *relaycommon.TaskSubmitReq) error {
+	images, videos, audios := xingheMediaURLs(req)
+	referenceVideos := xingheReferenceVideoURLs(req)
+	for _, input := range []struct {
+		name   string
+		values []string
+		limit  int
+	}{
+		{name: "image", values: images, limit: 9},
+		{name: "video", values: videos, limit: 3},
+		{name: "audio", values: audios, limit: 3},
+		{name: "reference video", values: referenceVideos, limit: 3},
+	} {
+		if len(input.values) > input.limit {
+			return fmt.Errorf("Xinghe supports at most %d %s inputs, got %d", input.limit, input.name, len(input.values))
+		}
+	}
+	return nil
+}
+
+func xingheMediaURLs(req *relaycommon.TaskSubmitReq) (images, videos, audios []string) {
+	if req == nil {
+		return nil, nil, nil
+	}
+	contentImages, contentVideos, contentAudios := xingheContentMediaURLs(req.Content)
+	return mergeStrings(req.Images, req.ImageURLs, stringList(req.Metadata["image_urls"]), contentImages),
+		mergeStrings(req.Videos, req.VideoURLs, stringList(req.Metadata["video_urls"]), contentVideos),
+		mergeStrings(req.Audios, req.AudioURLs, stringList(req.Metadata["audio_urls"]), contentAudios)
+}
+
+func xingheReferenceVideoURLs(req *relaycommon.TaskSubmitReq) []string {
+	if req == nil {
+		return nil
+	}
+	return mergeStrings(stringList(req.Metadata["reference_video_urls"]), stringList(req.Metadata["reference_asset_urls"]))
+}
+
+func xingheContentMediaURLs(content []relaycommon.TaskContentItem) (images, videos, audios []string) {
+	for _, item := range content {
+		if item.ImageURL != nil {
+			images = append(images, item.ImageURL.URL)
+		}
+		if item.VideoURL != nil {
+			videos = append(videos, item.VideoURL.URL)
+		}
+		if item.AudioURL != nil {
+			audios = append(audios, item.AudioURL.URL)
+		}
+	}
+	return mergeStrings(images), mergeStrings(videos), mergeStrings(audios)
 }
 
 func resolutionRatio(modelName, resolution string) float64 {
@@ -469,6 +604,20 @@ func limitStrings(values []string, limit int) []string {
 		}
 	}
 	return out
+}
+
+func mergeStrings(groups ...[]string) []string {
+	merged := make([]string, 0)
+	for _, values := range groups {
+		for _, value := range values {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			merged = append(merged, value)
+		}
+	}
+	return merged
 }
 func stringValue(v any) string {
 	if s, ok := v.(string); ok {

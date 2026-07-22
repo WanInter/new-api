@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,11 +27,6 @@ const (
 	ChannelName           = "axmgc"
 	DefaultBaseURL        = "https://axmgc.com"
 	Seedance720p933Model  = "seedance-2-720p-933"
-	defaultDuration       = 15
-	defaultResolution     = "720p"
-	maxImages             = 9
-	maxVideos             = 3
-	maxAudios             = 3
 	jsonRequestContextKey = "axmgc_json_request"
 )
 
@@ -39,9 +35,9 @@ var ModelList = []string{Seedance720p933Model}
 type axmgcJSONRequest struct {
 	Model           string           `json:"model"`
 	Content         []map[string]any `json:"content"`
-	AspectRatio     string           `json:"aspect_ratio,omitempty"`
-	Resolution      string           `json:"resolution,omitempty"`
-	Duration        int              `json:"duration"`
+	AspectRatio     *string          `json:"aspect_ratio,omitempty"`
+	Resolution      *string          `json:"resolution,omitempty"`
+	Duration        *int             `json:"duration,omitempty"`
 	GenerateAudio   *bool            `json:"generate_audio,omitempty"`
 	Seed            *int             `json:"seed,omitempty"`
 	Watermark       *bool            `json:"watermark,omitempty"`
@@ -113,26 +109,50 @@ func (a *TaskAdaptor) validateJSONRequest(c *gin.Context, info *relaycommon.Rela
 	if prompt == "" {
 		return service.TaskErrorWrapperLocal(errors.New("content must contain a non-empty text item"), "invalid_request", http.StatusBadRequest)
 	}
-	if err := validateResolution(raw.Resolution); err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
-	}
 	if strings.TrimSpace(raw.Model) == "" {
 		return service.TaskErrorWrapperLocal(errors.New("model field is required"), "missing_model", http.StatusBadRequest)
 	}
 
 	raw.Model = strings.TrimSpace(raw.Model)
 	raw.Prompt = prompt
-	raw.AspectRatio = strings.TrimSpace(raw.AspectRatio)
-	raw.Resolution = strings.TrimSpace(raw.Resolution)
-	raw.Duration = defaultDuration
+	if _, err := relaycommon.NormalizeTaskSubmitVideoOutput(&raw); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_video_output", http.StatusBadRequest)
+	}
+	aspectRatio, err := optionalJSONString(input, "aspect_ratio")
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	resolution, err := optionalJSONString(input, "resolution")
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	duration, err := optionalJSONDuration(input, "duration")
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	if duration == nil {
+		duration, err = optionalJSONDuration(input, "seconds")
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+	}
+	if duration != nil {
+		raw.Duration = *duration
+	}
 	storeValidatedTaskRequest(c, info, raw, images+videos+audios > 0)
+	if raw.AspectRatio != "" {
+		aspectRatio = &raw.AspectRatio
+	}
+	if raw.Resolution != "" {
+		resolution = &raw.Resolution
+	}
 
 	payload := axmgcJSONRequest{
 		Model:       raw.Model,
 		Content:     content,
-		AspectRatio: raw.AspectRatio,
-		Resolution:  firstNonEmpty(raw.Resolution, defaultResolution),
-		Duration:    defaultDuration,
+		AspectRatio: aspectRatio,
+		Resolution:  resolution,
+		Duration:    duration,
 	}
 	if payload.GenerateAudio, err = optionalJSONBool(input, "generate_audio"); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
@@ -160,16 +180,35 @@ func storeValidatedTaskRequest(c *gin.Context, info *relaycommon.RelayInfo, req 
 
 func contentFromURLs(raw relaycommon.TaskSubmitReq) []map[string]any {
 	content := make([]map[string]any, 0, len(raw.Images)+len(raw.ImageURLs)+len(raw.Videos)+len(raw.VideoURLs)+len(raw.Audios)+len(raw.AudioURLs))
-	for _, url := range appendNonEmpty([]string{raw.Image}, raw.Images, raw.ImageURLs, raw.InputStartFrames, raw.InputImageReferences) {
+	for _, url := range axmgcImageReferences(raw) {
 		content = append(content, urlContentItem("image_url", url))
 	}
-	for _, url := range appendNonEmpty(raw.Videos, raw.VideoURLs) {
+	for _, url := range axmgcVideoReferences(raw) {
 		content = append(content, urlContentItem("video_url", url))
 	}
-	for _, url := range appendNonEmpty(raw.Audios, raw.AudioURLs) {
+	for _, url := range axmgcAudioReferences(raw) {
 		content = append(content, urlContentItem("audio_url", url))
 	}
 	return content
+}
+
+func axmgcImageReferences(raw relaycommon.TaskSubmitReq) []string {
+	return appendNonEmpty(
+		[]string{raw.Image, raw.InputReference},
+		raw.Images,
+		raw.ImageURLs,
+		raw.InputStartFrames,
+		raw.InputImageReferences,
+		raw.MetadataStartFrames,
+	)
+}
+
+func axmgcVideoReferences(raw relaycommon.TaskSubmitReq) []string {
+	return appendNonEmpty(raw.Videos, raw.VideoURLs)
+}
+
+func axmgcAudioReferences(raw relaycommon.TaskSubmitReq) []string {
+	return appendNonEmpty(raw.Audios, raw.AudioURLs)
 }
 
 func appendNonEmpty(groups ...[]string) []string {
@@ -185,16 +224,21 @@ func appendNonEmpty(groups ...[]string) []string {
 }
 
 func validateJSONContent(rawContent any, legacy relaycommon.TaskSubmitReq) ([]map[string]any, string, int, int, int, error) {
+	legacyContent := contentFromURLs(legacy)
+	legacyImages := len(axmgcImageReferences(legacy))
+	legacyVideos := len(axmgcVideoReferences(legacy))
+	legacyAudios := len(axmgcAudioReferences(legacy))
 	if rawContent == nil {
-		return contentFromURLs(legacy), "", len(appendNonEmpty([]string{legacy.Image}, legacy.Images, legacy.ImageURLs, legacy.InputStartFrames, legacy.InputImageReferences)), len(appendNonEmpty(legacy.Videos, legacy.VideoURLs)), len(appendNonEmpty(legacy.Audios, legacy.AudioURLs)), nil
+		return legacyContent, "", legacyImages, legacyVideos, legacyAudios, nil
 	}
 	items, ok := rawContent.([]any)
 	if !ok {
 		return nil, "", 0, 0, 0, errors.New("content must be an array")
 	}
-	content := make([]map[string]any, 0, len(items))
+	content := make([]map[string]any, 0, len(legacyContent)+len(items))
+	content = append(content, legacyContent...)
 	prompts := make([]string, 0, 1)
-	images, videos, audios := 0, 0, 0
+	images, videos, audios := legacyImages, legacyVideos, legacyAudios
 	seenText := false
 	for _, rawItem := range items {
 		item, ok := rawItem.(map[string]any)
@@ -220,9 +264,6 @@ func validateJSONContent(rawContent any, legacy relaycommon.TaskSubmitReq) ([]ma
 			prompts = append(prompts, text)
 		}
 		content = append(content, normalized)
-	}
-	if err := validateMediaCounts(images, videos, audios); err != nil {
-		return nil, "", 0, 0, 0, err
 	}
 	return content, strings.Join(prompts, "\n"), images, videos, audios, nil
 }
@@ -325,24 +366,51 @@ func optionalJSONInt(input map[string]any, field string) (*int, error) {
 	return &result, nil
 }
 
-func validateMediaCounts(images, videos, audios int) error {
-	if images > maxImages {
-		return fmt.Errorf("at most %d images are supported", maxImages)
+func optionalJSONString(input map[string]any, field string) (*string, error) {
+	value, ok := input[field]
+	if !ok || value == nil {
+		return nil, nil
 	}
-	if videos > maxVideos {
-		return fmt.Errorf("at most %d videos are supported", maxVideos)
+	data, err := common.Marshal(value)
+	if err != nil {
+		return nil, err
 	}
-	if audios > maxAudios {
-		return fmt.Errorf("at most %d audios are supported", maxAudios)
+	var result string
+	if err := common.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("%s must be a string", field)
 	}
-	return nil
+	return &result, nil
 }
 
-func validateResolution(resolution string) error {
-	if resolution = strings.TrimSpace(resolution); resolution != "" && !strings.EqualFold(resolution, defaultResolution) {
-		return fmt.Errorf("resolution must be %s for %s", defaultResolution, Seedance720p933Model)
+// optionalJSONDuration converts the public duration/seconds aliases to the
+// integer field used by Axmgc without imposing any model-specific range.
+func optionalJSONDuration(input map[string]any, field string) (*int, error) {
+	value, ok := input[field]
+	if !ok || value == nil {
+		return nil, nil
 	}
-	return nil
+	if result, err := optionalJSONInt(input, field); err == nil {
+		return result, nil
+	}
+
+	data, err := common.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var raw string
+	if err := common.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("%s must be an integer number of seconds", field)
+	}
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	for _, suffix := range []string{"seconds", "second", "secs", "sec", "s"} {
+		raw = strings.TrimSuffix(raw, suffix)
+	}
+	raw = strings.TrimSpace(raw)
+	result, err := strconv.Atoi(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%s must be an integer number of seconds", field)
+	}
+	return &result, nil
 }
 
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
@@ -384,16 +452,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 }
 
 func (a *TaskAdaptor) NormalizeBillingRequestBody(_ *relaycommon.RelayInfo, body []byte) ([]byte, error) {
-	if len(body) == 0 {
-		return body, nil
-	}
-	var request map[string]any
-	if err := common.Unmarshal(body, &request); err != nil {
-		return nil, err
-	}
-	request["duration"] = defaultDuration
-	delete(request, "seconds")
-	return common.Marshal(request)
+	return body, nil
 }
 
 func upstreamModelName(info *relaycommon.RelayInfo, fallback string) string {

@@ -683,15 +683,18 @@ type TaskRelayInfo struct {
 }
 
 type TaskSubmitReq struct {
-	Prompt               string                 `json:"prompt"`
-	Model                string                 `json:"model,omitempty"`
-	Mode                 string                 `json:"mode,omitempty"`
-	Image                string                 `json:"image,omitempty"`
-	Images               []string               `json:"images,omitempty"`
-	Videos               []string               `json:"videos,omitempty"`
-	Audios               []string               `json:"audios,omitempty"`
-	Content              []TaskContentItem      `json:"content,omitempty"`
-	Size                 string                 `json:"size,omitempty"`
+	Prompt  string            `json:"prompt"`
+	Model   string            `json:"model,omitempty"`
+	Mode    string            `json:"mode,omitempty"`
+	Image   string            `json:"image,omitempty"`
+	Images  []string          `json:"images,omitempty"`
+	Videos  []string          `json:"videos,omitempty"`
+	Audios  []string          `json:"audios,omitempty"`
+	Content []TaskContentItem `json:"content,omitempty"`
+	Size    string            `json:"size,omitempty"`
+	// Ratio is a legacy public alias for AspectRatio. It is retained while
+	// decoding requests so NormalizeTaskSubmitVideoOutput can canonicalize it.
+	Ratio                string                 `json:"ratio,omitempty"`
 	AspectRatio          string                 `json:"aspect_ratio,omitempty"`
 	Resolution           string                 `json:"resolution,omitempty"`
 	Duration             int                    `json:"duration,omitempty"`
@@ -704,6 +707,8 @@ type TaskSubmitReq struct {
 	InputStartFrames     []string               `json:"-"`
 	InputImageReferences []string               `json:"-"`
 	MetadataStartFrames  []string               `json:"-"`
+	AspectRatioAlias     string                 `json:"-"`
+	VideoOutput          *VideoOutputSpec       `json:"-"`
 }
 
 type TaskContentURL struct {
@@ -713,6 +718,8 @@ type TaskContentURL struct {
 type TaskContentItem struct {
 	Type     string          `json:"type"`
 	Text     string          `json:"text,omitempty"`
+	Role     string          `json:"role,omitempty"`
+	Name     string          `json:"name,omitempty"`
 	ImageURL *TaskContentURL `json:"image_url,omitempty"`
 	VideoURL *TaskContentURL `json:"video_url,omitempty"`
 	AudioURL *TaskContentURL `json:"audio_url,omitempty"`
@@ -722,6 +729,8 @@ func (t *TaskContentItem) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		Type     string          `json:"type"`
 		Text     string          `json:"text,omitempty"`
+		Role     string          `json:"role,omitempty"`
+		Name     string          `json:"name,omitempty"`
 		ImageURL json.RawMessage `json:"image_url,omitempty"`
 		VideoURL json.RawMessage `json:"video_url,omitempty"`
 		AudioURL json.RawMessage `json:"audio_url,omitempty"`
@@ -730,7 +739,12 @@ func (t *TaskContentItem) UnmarshalJSON(data []byte) error {
 	if err := common.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	*t = TaskContentItem{Type: strings.TrimSpace(raw.Type), Text: raw.Text}
+	*t = TaskContentItem{
+		Type: strings.TrimSpace(raw.Type),
+		Text: raw.Text,
+		Role: strings.TrimSpace(raw.Role),
+		Name: strings.TrimSpace(raw.Name),
+	}
 
 	imageFallback := ""
 	videoFallback := ""
@@ -801,19 +815,20 @@ func (t *TaskSubmitReq) HasImage() bool {
 func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	type Alias TaskSubmitReq
 	aux := &struct {
-		Metadata  json.RawMessage `json:"metadata,omitempty"`
-		Duration  json.RawMessage `json:"duration,omitempty"`
-		Images    json.RawMessage `json:"images,omitempty"`
-		ImageURLs json.RawMessage `json:"image_urls,omitempty"`
-		Video     json.RawMessage `json:"video,omitempty"`
-		Videos    json.RawMessage `json:"videos,omitempty"`
-		VideoURL  json.RawMessage `json:"video_url,omitempty"`
-		VideoURLs json.RawMessage `json:"video_urls,omitempty"`
-		Audio     json.RawMessage `json:"audio,omitempty"`
-		Audios    json.RawMessage `json:"audios,omitempty"`
-		AudioURL  json.RawMessage `json:"audio_url,omitempty"`
-		AudioURLs json.RawMessage `json:"audio_urls,omitempty"`
-		Input     struct {
+		Metadata         json.RawMessage `json:"metadata,omitempty"`
+		Duration         json.RawMessage `json:"duration,omitempty"`
+		AspectRatioCamel json.RawMessage `json:"aspectRatio,omitempty"`
+		Images           json.RawMessage `json:"images,omitempty"`
+		ImageURLs        json.RawMessage `json:"image_urls,omitempty"`
+		Video            json.RawMessage `json:"video,omitempty"`
+		Videos           json.RawMessage `json:"videos,omitempty"`
+		VideoURL         json.RawMessage `json:"video_url,omitempty"`
+		VideoURLs        json.RawMessage `json:"video_urls,omitempty"`
+		Audio            json.RawMessage `json:"audio,omitempty"`
+		Audios           json.RawMessage `json:"audios,omitempty"`
+		AudioURL         json.RawMessage `json:"audio_url,omitempty"`
+		AudioURLs        json.RawMessage `json:"audio_urls,omitempty"`
+		Input            struct {
 			StartFrames     json.RawMessage `json:"start_frames,omitempty"`
 			ImageReferences json.RawMessage `json:"image_references,omitempty"`
 		} `json:"input,omitempty"`
@@ -831,6 +846,14 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	t.InputStartFrames = nil
 	t.InputImageReferences = nil
 	t.MetadataStartFrames = nil
+	t.AspectRatioAlias = ""
+	t.VideoOutput = nil
+
+	if len(aux.AspectRatioCamel) > 0 {
+		if err := common.Unmarshal(aux.AspectRatioCamel, &t.AspectRatioAlias); err != nil {
+			return fmt.Errorf("aspectRatio must be a string")
+		}
+	}
 
 	if len(aux.Duration) > 0 {
 		if duration, ok := parseDurationSeconds(aux.Duration); ok {

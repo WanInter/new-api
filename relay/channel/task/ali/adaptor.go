@@ -127,6 +127,23 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	return relaycommon.ValidateMultipartDirect(c, info)
 }
 
+// ValidateMappedRequest validates media against the final Ali model before
+// billing. The DashScope video API has scalar image/audio inputs and no video
+// reference input, so unsupported common media must not be silently omitted.
+func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "get_task_request_failed", http.StatusBadRequest)
+	}
+	if err := validateAliStandardMedia(&req, aliRequestModelName(req, info)); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	if _, err := a.convertToAliRequest(info, req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_video_output", http.StatusBadRequest)
+	}
+	return nil
+}
+
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	return fmt.Sprintf("%s/api/v1/services/aigc/video-generation/video-synthesis", a.baseURL), nil
 }
@@ -254,15 +271,11 @@ func ProcessAliOtherRatios(aliReq *AliVideoRequest) (map[string]float64, error) 
 }
 
 func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relaycommon.TaskSubmitReq) (*AliVideoRequest, error) {
-	upstreamModel := req.Model
-	if info.IsModelMapped {
-		upstreamModel = info.UpstreamModelName
-	}
+	upstreamModel := aliRequestModelName(req, info)
 	aliReq := &AliVideoRequest{
 		Model: upstreamModel,
 		Input: AliVideoInput{
 			Prompt: req.Prompt,
-			ImgURL: req.InputReference,
 		},
 		Parameters: &AliVideoParameters{
 			PromptExtend: true, // 默认开启智能改写
@@ -270,40 +283,27 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 		},
 	}
 
-	// 处理分辨率映射
-	if req.Size != "" {
-		// text to video size must be contained *
-		if strings.Contains(req.Model, "t2v") && !strings.Contains(req.Size, "*") {
-			return nil, fmt.Errorf("invalid size: %s, example: %s", req.Size, "1920*1080")
-		}
-		if strings.Contains(req.Size, "*") {
-			aliReq.Parameters.Size = req.Size
-		} else {
-			resolution := strings.ToUpper(req.Size)
-			// 支持 480p, 720p, 1080p 或 480P, 720P, 1080P
-			if !strings.HasSuffix(resolution, "P") {
-				resolution = resolution + "P"
-			}
-			aliReq.Parameters.Resolution = resolution
-		}
-	} else {
+	// Defaults are only used when neither a canonical quality tier nor a
+	// legacy provider-specific size was supplied. Metadata remains a fallback
+	// and is merged below; explicit public fields are reapplied after that merge.
+	if req.Size == "" && req.Resolution == "" {
 		// 根据模型设置默认分辨率
-		if strings.Contains(req.Model, "t2v") { // image to video
-			if strings.HasPrefix(req.Model, "wan2.5") {
+		if isAliTextToVideoModel(upstreamModel) {
+			if strings.HasPrefix(upstreamModel, "wan2.5") {
 				aliReq.Parameters.Size = "1920*1080"
-			} else if strings.HasPrefix(req.Model, "wan2.2") {
+			} else if strings.HasPrefix(upstreamModel, "wan2.2") {
 				aliReq.Parameters.Size = "1920*1080"
 			} else {
 				aliReq.Parameters.Size = "1280*720"
 			}
 		} else {
-			if strings.HasPrefix(req.Model, "wan2.6") {
+			if strings.HasPrefix(upstreamModel, "wan2.6") {
 				aliReq.Parameters.Resolution = "1080P"
-			} else if strings.HasPrefix(req.Model, "wan2.5") {
+			} else if strings.HasPrefix(upstreamModel, "wan2.5") {
 				aliReq.Parameters.Resolution = "1080P"
-			} else if strings.HasPrefix(req.Model, "wan2.2-i2v-flash") {
+			} else if strings.HasPrefix(upstreamModel, "wan2.2-i2v-flash") {
 				aliReq.Parameters.Resolution = "720P"
-			} else if strings.HasPrefix(req.Model, "wan2.2-i2v-plus") {
+			} else if strings.HasPrefix(upstreamModel, "wan2.2-i2v-plus") {
 				aliReq.Parameters.Resolution = "1080P"
 			} else {
 				aliReq.Parameters.Resolution = "720P"
@@ -340,8 +340,347 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 	if aliReq.Model != upstreamModel {
 		return nil, errors.New("can't change model with metadata")
 	}
+	if aliReq.Parameters == nil {
+		return nil, errors.New("metadata must not clear parameters")
+	}
+	if err := applyAliStandardMedia(&aliReq.Input, req, upstreamModel); err != nil {
+		return nil, err
+	}
+	if err := applyAliCanonicalVideoOutput(aliReq.Parameters, req, upstreamModel); err != nil {
+		return nil, err
+	}
 
 	return aliReq, nil
+}
+
+func aliRequestModelName(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) string {
+	if info != nil && info.ChannelMeta != nil && info.IsModelMapped {
+		if upstreamModel := strings.TrimSpace(info.UpstreamModelName); upstreamModel != "" {
+			return upstreamModel
+		}
+	}
+	return strings.TrimSpace(req.Model)
+}
+
+func applyAliStandardMedia(input *AliVideoInput, req relaycommon.TaskSubmitReq, model string) error {
+	if input == nil {
+		return errors.New("Ali input is required")
+	}
+	if err := validateAliStandardMedia(&req, model); err != nil {
+		return err
+	}
+
+	images := aliRequestImageURLs(&req)
+	if len(images) > 0 {
+		if isAliKeyFrameVideoModel(model) {
+			input.ImgURL = ""
+			input.FirstFrameURL = images[0]
+			if len(images) == 2 {
+				input.LastFrameURL = images[1]
+			}
+		} else {
+			input.ImgURL = images[0]
+		}
+	}
+
+	audios := aliRequestAudioURLs(&req)
+	if len(audios) > 0 {
+		input.AudioURL = audios[0]
+	}
+	return nil
+}
+
+func validateAliStandardMedia(req *relaycommon.TaskSubmitReq, model string) error {
+	if req == nil {
+		return nil
+	}
+
+	if videos := aliRequestVideoURLs(req); len(videos) > 0 {
+		return errors.New("Ali Wan does not support video reference inputs")
+	}
+
+	images := aliRequestImageURLs(req)
+	if len(images) > 0 && isAliTextToVideoModel(model) {
+		return fmt.Errorf("Ali Wan text-to-video model %q does not support image inputs", model)
+	}
+	if len(images) > 2 {
+		return fmt.Errorf("Ali Wan supports at most two image inputs, got %d", len(images))
+	}
+	if len(images) > 1 && !isAliKeyFrameVideoModel(model) {
+		return fmt.Errorf("Ali Wan model %q supports only one image input; use a keyframe-to-video model for two images", model)
+	}
+
+	audios := aliRequestAudioURLs(req)
+	if len(audios) > 1 {
+		return fmt.Errorf("Ali Wan supports at most one audio input, got %d", len(audios))
+	}
+	if len(audios) > 0 && !isAliAudioReferenceModel(model) {
+		return fmt.Errorf("Ali Wan model %q does not support audio reference inputs", model)
+	}
+	return nil
+}
+
+func aliMediaURLs(groups ...[]string) []string {
+	urls := make([]string, 0)
+	for _, group := range groups {
+		for _, value := range group {
+			if value = strings.TrimSpace(value); value != "" {
+				urls = append(urls, value)
+			}
+		}
+	}
+	return urls
+}
+
+func aliRequestImageURLs(req *relaycommon.TaskSubmitReq) []string {
+	if req == nil {
+		return nil
+	}
+	contentImages, _, _ := aliContentMediaURLs(req.Content)
+	return aliMediaURLs(
+		req.Images,
+		[]string{req.Image},
+		req.ImageURLs,
+		[]string{req.InputReference},
+		req.InputStartFrames,
+		req.InputImageReferences,
+		req.MetadataStartFrames,
+		contentImages,
+	)
+}
+
+func aliRequestVideoURLs(req *relaycommon.TaskSubmitReq) []string {
+	if req == nil {
+		return nil
+	}
+	_, contentVideos, _ := aliContentMediaURLs(req.Content)
+	return aliMediaURLs(req.Videos, req.VideoURLs, contentVideos)
+}
+
+func aliRequestAudioURLs(req *relaycommon.TaskSubmitReq) []string {
+	if req == nil {
+		return nil
+	}
+	_, _, contentAudios := aliContentMediaURLs(req.Content)
+	return aliMediaURLs(req.Audios, req.AudioURLs, contentAudios)
+}
+
+func aliContentMediaURLs(content []relaycommon.TaskContentItem) (images, videos, audios []string) {
+	for _, item := range content {
+		if item.ImageURL != nil {
+			images = append(images, item.ImageURL.URL)
+		}
+		if item.VideoURL != nil {
+			videos = append(videos, item.VideoURL.URL)
+		}
+		if item.AudioURL != nil {
+			audios = append(audios, item.AudioURL.URL)
+		}
+	}
+	return aliMediaURLs(images), aliMediaURLs(videos), aliMediaURLs(audios)
+}
+
+func isAliKeyFrameVideoModel(model string) bool {
+	return strings.Contains(strings.ToLower(model), "kf2v")
+}
+
+func isAliAudioReferenceModel(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "wan2.5-i2v")
+}
+
+func isAliTextToVideoModel(model string) bool {
+	return strings.Contains(strings.ToLower(model), "t2v")
+}
+
+// applyAliCanonicalVideoOutput gives the public resolution field precedence
+// over the legacy size field. Ali's text-to-video API requires a concrete
+// W*H size, so only its documented quality and aspect-ratio combinations are
+// converted. Unknown pixel sizes must not be mistaken for a quality tier.
+func applyAliCanonicalVideoOutput(parameters *AliVideoParameters, req relaycommon.TaskSubmitReq, model string) error {
+	if parameters == nil {
+		return errors.New("Ali parameters are required")
+	}
+	if err := validateAliLegacySizeOutput(req.Size, req.AspectRatio); err != nil {
+		return err
+	}
+	if req.Resolution != "" {
+		if isAliTextToVideoModel(model) {
+			size, err := aliTextToVideoSize(req.AspectRatio, req.Resolution)
+			if err != nil {
+				return err
+			}
+			parameters.Size = size
+			parameters.Resolution = ""
+			return validateAliEffectiveVideoOutput(parameters)
+		}
+		resolution, err := aliResolutionLabel(req.Resolution)
+		if err != nil {
+			return err
+		}
+		parameters.Size = ""
+		parameters.Resolution = resolution
+		return validateAliEffectiveVideoOutput(parameters)
+	}
+	if isAliTextToVideoModel(model) && req.AspectRatio != "" && req.Size == "" {
+		resolution, err := aliTextToVideoEffectiveResolution(parameters)
+		if err != nil {
+			return err
+		}
+		size, err := aliTextToVideoSize(req.AspectRatio, resolution)
+		if err != nil {
+			return err
+		}
+		parameters.Size = size
+		parameters.Resolution = ""
+		return validateAliEffectiveVideoOutput(parameters)
+	}
+	if req.Size == "" {
+		return validateAliEffectiveVideoOutput(parameters)
+	}
+	if isAliTextToVideoModel(model) {
+		if !strings.Contains(req.Size, "*") {
+			return fmt.Errorf("invalid size: %s, example: %s", req.Size, "1920*1080")
+		}
+		parameters.Size = req.Size
+		parameters.Resolution = ""
+		return validateAliEffectiveVideoOutput(parameters)
+	}
+	if strings.Contains(req.Size, "*") {
+		parameters.Size = req.Size
+		parameters.Resolution = ""
+		return validateAliEffectiveVideoOutput(parameters)
+	}
+	resolution, err := aliResolutionLabel(req.Size)
+	if err != nil {
+		return err
+	}
+	parameters.Size = ""
+	parameters.Resolution = resolution
+	return validateAliEffectiveVideoOutput(parameters)
+}
+
+// validateAliLegacySizeOutput checks DashScope's provider-specific W*H sizes
+// before billing. Unlike public WxH sizes, this syntax cannot be interpreted
+// globally, so it is validated only after the Ali model is known.
+func validateAliLegacySizeOutput(size, aspectRatio string) error {
+	size = strings.TrimSpace(size)
+	if size == "" || !strings.Contains(size, "*") {
+		return nil
+	}
+	if _, err := sizeToResolution(size); err != nil {
+		return err
+	}
+	if aspectRatio == "" {
+		return nil
+	}
+	actual, err := aliLegacySizeAspectRatio(size)
+	if err != nil {
+		return err
+	}
+	if aspectRatio == "adaptive" || actual != aspectRatio {
+		return fmt.Errorf("size %q conflicts with aspect_ratio %q", size, aspectRatio)
+	}
+	return nil
+}
+
+func aliLegacySizeAspectRatio(size string) (string, error) {
+	parts := strings.Split(strings.TrimSpace(size), "*")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid size: %s", size)
+	}
+	width, widthErr := strconv.Atoi(strings.TrimSpace(parts[0]))
+	height, heightErr := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if widthErr != nil || heightErr != nil || width <= 0 || height <= 0 {
+		return "", fmt.Errorf("invalid size: %s", size)
+	}
+	divisor := aliGreatestCommonDivisor(width, height)
+	return strconv.Itoa(width/divisor) + ":" + strconv.Itoa(height/divisor), nil
+}
+
+func aliGreatestCommonDivisor(left, right int) int {
+	for right != 0 {
+		left, right = right, left%right
+	}
+	return left
+}
+
+func validateAliEffectiveVideoOutput(parameters *AliVideoParameters) error {
+	if parameters == nil {
+		return errors.New("Ali parameters are required")
+	}
+	if size := strings.TrimSpace(parameters.Size); size != "" {
+		if _, err := sizeToResolution(size); err != nil {
+			return err
+		}
+	}
+	if resolution := strings.TrimSpace(parameters.Resolution); resolution != "" {
+		if _, err := aliResolutionLabel(resolution); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func aliTextToVideoEffectiveResolution(parameters *AliVideoParameters) (string, error) {
+	if parameters == nil {
+		return "", errors.New("Ali parameters are required")
+	}
+	if size := strings.TrimSpace(parameters.Size); size != "" {
+		resolution, err := sizeToResolution(size)
+		if err != nil {
+			return "", fmt.Errorf("cannot apply aspect_ratio to Ali text-to-video size %q: %w", size, err)
+		}
+		return resolution, nil
+	}
+	if resolution := strings.TrimSpace(parameters.Resolution); resolution != "" {
+		return aliResolutionLabel(resolution)
+	}
+	return "", errors.New("Ali text-to-video requires a resolution before applying aspect_ratio")
+}
+
+func aliResolutionLabel(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "480p":
+		return "480P", nil
+	case "720p":
+		return "720P", nil
+	case "1080p":
+		return "1080P", nil
+	default:
+		return "", fmt.Errorf("unsupported Ali resolution %q; supported values are 480p, 720p, 1080p", value)
+	}
+}
+
+func aliTextToVideoSize(aspectRatio, resolution string) (string, error) {
+	resolution, err := aliResolutionLabel(resolution)
+	if err != nil {
+		return "", err
+	}
+	aspectRatio = strings.TrimSpace(aspectRatio)
+	if aspectRatio == "" {
+		aspectRatio = "16:9"
+	}
+	sizes := map[string]map[string]string{
+		"16:9": {
+			"480P":  "832*480",
+			"720P":  "1280*720",
+			"1080P": "1920*1080",
+		},
+		"9:16": {
+			"480P":  "480*832",
+			"720P":  "720*1280",
+			"1080P": "1080*1920",
+		},
+		"1:1": {
+			"480P":  "624*624",
+			"720P":  "960*960",
+			"1080P": "1440*1440",
+		},
+	}
+	if size, ok := sizes[aspectRatio][resolution]; ok {
+		return size, nil
+	}
+	return "", fmt.Errorf("unsupported Ali text-to-video aspect_ratio %q for resolution %s", aspectRatio, strings.ToLower(resolution))
 }
 
 // EstimateBilling 根据用户请求参数计算 OtherRatios（时长、分辨率等）。

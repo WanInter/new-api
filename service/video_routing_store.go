@@ -93,6 +93,13 @@ func ReloadVideoRoutingRuleCache() error {
 		snapshot.Policies[publicModel] = policy
 	}
 	for _, rule := range rules {
+		// Capability limits are intentionally scoped to an exact channel and
+		// mapped upstream model. Legacy broader scopes may remain in existing
+		// databases, but must neither affect selection nor make the exact-rule
+		// cache unavailable when their old payloads are invalid.
+		if rule.Scope != model.VideoRoutingScopeChannelModel {
+			continue
+		}
 		rule.UpstreamModel = strings.TrimSpace(rule.UpstreamModel)
 		if err := validateVideoRoutingRuleScope(rule); err != nil {
 			return fmt.Errorf("video routing capability rule %d: %w", rule.Id, err)
@@ -138,10 +145,6 @@ func ResolveVideoRoutingStrict(publicModel string) (bool, string, *VideoRoutingP
 			view := videoRoutingPolicyView(policy)
 			return policy.Strict, "database", &view
 		}
-	}
-	_, strict := strictVideoRoutingModels[publicModel]
-	if strict {
-		return true, "built_in", nil
 	}
 	return false, "default", nil
 }
@@ -288,29 +291,11 @@ func videoRoutingCapabilityRuleView(rule model.VideoRoutingCapabilityRule, capab
 }
 
 func validateVideoRoutingRuleScope(rule model.VideoRoutingCapabilityRule) error {
-	switch rule.Scope {
-	case model.VideoRoutingScopeChannelType:
-		if rule.ChannelType <= 0 || rule.ChannelId != 0 || rule.UpstreamModel != "" {
-			return fmt.Errorf("invalid channel_type scope")
-		}
-	case model.VideoRoutingScopeUpstreamModel:
-		if rule.ChannelType != 0 || rule.ChannelId != 0 || rule.UpstreamModel == "" {
-			return fmt.Errorf("invalid upstream_model scope")
-		}
-	case model.VideoRoutingScopeChannelTypeModel:
-		if rule.ChannelType <= 0 || rule.ChannelId != 0 || rule.UpstreamModel == "" {
-			return fmt.Errorf("invalid channel_type_model scope")
-		}
-	case model.VideoRoutingScopeChannel:
-		if rule.ChannelType != 0 || rule.ChannelId <= 0 || rule.UpstreamModel != "" {
-			return fmt.Errorf("invalid channel scope")
-		}
-	case model.VideoRoutingScopeChannelModel:
-		if rule.ChannelType != 0 || rule.ChannelId <= 0 || rule.UpstreamModel == "" {
-			return fmt.Errorf("invalid channel_model scope")
-		}
-	default:
+	if rule.Scope != model.VideoRoutingScopeChannelModel {
 		return fmt.Errorf("unsupported scope %q", rule.Scope)
+	}
+	if rule.ChannelType != 0 || rule.ChannelId <= 0 || rule.UpstreamModel == "" {
+		return fmt.Errorf("invalid channel_model scope")
 	}
 	return nil
 }
@@ -319,9 +304,12 @@ func isEmptyVideoCapability(capability dto.VideoModelCapability) bool {
 	return capability.Images == nil &&
 		capability.Videos == nil &&
 		capability.Audios == nil &&
+		capability.VideoAudioTotal == nil &&
 		capability.Duration == nil &&
 		capability.FixedDuration == nil &&
+		len(capability.AspectRatios) == 0 &&
 		len(capability.Resolutions) == 0 &&
+		len(capability.Sizes) == 0 &&
 		capability.RequireJSON == nil &&
 		capability.RequireText == nil &&
 		capability.ContentPrecedence == nil

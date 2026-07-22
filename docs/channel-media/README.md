@@ -71,7 +71,12 @@ Gemini 原生图生图异步示例：
       Mode string
       Image string
       Images []string
+      Videos []string
+      Audios []string
       Size string
+      Ratio string // aspect_ratio 的兼容别名
+      AspectRatio string
+      Resolution string
       Duration int
       Seconds string
       InputReference string
@@ -83,10 +88,16 @@ Gemini 原生图生图异步示例：
 - 任务提交/查询/转换：`relay/relay_task.go`
 - 上游异步任务返回统一存入 `model.Task`；查询时输出 OpenAI Video 对象，优先由各 adaptor 的 `ConvertToOpenAIVideo` 适配。
 
+### 视频素材字段边界
+
+公共 `images`、`videos`、`audios` 字段均表示 URL 或 data URI 的字符串引用；JSON 支持单值或数组，multipart 支持重复同名**文本**字段。它们不是所有渠道通用的二进制文件字段。没有显式文件消费能力的渠道收到任意二进制 part 都会在模型映射后、计费前返回 `400 invalid_media_input`，不能静默丢弃素材。
+
+目前 OpenAI、Sora 与 Shishi 会透传上述三种标准文件 part。其余文件上传只可使用渠道明确消费的专用字段，例如 Gemini/Vertex Veo 与即梦的 `input_reference`，以及 Jimeng Dimensio 的 `image_file_N` / `video_file_N` / `audio_file_N`。新增适配器必须显式选择“消费并映射”或“计费前拒绝”，不能只让路由层计数。
+
 ## 新上游文档对接检查表
 
 1. **接口模式**：同步图片 / 异步图片 / 异步视频 / OpenAI 视频兼容 / Replicate 风格 prediction。
-2. **提交入参**：`prompt/model/size/duration/n/images` 是否能直接映射；其它参数放到 `metadata` 或图片请求的 `extra_fields`/额外 JSON 字段。
+2. **提交入参**：`prompt/model/aspect_ratio/resolution/size/duration/n/images` 是否能直接映射；其它参数放到 `metadata` 或图片请求的 `extra_fields`/额外 JSON 字段。
 3. **图片输入**：URL、base64、data URL、multipart 文件；是否支持多图、首尾帧、参考图、视频/音频输入。
 4. **鉴权**：Bearer、Token、API key header、AK/SK 签名、Google service account。
 5. **提交返回**：task id 字段、错误字段、是否立即返回资源 URL。
@@ -140,7 +151,7 @@ Gemini 原生图生图异步示例：
 | Xinghe | `XingheVideo` | `relay/channel/task/xinghe` | `xinghe-mini`, `xinghe-fast`, `xinghe-2.0` | `/api/generate-video` | Bearer | 默认 duration/ratio/resolution；metadata 扩展 | `task_status` 和 nested metadata/result_urls |
 | AGGC | `AGGC` | `relay/channel/task/aggc` | `seedance-2.0` | `/api/v1/prot/generate` | `x-api-key` | 多输入：images/image_urls/video_urls/audio_urls；参数规整到 params | Sora-compatible 输出，提取 output URL |
 | Yobox | `Yobox` | `relay/channel/task/yobox` | `seedance2`, `seedance-2.0`, `seedance-2.0-fast` | `/async/tasks` | Bearer | Seedance 任务；图生、参考图、音频/分辨率参数 | 多种嵌套 outputs 兼容，失败原因提取 |
-| Axmgc | `Axmgc` | `relay/channel/task/axmgc` | `seedance-2-720p-933` | `/v1/video/generations`（JSON） | Bearer | 固定 15 秒；公开 Sora/OpenAI 兼容字段转换为 `content`，`asset_id` 为高级用法；不支持 multipart | `resource_list[].resource_url` 转 OpenAI Video URL |
+| Axmgc | `Axmgc` | `relay/channel/task/axmgc` | `seedance-2-720p-933` | `/v1/video/generations`（JSON） | Bearer | 公开 Sora/OpenAI 兼容素材字段转换为 `content`，`seconds` 映射为 `duration`；模型时长和素材限制由上游校验；`asset_id` 为高级用法；不支持 multipart | `resource_list[].resource_url` 转 OpenAI Video URL |
 | Suno | `suno` platform | `relay/channel/task/suno` | `suno_music`, `suno_lyrics` | `/suno/submit/{action}` | Bearer | 音乐/歌词，不是视频，但走 task 框架 | 使用专用批量轮询，不走通用 `ParseTaskResult` |
 
 ### Tencent VOD（腾讯云点播可灵）配置
@@ -174,9 +185,9 @@ kling-vod-3.0-omni
   "model": "kling-vod-3.0",
   "prompt": "一只橘猫坐在钢琴前演奏，镜头缓慢推进",
   "duration": 5,
-  "size": "1280x720",
+  "aspect_ratio": "16:9",
+  "resolution": "720p",
   "metadata": {
-    "resolution": "720P",
     "negative_prompt": "blurry, low quality",
     "audio_generation": false,
     "storage_mode": "Temporary"
@@ -212,9 +223,19 @@ kling-vod-3.0-omni
 | `images[0]` | `image`, `img_url`, `first_frame_url`, `start_frames[0]` | 图生视频首帧 |
 | `images[1]` | `last_frame_url`, `image_tail`, `end_frames[0]` | 首尾帧尾帧 |
 | `images[2+]` | `reference_images`, `image_references`, `subject_reference` | 参考图/主体参考 |
-| `size` | `resolution`, `ratio`, `aspectRatio`, `size` | 有的用 `720p`，有的用 `720P`，有的用 `1280*720` |
+| `videos` | `video_url`, `reference_videos`, `content[].video_url` | URL/data URI 视频引用；仅支持视频输入的模型可消费 |
+| `audios` | `audio_url`, `reference_audios`, `content[].audio_url` | URL/data URI 音频引用；仅支持音频输入的模型可消费 |
+| `aspect_ratio` | `aspect_ratio`, `aspectRatio`, `ratio` | 公共标准比例字段；`ratio` / `aspectRatio` 仅作为入站别名，统一为约分后的 `W:H` |
+| `resolution` | `resolution`, `quality`, 渠道质量档 | 公共标准质量字段；规范格式为正整数加 `p`（如 `768p`）或 `4k`，不等于像素宽高；具体模型/能力规则决定可用档位 |
+| `size` | `size`, `W*H` 等渠道原生字段 | 仅 legacy/provider-specific。不得将任意 `WxH` 全局推断为质量档；只有模型注册的精确 alias 才可转换 |
 | `duration`/`seconds` | `duration`, `durationSeconds`, `seconds` | `TaskSubmitReq.UnmarshalJSON` 已兼容数字/字符串 duration |
 | `metadata` | 任意上游专属对象 | 推荐承载负向词、seed、水印、音频 URL、callback、prompt 改写等 |
+
+顶层 `aspect_ratio` / `resolution` 是权威值，`metadata` 只在顶层缺失时作为兼容回退。多个比例别名不一致、或像素 `size` 与显式比例不一致，适配器必须返回 `400`，不能静默降级或任选一个值。
+
+`parameters.resolution`（TokenStack Sora）和 `params.resolution`（AGGC）是已保留的渠道私有嵌套兼容路径，只用于对应上游的原始请求形态；它们不是跨渠道公共字段。新接入或新调用应使用顶层 `resolution`，并避免同时给出不同的顶层与嵌套质量档。
+
+管理端视频路由模拟只评估公共字段，并会返回 `constraint_scope: "public_fields_only"`。渠道私有嵌套字段只会在真实请求已确定目标渠道后参与该渠道的校验。
 
 ## 选择参考实现建议
 

@@ -41,6 +41,27 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
 }
 
+// ValidateMappedRequest runs after channel model mapping has selected the
+// actual Hailuo model. Resolution and image-input support are model-specific,
+// so validating them here keeps invalid requests from reaching billing or the
+// upstream API.
+func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "get_task_request_failed", http.StatusBadRequest)
+	}
+	if _, err := resolveHailuoRequestResolution(&req, hailuoModelConfig(&req, info)); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_video_output", http.StatusBadRequest)
+	}
+	if hasHailuoVideoOrAudioInput(&req) {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("Hailuo does not support video or audio reference inputs"), "invalid_request", http.StatusBadRequest)
+	}
+	if _, _, err := resolveHailuoImageInput(&req, hailuoModelName(&req, info)); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	return nil
+}
+
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	return fmt.Sprintf("%s%s", a.baseURL, TextToVideoEndpoint), nil
 }
@@ -144,18 +165,18 @@ func (a *TaskAdaptor) GetChannelName() string {
 }
 
 func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (*VideoRequest, error) {
-	modelConfig := GetModelConfig(info.UpstreamModelName)
+	modelConfig := hailuoModelConfig(req, info)
 	duration := DefaultDuration
 	if req.Duration > 0 {
 		duration = req.Duration
 	}
-	resolution := modelConfig.DefaultResolution
-	if req.Size != "" {
-		resolution = a.parseResolutionFromSize(req.Size, modelConfig)
+	resolution, err := resolveHailuoRequestResolution(req, modelConfig)
+	if err != nil {
+		return nil, err
 	}
 
 	videoRequest := &VideoRequest{
-		Model:      info.UpstreamModelName,
+		Model:      hailuoModelName(req, info),
 		Prompt:     req.Prompt,
 		Duration:   &duration,
 		Resolution: resolution,
@@ -163,23 +184,245 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 	if err := req.UnmarshalMetadata(&videoRequest); err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata to video request failed")
 	}
+	// Metadata is a compatibility input only. The resolved public field must
+	// win so metadata cannot reintroduce an unsupported upstream label.
+	videoRequest.Resolution = resolution
+	firstFrame, subjectReference, err := resolveHailuoImageInput(req, videoRequest.Model)
+	if err != nil {
+		return nil, err
+	}
+	if firstFrame != "" {
+		videoRequest.FirstFrameImage = firstFrame
+	}
+	if len(subjectReference) > 0 {
+		videoRequest.SubjectReference = subjectReference
+	}
 
 	return videoRequest, nil
 }
 
-func (a *TaskAdaptor) parseResolutionFromSize(size string, modelConfig ModelConfig) string {
-	switch {
-	case strings.Contains(size, "1080"):
-		return Resolution1080P
-	case strings.Contains(size, "768"):
-		return Resolution768P
-	case strings.Contains(size, "720"):
-		return Resolution720P
-	case strings.Contains(size, "512"):
-		return Resolution512P
-	default:
-		return modelConfig.DefaultResolution
+func hailuoModelConfig(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) ModelConfig {
+	return GetModelConfig(hailuoModelName(req, info))
+}
+
+func hailuoModelName(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) string {
+	if info != nil && info.ChannelMeta != nil {
+		if modelName := strings.TrimSpace(info.UpstreamModelName); modelName != "" {
+			return modelName
+		}
 	}
+	if req == nil {
+		return ""
+	}
+	return strings.TrimSpace(req.Model)
+}
+
+// resolveHailuoImageInput maps the unified images field to the one image
+// shape accepted by each Hailuo image-capable model. T2V models have no image
+// input, while S2V-01 accepts exactly one character reference.
+func resolveHailuoImageInput(req *relaycommon.TaskSubmitReq, modelName string) (string, []SubjectReference, error) {
+	if hasHailuoVideoOrAudioInput(req) {
+		return "", nil, fmt.Errorf("Hailuo does not support video or audio reference inputs")
+	}
+	images := hailuoImageInputs(req)
+	if len(images) == 0 {
+		return "", nil, nil
+	}
+	modelName = strings.TrimSpace(modelName)
+	switch modelName {
+	case "MiniMax-Hailuo-2.3", "MiniMax-Hailuo-2.3-Fast", "MiniMax-Hailuo-02", "I2V-01-Director", "I2V-01-live", "I2V-01":
+		if len(images) != 1 {
+			return "", nil, fmt.Errorf("Hailuo model %q supports exactly one first-frame image", modelName)
+		}
+		return images[0], nil, nil
+	case "S2V-01":
+		if len(images) != 1 {
+			return "", nil, fmt.Errorf("Hailuo model %q supports exactly one subject reference image", modelName)
+		}
+		return "", []SubjectReference{{Type: "character", Image: []string{images[0]}}}, nil
+	default:
+		return "", nil, fmt.Errorf("Hailuo model %q does not support image inputs", modelName)
+	}
+}
+
+// Canonical images take precedence. Keep image_urls and image as compatibility
+// fallbacks for established clients.
+func hailuoImageInputs(req *relaycommon.TaskSubmitReq) []string {
+	if req == nil {
+		return nil
+	}
+	images := []string(nil)
+	for _, candidates := range [][]string{req.Images, req.ImageURLs} {
+		if images = nonEmptyHailuoImages(candidates); len(images) > 0 {
+			break
+		}
+	}
+	if len(images) == 0 {
+		if image := strings.TrimSpace(req.Image); image != "" {
+			images = []string{image}
+		}
+	}
+	if len(images) == 0 {
+		if image := strings.TrimSpace(req.InputReference); image != "" {
+			images = []string{image}
+		}
+	}
+	if len(images) == 0 {
+		for _, candidates := range [][]string{req.InputStartFrames, req.InputImageReferences, req.MetadataStartFrames} {
+			if images = nonEmptyHailuoImages(candidates); len(images) > 0 {
+				break
+			}
+		}
+	}
+	for _, item := range req.Content {
+		if item.ImageURL != nil {
+			images = appendHailuoImage(images, item.ImageURL.URL)
+		}
+	}
+	return images
+}
+
+func nonEmptyHailuoImages(images []string) []string {
+	values := make([]string, 0, len(images))
+	for _, image := range images {
+		if image = strings.TrimSpace(image); image != "" {
+			values = append(values, image)
+		}
+	}
+	return values
+}
+
+func appendHailuoImage(images []string, image string) []string {
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return images
+	}
+	return append(images, image)
+}
+
+func hasHailuoVideoOrAudioInput(req *relaycommon.TaskSubmitReq) bool {
+	if req == nil {
+		return false
+	}
+	for _, values := range [][]string{req.Videos, req.VideoURLs, req.Audios, req.AudioURLs} {
+		for _, value := range values {
+			if strings.TrimSpace(value) != "" {
+				return true
+			}
+		}
+	}
+	for _, item := range req.Content {
+		if item.VideoURL != nil && strings.TrimSpace(item.VideoURL.URL) != "" {
+			return true
+		}
+		if item.AudioURL != nil && strings.TrimSpace(item.AudioURL.URL) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// Hailuo itself accepts a quality label, not an arbitrary output geometry.
+// These exact pixel forms are retained only as legacy aliases previously
+// accepted by this adaptor. Do not infer a label from an arbitrary WxH value.
+var hailuoLegacySizeResolutions = map[string]string{
+	"1280x720":  Resolution720P,
+	"720x1280":  Resolution720P,
+	"1920x1080": Resolution1080P,
+	"1080x1920": Resolution1080P,
+}
+
+func resolveHailuoRequestResolution(req *relaycommon.TaskSubmitReq, modelConfig ModelConfig) (string, error) {
+	if req == nil {
+		return "", fmt.Errorf("video request is required")
+	}
+
+	if value := strings.TrimSpace(req.Resolution); value != "" {
+		return validateHailuoResolution(value, modelConfig, "resolution")
+	}
+	if value, ok, err := hailuoMetadataString(req.Metadata, "resolution"); err != nil {
+		return "", err
+	} else if ok && strings.TrimSpace(value) != "" {
+		return validateHailuoResolution(value, modelConfig, "metadata.resolution")
+	}
+	if value := strings.TrimSpace(req.Size); value != "" {
+		return parseHailuoLegacySize(value, modelConfig)
+	}
+
+	return modelConfig.DefaultResolution, nil
+}
+
+func hailuoMetadataString(metadata map[string]interface{}, key string) (string, bool, error) {
+	if metadata == nil {
+		return "", false, nil
+	}
+	value, ok := metadata[key]
+	if !ok || value == nil {
+		return "", false, nil
+	}
+	stringValue, ok := value.(string)
+	if !ok {
+		return "", false, fmt.Errorf("metadata.%s must be a string", key)
+	}
+	return stringValue, true, nil
+}
+
+func parseHailuoLegacySize(size string, modelConfig ModelConfig) (string, error) {
+	// A historical client may have used size: "720p". It is still a quality
+	// label, so handle it explicitly before considering a pixel size alias.
+	if resolution, err := hailuoResolutionLabel(size); err == nil {
+		return ensureHailuoResolutionSupported(resolution, modelConfig, "size")
+	}
+
+	legacyPixelSize := strings.NewReplacer("*", "x", "×", "x").Replace(size)
+	canonical, _, _, pixelSize, err := relaycommon.NormalizeVideoPixelSize(legacyPixelSize)
+	if err != nil {
+		return "", fmt.Errorf("size %q is not a supported Hailuo legacy size: %w", size, err)
+	}
+	if !pixelSize {
+		return "", fmt.Errorf("size %q is not supported by Hailuo; use resolution instead", size)
+	}
+	resolution, ok := hailuoLegacySizeResolutions[canonical]
+	if !ok {
+		return "", fmt.Errorf("size %q is not supported by Hailuo; use resolution instead", size)
+	}
+	return ensureHailuoResolutionSupported(resolution, modelConfig, "size")
+}
+
+func validateHailuoResolution(value string, modelConfig ModelConfig, field string) (string, error) {
+	resolution, err := hailuoResolutionLabel(value)
+	if err != nil {
+		return "", fmt.Errorf("%s %q is not supported by Hailuo; use 512p, 720p, 768p, or 1080p", field, value)
+	}
+	return ensureHailuoResolutionSupported(resolution, modelConfig, field)
+}
+
+func hailuoResolutionLabel(value string) (string, error) {
+	resolution, err := relaycommon.NormalizeVideoOutputResolution(value)
+	if err != nil {
+		return "", err
+	}
+	switch resolution {
+	case "512p":
+		return Resolution512P, nil
+	case "720p":
+		return Resolution720P, nil
+	case "768p":
+		return Resolution768P, nil
+	case "1080p":
+		return Resolution1080P, nil
+	default:
+		return "", fmt.Errorf("unsupported Hailuo resolution")
+	}
+}
+
+func ensureHailuoResolutionSupported(resolution string, modelConfig ModelConfig, field string) (string, error) {
+	for _, supported := range modelConfig.SupportedResolutions {
+		if resolution == supported {
+			return resolution, nil
+		}
+	}
+	return "", fmt.Errorf("%s %q is not supported by Hailuo model %q; supported resolutions: %s", field, strings.ToLower(resolution), modelConfig.Name, strings.Join(modelConfig.SupportedResolutions, ", "))
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {

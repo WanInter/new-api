@@ -3594,6 +3594,7 @@
     "Requires a duration of at least {{expected}} seconds": "Requires a duration of at least {{expected}} seconds",
     "Requires an application/json request": "Requires an application/json request",
     "Requires at least {{expected}} images": "Requires at least {{expected}} images",
+    "Requires at least {{expected}} videos and audios in total": "Requires at least {{expected}} videos and audios in total",
     "Rerank": "Rerank",
     "Reroll": "Reroll",
     "Research, analysis, scientific reasoning": "Research, analysis, scientific reasoning",
@@ -4105,6 +4106,7 @@
     "Supports at most {{expected}} audios": "Supports at most {{expected}} audios",
     "Supports at most {{expected}} images": "Supports at most {{expected}} images",
     "Supports at most {{expected}} videos": "Supports at most {{expected}} videos",
+    "Supports at most {{expected}} videos and audios in total": "Supports at most {{expected}} videos and audios in total",
     "Supports HTML markup or iframe embedding. Enter HTML code directly, or provide a complete URL to automatically embed it as an iframe.": "Supports HTML markup or iframe embedding. Enter HTML code directly, or provide a complete URL to automatically embed it as an iframe.",
     "Supports one-click configuration and perfectly adapts to NewAPI multi-protocol configuration.": "Supports one-click configuration and perfectly adapts to NewAPI multi-protocol configuration.",
     "Supports PNG, JPG, SVG, or WebP. Recommended size: 128×128 or smaller.": "Supports PNG, JPG, SVG, or WebP. Recommended size: 128×128 or smaller.",
@@ -4713,6 +4715,7 @@
     "Vertex AI Key Format": "Vertex AI Key Format",
     "Vertex AI service account key must be valid JSON": "Vertex AI service account key must be valid JSON",
     "Video": "Video",
+    "Video + audio total": "Video + audio total",
     "Video length in seconds": "Video length in seconds",
     "Video Remix": "Video Remix",
     "Video task channel. Submit uses POST /api/v1/prot/generate, polling uses GET /api/v1/prot/query/{jobId}, and balance uses GET /api/v1/prot/balance. Remaining balance is shown as credits minus frozen_credits. Pricing is configured locally in New API, not synced from AGGC.": "Video task channel. Submit uses POST /api/v1/prot/generate, polling uses GET /api/v1/prot/query/{jobId}, and balance uses GET /api/v1/prot/balance. Remaining balance is shown as credits minus frozen_credits. Pricing is configured locally in New API, not synced from AGGC.",
@@ -4952,6 +4955,17 @@
     "Effective": "Effective",
     "Resolution": "Resolution",
     "Resolution {{resolution}} is not supported. Supported: {{supported_resolutions}}": "Resolution {{resolution}} is not supported. Supported: {{supported_resolutions}}",
-    "Supported resolutions": "Supported resolutions"
+    "Supported resolutions": "Supported resolutions",
+    "Aspect ratio": "Aspect ratio",
+    "Pixel size": "Pixel size",
+    "Supported aspect ratios": "Supported aspect ratios",
+    "Supported pixel sizes": "Supported pixel sizes",
+    "Aspect ratio {{aspect_ratio}} is not supported. Supported: {{supported_aspect_ratios}}": "Aspect ratio {{aspect_ratio}} is not supported. Supported: {{supported_aspect_ratios}}",
+    "Pixel size {{size}} is not supported. Supported: {{supported_sizes}}": "Pixel size {{size}} is not supported. Supported: {{supported_sizes}}",
+    "Use W:H aspect ratios or adaptive": "Use W:H aspect ratios or adaptive",
+    "Use WxH pixel sizes": "Use WxH pixel sizes",
+    "Use a quality label such as 720p or 4k": "Use a quality label such as 720p or 4k",
+    "Do not repeat output values": "Do not repeat output values",
+    "Pixel size conflicts with aspect ratio": "Pixel size conflicts with aspect ratio"
   }
 }

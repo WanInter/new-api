@@ -23,21 +23,45 @@ import (
 	"github.com/pkg/errors"
 )
 
+type scalarOrStringList []string
+
+func (values *scalarOrStringList) UnmarshalJSON(data []byte) error {
+	var list []string
+	if err := common.Unmarshal(data, &list); err == nil {
+		*values = list
+		return nil
+	}
+	var scalar string
+	if err := common.Unmarshal(data, &scalar); err != nil {
+		return err
+	}
+	*values = []string{scalar}
+	return nil
+}
+
 type jsonRequest struct {
-	Prompt         string         `json:"prompt"`
-	Model          string         `json:"model,omitempty"`
-	Image          string         `json:"image,omitempty"`
-	Images         []string       `json:"images,omitempty"`
-	Size           string         `json:"size,omitempty"`
-	Duration       int            `json:"duration,omitempty"`
-	Seconds        string         `json:"seconds,omitempty"`
-	FilePaths      []string       `json:"file_paths,omitempty"`
-	Ratio          string         `json:"ratio,omitempty"`
-	AspectRatio    string         `json:"aspect_ratio,omitempty"`
-	Resolution     string         `json:"resolution,omitempty"`
-	FunctionMode   string         `json:"functionMode,omitempty"`
-	ResponseFormat string         `json:"response_format,omitempty"`
-	Metadata       map[string]any `json:"metadata,omitempty"`
+	Prompt           string                        `json:"prompt"`
+	Model            string                        `json:"model,omitempty"`
+	Image            string                        `json:"image,omitempty"`
+	Images           scalarOrStringList            `json:"images,omitempty"`
+	ImageURLs        scalarOrStringList            `json:"image_urls,omitempty"`
+	InputReference   string                        `json:"input_reference,omitempty"`
+	Videos           scalarOrStringList            `json:"videos,omitempty"`
+	VideoURLs        scalarOrStringList            `json:"video_urls,omitempty"`
+	Audios           scalarOrStringList            `json:"audios,omitempty"`
+	AudioURLs        scalarOrStringList            `json:"audio_urls,omitempty"`
+	Content          []relaycommon.TaskContentItem `json:"content,omitempty"`
+	Size             string                        `json:"size,omitempty"`
+	Duration         int                           `json:"duration,omitempty"`
+	Seconds          string                        `json:"seconds,omitempty"`
+	FilePaths        []string                      `json:"file_paths,omitempty"`
+	Ratio            string                        `json:"ratio,omitempty"`
+	AspectRatio      string                        `json:"aspect_ratio,omitempty"`
+	AspectRatioCamel string                        `json:"aspectRatio,omitempty"`
+	Resolution       string                        `json:"resolution,omitempty"`
+	FunctionMode     string                        `json:"functionMode,omitempty"`
+	ResponseFormat   string                        `json:"response_format,omitempty"`
+	Metadata         map[string]any                `json:"metadata,omitempty"`
 }
 
 type requestPayload struct {
@@ -117,6 +141,12 @@ func validateRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError
 		if strings.TrimSpace(req.Prompt) == "" {
 			return service.TaskErrorWrapperLocal(fmt.Errorf("prompt is required"), "invalid_request", http.StatusBadRequest)
 		}
+		if err := normalizeJimengDimensioVideoOutput(&req); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_video_output", http.StatusBadRequest)
+		}
+		if err := validateJimengDimensioMedia(&req); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
 		c.Set("task_request", req)
 		return nil
 	}
@@ -126,14 +156,25 @@ func validateRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
 	req := relaycommon.TaskSubmitReq{
-		Prompt:   raw.Prompt,
-		Model:    raw.Model,
-		Image:    raw.Image,
-		Images:   raw.Images,
-		Size:     raw.Size,
-		Duration: raw.Duration,
-		Seconds:  raw.Seconds,
-		Metadata: raw.Metadata,
+		Prompt:           raw.Prompt,
+		Model:            raw.Model,
+		Image:            raw.Image,
+		Images:           []string(raw.Images),
+		ImageURLs:        []string(raw.ImageURLs),
+		InputReference:   raw.InputReference,
+		Videos:           []string(raw.Videos),
+		VideoURLs:        []string(raw.VideoURLs),
+		Audios:           []string(raw.Audios),
+		AudioURLs:        []string(raw.AudioURLs),
+		Content:          raw.Content,
+		Size:             raw.Size,
+		Ratio:            raw.Ratio,
+		AspectRatio:      raw.AspectRatio,
+		AspectRatioAlias: raw.AspectRatioCamel,
+		Resolution:       raw.Resolution,
+		Duration:         raw.Duration,
+		Seconds:          raw.Seconds,
+		Metadata:         raw.Metadata,
 	}
 	if strings.TrimSpace(req.Model) == "" {
 		req.Model = info.OriginModelName
@@ -151,8 +192,27 @@ func validateRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError
 		req.Metadata = map[string]any{}
 	}
 	copyJSONRequestMetadata(raw, req.Metadata)
+	if err := normalizeJimengDimensioVideoOutput(&req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_video_output", http.StatusBadRequest)
+	}
+	if err := validateJimengDimensioMedia(&req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
 	c.Set("task_request", req)
 	return nil
+}
+
+func normalizeJimengDimensioVideoOutput(req *relaycommon.TaskSubmitReq) error {
+	if _, err := relaycommon.NormalizeTaskSubmitVideoOutput(req); err != nil {
+		return err
+	}
+	if req.VideoOutput == nil || !req.VideoOutput.HasPixelSize() {
+		return nil
+	}
+	if _, ok := jimengDimensioResolutionFromSize(req.Size); ok {
+		return nil
+	}
+	return fmt.Errorf("size %q is not supported by Jimeng Dimensio; use aspect_ratio and resolution", req.Size)
 }
 
 func copyJSONRequestMetadata(raw jsonRequest, metadata map[string]any) {
@@ -161,6 +221,9 @@ func copyJSONRequestMetadata(raw jsonRequest, metadata map[string]any) {
 	}
 	if raw.AspectRatio != "" {
 		metadata["aspect_ratio"] = raw.AspectRatio
+	}
+	if raw.AspectRatioCamel != "" {
+		metadata["aspectRatio"] = raw.AspectRatioCamel
 	}
 	if raw.Metadata != nil {
 		if v, ok := raw.Metadata["aspect_ratio"]; ok {
@@ -192,12 +255,25 @@ func parseMultipartRequest(c *gin.Context) (relaycommon.TaskSubmitReq, error) {
 	}
 	form := c.Request.PostForm
 	req := relaycommon.TaskSubmitReq{
-		Model:    form.Get("model"),
-		Prompt:   form.Get("prompt"),
-		Duration: parsePositiveInt(form.Get("duration"), 0),
-		Metadata: map[string]any{},
+		Model:            form.Get("model"),
+		Prompt:           form.Get("prompt"),
+		Image:            form.Get("image"),
+		Images:           form["images"],
+		ImageURLs:        form["image_urls"],
+		InputReference:   form.Get("input_reference"),
+		Videos:           append(append([]string{}, form["video"]...), form["videos"]...),
+		VideoURLs:        append(append([]string{}, form["video_url"]...), form["video_urls"]...),
+		Audios:           form["audios"],
+		AudioURLs:        append(append([]string{}, form["audio_url"]...), form["audio_urls"]...),
+		Size:             form.Get("size"),
+		Ratio:            form.Get("ratio"),
+		AspectRatio:      form.Get("aspect_ratio"),
+		AspectRatioAlias: form.Get("aspectRatio"),
+		Resolution:       form.Get("resolution"),
+		Duration:         parsePositiveInt(form.Get("duration"), 0),
+		Metadata:         map[string]any{},
 	}
-	for _, key := range []string{"ratio", "aspect_ratio", "resolution", "functionMode", "response_format"} {
+	for _, key := range []string{"ratio", "aspect_ratio", "aspectRatio", "resolution", "functionMode", "response_format"} {
 		if v := strings.TrimSpace(form.Get(key)); v != "" {
 			req.Metadata[key] = v
 		}
@@ -206,6 +282,49 @@ func parseMultipartRequest(c *gin.Context) (relaycommon.TaskSubmitReq, error) {
 		req.Metadata["file_paths"] = paths
 	}
 	return req, nil
+}
+
+func validateJimengDimensioMedia(req *relaycommon.TaskSubmitReq) error {
+	if req == nil {
+		return fmt.Errorf("video request is required")
+	}
+	if len(req.Videos) > 0 || len(req.VideoURLs) > 0 || len(req.Audios) > 0 || len(req.AudioURLs) > 0 ||
+		metadataURLList(req.Metadata, "video_urls") || metadataURLList(req.Metadata, "audio_urls") {
+		return fmt.Errorf("Jimeng Dimensio does not support video or audio URL references")
+	}
+	for _, item := range req.Content {
+		if item.VideoURL != nil || item.AudioURL != nil {
+			return fmt.Errorf("Jimeng Dimensio does not support video or audio URL references")
+		}
+	}
+	return nil
+}
+
+func metadataURLList(metadata map[string]any, key string) bool {
+	if metadata == nil {
+		return false
+	}
+	value, ok := metadata[key]
+	if !ok {
+		return false
+	}
+	switch values := value.(type) {
+	case string:
+		return strings.TrimSpace(values) != ""
+	case []string:
+		for _, item := range values {
+			if strings.TrimSpace(item) != "" {
+				return true
+			}
+		}
+	case []any:
+		for _, item := range values {
+			if text, ok := item.(string); ok && strings.TrimSpace(text) != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
@@ -528,17 +647,25 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 	if req.Duration > 0 {
 		payload.Duration = req.Duration
 	}
-	if req.Size != "" {
-		payload.Resolution = normalizeResolution(req.Size)
+	if req.Size != "" && req.Resolution == "" {
+		if resolution, ok := jimengDimensioResolutionFromSize(req.Size); ok {
+			payload.Resolution = resolution
+		}
 	}
-	if len(req.Images) > 0 {
-		payload.FilePaths = append(payload.FilePaths, req.Images...)
+	if images := jimengDimensioImageURLs(req); len(images) > 0 {
+		payload.FilePaths = append(payload.FilePaths, images...)
 	}
 	if aspectRatio, ok := req.Metadata["aspect_ratio"].(string); ok && strings.TrimSpace(aspectRatio) != "" {
 		payload.Ratio = aspectRatio
 	}
 	if err := taskcommon.UnmarshalMetadata(req.Metadata, payload); err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
+	}
+	if aspectRatio := firstNonEmpty(req.AspectRatio, req.Ratio); aspectRatio != "" {
+		payload.Ratio = aspectRatio
+	}
+	if resolution := strings.TrimSpace(req.Resolution); resolution != "" {
+		payload.Resolution = resolution
 	}
 	if payload.Model == "" {
 		payload.Model = info.OriginModelName
@@ -555,6 +682,32 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 	}
 	applyReferenceFilesAndMode(payload)
 	return payload, nil
+}
+
+func jimengDimensioImageURLs(req *relaycommon.TaskSubmitReq) []string {
+	if req == nil {
+		return nil
+	}
+	urls := make([]string, 0, len(req.Images)+len(req.ImageURLs)+len(req.Content)+1)
+	appendURLs := func(values ...string) {
+		for _, value := range values {
+			if value = strings.TrimSpace(value); value != "" {
+				urls = append(urls, value)
+			}
+		}
+	}
+	appendURLs(req.Images...)
+	appendURLs(req.ImageURLs...)
+	if len(req.Images) == 0 {
+		appendURLs(req.Image)
+	}
+	appendURLs(req.InputReference)
+	for _, item := range req.Content {
+		if item.ImageURL != nil {
+			appendURLs(item.ImageURL.URL)
+		}
+	}
+	return urls
 }
 
 func applyReferenceFilesAndMode(payload *requestPayload) {
@@ -620,6 +773,17 @@ func normalizeResolution(v string) string {
 		return "720p"
 	default:
 		return v
+	}
+}
+
+func jimengDimensioResolutionFromSize(size string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(size)) {
+	case "1280x720", "720x1280":
+		return "720p", true
+	case "1920x1080", "1080x1920":
+		return "1080p", true
+	default:
+		return "", false
 	}
 }
 

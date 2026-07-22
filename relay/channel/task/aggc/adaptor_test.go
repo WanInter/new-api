@@ -182,6 +182,55 @@ func TestBuildRequestBodyPreservesMediaAliases(t *testing.T) {
 	}
 }
 
+func TestBuildRequestBodyAcceptsScalarAndArrayImageInputs(t *testing.T) {
+	testCases := []struct {
+		name       string
+		imageField string
+		expected   []string
+	}{
+		{name: "images scalar", imageField: `"images":"https://example.com/one.png"`, expected: []string{"https://example.com/one.png"}},
+		{name: "images array", imageField: `"images":["https://example.com/one.png","https://example.com/two.png"]`, expected: []string{"https://example.com/one.png", "https://example.com/two.png"}},
+		{name: "image URLs scalar", imageField: `"image_urls":"https://example.com/alias.png"`, expected: []string{"https://example.com/alias.png"}},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload := buildAggcRequestPayload(t, `{
+				"model":"seedance-2.0",
+				"prompt":"animate the image",
+				`+testCase.imageField+`
+			}`)
+
+			assert.Equal(t, testCase.expected, payload.Params.ImageURLs)
+		})
+	}
+}
+
+func TestBuildRequestBodyMapsAggcUnifiedMediaAliases(t *testing.T) {
+	payload := buildAggcRequestPayload(t, `{
+		"model":"seedance-2.0",
+		"prompt":"combine the references",
+		"input_reference":"https://example.com/input-reference.png",
+		"input":{"start_frames":["https://example.com/start-frame.png"],"image_references":[{"url":"https://example.com/image-reference.png"}]},
+		"metadata":{"start_frames":["https://example.com/metadata-start.png"]},
+		"content":[
+			{"type":"image_url","image_url":{"url":"https://example.com/content-image.png"}},
+			{"type":"video_url","video_url":{"url":"https://example.com/content-video.mp4"}},
+			{"type":"audio_url","audio_url":{"url":"https://example.com/content-audio.mp3"}}
+		]
+	}`)
+
+	assert.Equal(t, []string{
+		"https://example.com/input-reference.png",
+		"https://example.com/start-frame.png",
+		"https://example.com/image-reference.png",
+		"https://example.com/metadata-start.png",
+		"https://example.com/content-image.png",
+	}, payload.Params.ImageURLs)
+	assert.Equal(t, []string{"https://example.com/content-video.mp4"}, payload.Params.VideoURLs)
+	assert.Equal(t, []string{"https://example.com/content-audio.mp3"}, payload.Params.AudioURLs)
+}
+
 func TestBuildRequestBodyPreservesMetadataOnlyMediaEntries(t *testing.T) {
 	payload := buildAggcRequestPayload(t, `{
 		"model":"sd-bak-1",
@@ -202,6 +251,7 @@ func buildAggcRequestPayload(t *testing.T, body string) requestPayload {
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(body))
 	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
 
 	adaptor := &TaskAdaptor{}
 	info := &relaycommon.RelayInfo{
@@ -220,36 +270,45 @@ func buildAggcRequestPayload(t *testing.T, body string) requestPayload {
 	return payload
 }
 
-func TestConvertToRequestPayloadConvertsTopLevelSize(t *testing.T) {
-	metadata := map[string]any{}
-	copyAggcRawMetadata(jsonRequest{Size: "1024x1024"}, metadata)
+func TestConvertToRequestPayloadAcceptsRegisteredLegacySizes(t *testing.T) {
+	testCases := []struct {
+		name           string
+		size           string
+		wantResolution string
+		wantAspect     string
+	}{
+		{name: "landscape 720p alias", size: "1280x720", wantResolution: "720p", wantAspect: "16:9"},
+		{name: "portrait 720p alias", size: "720x1280", wantResolution: "720p", wantAspect: "9:16"},
+		{name: "landscape 1080p alias", size: "1920x1080", wantResolution: "1080p", wantAspect: "16:9"},
+		{name: "portrait 1080p alias", size: "1080x1920", wantResolution: "1080p", wantAspect: "9:16"},
+		{name: "legacy quality label", size: "720P", wantResolution: "720p"},
+	}
 
-	adaptor := &TaskAdaptor{}
-	payload, err := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
-		Prompt:   "draw a cat",
-		Model:    "sd-bak-2",
-		Metadata: metadata,
-	}, &relaycommon.RelayInfo{})
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload, err := (&TaskAdaptor{}).convertToRequestPayload(&relaycommon.TaskSubmitReq{
+				Prompt: "draw a cat",
+				Model:  "seedance-2.0",
+				Size:   testCase.size,
+			}, &relaycommon.RelayInfo{})
 
-	require.NoError(t, err)
-	assert.Equal(t, "1024p", payload.Params.Resolution)
-	assert.Equal(t, "1:1", payload.Params.AspectRatio)
+			require.NoError(t, err)
+			assert.Equal(t, testCase.wantResolution, payload.Params.Resolution)
+			assert.Equal(t, testCase.wantAspect, payload.Params.AspectRatio)
+		})
+	}
 }
 
-func TestConvertToRequestPayloadConvertsParamsSize(t *testing.T) {
-	metadata := map[string]any{}
-	copyAggcRawMetadata(jsonRequest{Params: map[string]any{"size": "512x768"}}, metadata)
-
-	adaptor := &TaskAdaptor{}
-	payload, err := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
-		Prompt:   "draw a cat",
-		Model:    "sd-bak-2",
-		Metadata: metadata,
+func TestConvertToRequestPayloadRejectsUnknownPixelSize(t *testing.T) {
+	payload, err := (&TaskAdaptor{}).convertToRequestPayload(&relaycommon.TaskSubmitReq{
+		Prompt: "draw a cat",
+		Model:  "seedance-2.0",
+		Size:   "960x540",
 	}, &relaycommon.RelayInfo{})
 
-	require.NoError(t, err)
-	assert.Equal(t, "512p", payload.Params.Resolution)
-	assert.Equal(t, "2:3", payload.Params.AspectRatio)
+	require.Error(t, err)
+	assert.Nil(t, payload)
+	assert.Contains(t, err.Error(), `size "960x540" is not supported by AGGC`)
 }
 
 func TestConvertToRequestPayloadConvertsSizeAndCommonParams(t *testing.T) {
@@ -315,4 +374,78 @@ func TestConvertToRequestPayloadAcceptsTopLevelSnakeAspectRatio(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(body), `"aspectRatio":"16:9"`)
 	require.NotContains(t, string(body), "aspect_ratio")
+}
+
+func TestBuildRequestBodyPrefersCanonicalResolutionOverLegacySize(t *testing.T) {
+	payload := buildAggcRequestPayload(t, `{
+		"model":"seedance-2.0",
+		"prompt":"draw a cat",
+		"size":"960x540",
+		"resolution":"1080p",
+		"metadata":{"resolution":"720p"}
+	}`)
+
+	assert.Equal(t, "16:9", payload.Params.AspectRatio)
+	assert.Equal(t, "1080p", payload.Params.Resolution)
+}
+
+func TestValidateRequestNormalizesVideoOutputAliases(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"seedance-2.0",
+		"prompt":"draw a cat",
+		"aspectRatio":"32:18",
+		"resolution":"1080P"
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	info := &relaycommon.RelayInfo{OriginModelName: "seedance-2.0", TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
+
+	require.Nil(t, taskErr)
+	req, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, "16:9", req.AspectRatio)
+	assert.Equal(t, "1080p", req.Resolution)
+}
+
+func TestValidateRequestRejectsConflictingVideoOutputAliases(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"seedance-2.0",
+		"prompt":"draw a cat",
+		"ratio":"16:9",
+		"aspectRatio":"9:16"
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}})
+
+	require.NotNil(t, taskErr)
+	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	assert.Equal(t, "invalid_video_output", taskErr.Code)
+	assert.Contains(t, taskErr.Message, "conflicts with aspect_ratio")
+}
+
+func TestValidateMappedRequestRejectsUnknownPixelSizeBeforeBilling(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"seedance-2.0",
+		"prompt":"draw a cat",
+		"size":"960x540"
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+	adaptor := &TaskAdaptor{}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+
+	taskErr := adaptor.ValidateMappedRequest(c, info)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	assert.Equal(t, "invalid_video_output", taskErr.Code)
+	assert.Contains(t, taskErr.Message, `size "960x540" is not supported by AGGC`)
 }
