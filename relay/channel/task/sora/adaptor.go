@@ -121,11 +121,21 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 // mapping and before pricing. The two Grok models use images_url rather than
 // the public image aliases, so unsupported references must not be discarded.
 func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
-	if info == nil || info.Action == constant.TaskActionRemix {
+	if info == nil {
 		return nil
 	}
 	profile, hasProfile := soraModelProfileForInfo(info)
-	if !hasProfile || (profile.JSONTransform != requestTransformGrokImageVideo && profile.JSONTransform != requestTransformGrokVideo15) {
+	if info.Action == constant.TaskActionRemix {
+		if hasProfile && isGrokVideoProfile(profile) {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("Grok video models do not support remix requests"),
+				"unsupported_action",
+				http.StatusBadRequest,
+			)
+		}
+		return nil
+	}
+	if !hasProfile || !isGrokVideoProfile(profile) {
 		return nil
 	}
 	contentType := strings.ToLower(c.GetHeader("Content-Type"))
@@ -163,6 +173,34 @@ func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, info *relaycommon.Re
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
 	return nil
+}
+
+func isGrokVideoProfile(profile soraModelProfile) bool {
+	return profile.JSONTransform == requestTransformGrokImageVideo ||
+		profile.JSONTransform == requestTransformGrokVideo15
+}
+
+// NormalizeBillingRequestBody gives request-aware pricing the same effective
+// duration that the Grok payload will carry. The relay freezes this body before
+// pre-consume, while BuildRequestBody runs after it.
+func (a *TaskAdaptor) NormalizeBillingRequestBody(info *relaycommon.RelayInfo, body []byte) ([]byte, error) {
+	profile, hasProfile := soraModelProfileForInfo(info)
+	if len(body) == 0 || !hasProfile || !isGrokVideoProfile(profile) {
+		return body, nil
+	}
+
+	var bodyMap map[string]interface{}
+	if err := common.Unmarshal(body, &bodyMap); err != nil {
+		return nil, err
+	}
+	input, err := grokRequestInputFromBody(bodyMap)
+	if err != nil {
+		return nil, err
+	}
+	if !input.HasDuration && profile.DefaultDuration > 0 {
+		bodyMap["duration"] = profile.DefaultDuration
+	}
+	return common.Marshal(bodyMap)
 }
 
 func validateGrokMultipartFiles(c *gin.Context) error {

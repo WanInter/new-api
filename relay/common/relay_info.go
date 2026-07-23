@@ -818,6 +818,7 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 		Metadata         json.RawMessage `json:"metadata,omitempty"`
 		Duration         json.RawMessage `json:"duration,omitempty"`
 		AspectRatioCamel json.RawMessage `json:"aspectRatio,omitempty"`
+		Content          json.RawMessage `json:"content,omitempty"`
 		Images           json.RawMessage `json:"images,omitempty"`
 		ImageURLs        json.RawMessage `json:"image_urls,omitempty"`
 		Video            json.RawMessage `json:"video,omitempty"`
@@ -828,10 +829,7 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 		Audios           json.RawMessage `json:"audios,omitempty"`
 		AudioURL         json.RawMessage `json:"audio_url,omitempty"`
 		AudioURLs        json.RawMessage `json:"audio_urls,omitempty"`
-		Input            struct {
-			StartFrames     json.RawMessage `json:"start_frames,omitempty"`
-			ImageReferences json.RawMessage `json:"image_references,omitempty"`
-		} `json:"input,omitempty"`
+		Input            json.RawMessage `json:"input,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(t),
@@ -839,6 +837,13 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 
 	if err := common.Unmarshal(data, &aux); err != nil {
 		return err
+	}
+	var input struct {
+		StartFrames     json.RawMessage `json:"start_frames,omitempty"`
+		ImageReferences json.RawMessage `json:"image_references,omitempty"`
+	}
+	if err := unmarshalTaskJSONOrEncodedString(aux.Input, &input); err != nil {
+		return fmt.Errorf("input must be an object or JSON-encoded object: %w", err)
 	}
 	t.ImageURLs = nil
 	t.VideoURLs = nil
@@ -848,6 +853,11 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	t.MetadataStartFrames = nil
 	t.AspectRatioAlias = ""
 	t.VideoOutput = nil
+	t.Content = nil
+
+	if err := unmarshalTaskJSONOrEncodedString(aux.Content, &t.Content); err != nil {
+		return fmt.Errorf("content must be an array or JSON-encoded array: %w", err)
+	}
 
 	if len(aux.AspectRatioCamel) > 0 {
 		if err := common.Unmarshal(aux.AspectRatioCamel, &t.AspectRatioAlias); err != nil {
@@ -869,8 +879,8 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	}{
 		{raw: aux.Images, target: &t.Images, canonical: true},
 		{raw: aux.ImageURLs, target: &t.ImageURLs},
-		{raw: aux.Input.StartFrames, target: &t.InputStartFrames},
-		{raw: aux.Input.ImageReferences, target: &t.InputImageReferences, references: true},
+		{raw: input.StartFrames, target: &t.InputStartFrames},
+		{raw: input.ImageReferences, target: &t.InputImageReferences, references: true},
 		{raw: aux.Video, target: &t.VideoURLs},
 		{raw: aux.Videos, target: &t.Videos, canonical: true},
 		{raw: aux.VideoURL, target: &t.VideoURLs},
@@ -933,6 +943,23 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	}
 
 	return nil
+}
+
+// unmarshalTaskJSONOrEncodedString accepts native JSON values and the JSON
+// text form used by multipart fields such as input and content.
+func unmarshalTaskJSONOrEncodedString(raw json.RawMessage, target any) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	if err := common.Unmarshal(raw, target); err == nil {
+		return nil
+	}
+
+	var encoded string
+	if err := common.Unmarshal(raw, &encoded); err != nil {
+		return err
+	}
+	return common.UnmarshalJsonStr(encoded, target)
 }
 
 func parseTaskStringSlice(raw json.RawMessage) ([]string, error) {

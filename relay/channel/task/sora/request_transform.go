@@ -334,13 +334,88 @@ func grokRequestDuration(body map[string]interface{}) (int, bool, error) {
 	if hasDuration && hasSeconds && duration != seconds {
 		return 0, false, fmt.Errorf("duration %d conflicts with seconds %d", duration, seconds)
 	}
-	if hasDuration {
-		return duration, true, nil
+	metadataDuration, hasMetadataDuration, err := grokMetadataDuration(body)
+	if err != nil {
+		return 0, false, err
 	}
-	if hasSeconds {
-		return seconds, true, nil
+
+	canonicalDuration := duration
+	hasCanonicalDuration := hasDuration
+	canonicalField := "duration"
+	if !hasCanonicalDuration && hasSeconds {
+		canonicalDuration = seconds
+		hasCanonicalDuration = true
+		canonicalField = "seconds"
+	}
+	if hasCanonicalDuration && hasMetadataDuration && canonicalDuration != metadataDuration {
+		return 0, false, fmt.Errorf("metadata.duration %d conflicts with %s %d", metadataDuration, canonicalField, canonicalDuration)
+	}
+	if hasMetadataDuration {
+		canonicalDuration = metadataDuration
+		hasCanonicalDuration = true
+		if err := removeGrokMetadataDuration(body); err != nil {
+			return 0, false, err
+		}
+	}
+	if hasCanonicalDuration {
+		// Keep the parsed request, billing input, and final Grok payload on the
+		// same canonical numeric duration field.
+		body["duration"] = canonicalDuration
+		delete(body, "seconds")
+		return canonicalDuration, true, nil
 	}
 	return 0, false, nil
+}
+
+func grokMetadataDuration(body map[string]interface{}) (int, bool, error) {
+	metadata, ok := grokMetadataMap(body)
+	if !ok {
+		return 0, false, nil
+	}
+	duration, hasDuration, err := grokDurationField(metadata, "duration")
+	if err != nil {
+		return 0, false, fmt.Errorf("metadata.duration must be a positive integer")
+	}
+	return duration, hasDuration, nil
+}
+
+func removeGrokMetadataDuration(body map[string]interface{}) error {
+	metadata, ok := grokMetadataMap(body)
+	if !ok {
+		return nil
+	}
+	delete(metadata, "duration")
+	if len(metadata) == 0 {
+		delete(body, "metadata")
+		return nil
+	}
+	if _, encoded := body["metadata"].(string); encoded {
+		data, err := common.Marshal(metadata)
+		if err != nil {
+			return err
+		}
+		body["metadata"] = string(data)
+	}
+	return nil
+}
+
+func grokMetadataMap(body map[string]interface{}) (map[string]interface{}, bool) {
+	value, exists := body["metadata"]
+	if !exists || value == nil {
+		return nil, false
+	}
+	switch metadata := value.(type) {
+	case map[string]interface{}:
+		return metadata, true
+	case string:
+		parsed := make(map[string]interface{})
+		if err := common.UnmarshalJsonStr(metadata, &parsed); err != nil {
+			return nil, false
+		}
+		return parsed, true
+	default:
+		return nil, false
+	}
 }
 
 func grokDurationField(body map[string]interface{}, field string) (int, bool, error) {
@@ -532,10 +607,10 @@ func validateGrokImageVideoRequest(input grokRequestInput) (string, error) {
 		return "", fmt.Errorf("grok-image-video does not support size; use resolution")
 	}
 	if !input.HasDuration {
-		return "", fmt.Errorf("grok-image-video duration is required and must be one of: 6, 10, 12, 16, 20")
+		return "", fmt.Errorf("grok-image-video duration is required and must be one of: 6, 10, 15")
 	}
 	if !isGrokImageVideoDuration(input.Duration) {
-		return "", fmt.Errorf("grok-image-video duration must be one of: 6, 10, 12, 16, 20")
+		return "", fmt.Errorf("grok-image-video duration must be one of: 6, 10, 15")
 	}
 	if !isGrokImageVideoAspectRatio(input.AspectRatio) {
 		return "", fmt.Errorf("grok-image-video aspect_ratio is required and must be one of: 16:9, 9:16, 1:1")
@@ -583,7 +658,7 @@ func grokVideo15OutputSize(input grokRequestInput) (string, error) {
 
 func isGrokImageVideoDuration(value int) bool {
 	switch value {
-	case 6, 10, 12, 16, 20:
+	case 6, 10, 15:
 		return true
 	default:
 		return false
@@ -846,7 +921,7 @@ func writeGrokMultipartFields(writer *multipart.Writer, values map[string][]stri
 		case "input":
 			writeValues(key, grokMultipartNestedValuesWithoutFields(fieldValues, "start_frames", "image_references"))
 		case "metadata":
-			writeValues(key, grokMultipartNestedValuesWithoutFields(fieldValues, "start_frames"))
+			writeValues(key, grokMultipartNestedValuesWithoutFields(fieldValues, "start_frames", "duration"))
 		default:
 			writeValues(key, fieldValues)
 		}

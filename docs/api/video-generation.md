@@ -141,10 +141,10 @@ X-New-Api-Other-Ratios: {"seconds":4,"size":1}
 
 | 公开模型 | 上游模型 | 图片映射 | 输出字段与约束 |
 | --- | --- | --- | --- |
-| `grok-image-video` | `grok-video-3` | 标准 `images` 归一为 `images_url`。未指定 `mode` 时，无图为 `text`，普通图片引用为 `ref`；仅显式 `input.start_frames`、`metadata.start_frames` 或带首帧 role 的 content 才推导为 `frame`。 | 必须给出 `duration`/`seconds`，且仅支持 `6`、`10`、`12`、`16`、`20`；必须给出 `aspect_ratio`（`16:9`、`9:16`、`1:1`）和 `resolution`（`480p`、`720p`）。 |
+| `grok-image-video` | `grok-video-3` | 标准 `images` 归一为 `images_url`。未指定 `mode` 时，无图为 `text`，普通图片引用为 `ref`；仅显式 `input.start_frames`、`metadata.start_frames` 或带首帧 role 的 content 才推导为 `frame`。 | 必须给出 `duration`/`seconds`，且仅支持 `6`、`10`、`15`；必须给出 `aspect_ratio`（`16:9`、`9:16`、`1:1`）和 `resolution`（`480p`、`720p`）。 |
 | `grok-video-1.5` | `grok-imagine-video-1.5-preview` | 标准 `images` 归一为恰好一条 `images_url`。 | `duration`/`seconds` 可为 `1` 至 `15` 的整数，省略时上游默认 `6` 秒；`resolution` 会映射为上游 `size`，仅 `480p`、`720p`，省略时上游默认 `720p`；比例支持 `16:9`、`9:16`、`1:1`、`4:3`、`3:4`、`3:2`、`2:3`。 |
 
-这两个模型仅支持 JSON 或 multipart 请求，且目前只验证了 URL 形式的图片输入。提交 `videos`、`audios` 或二进制 multipart 文件会返回 `400`，不会被静默丢弃。`size: "960x540"` 不能被推断为 `720p`；对 `grok-video-1.5` 应使用明确的 `resolution: "720p"`，或其等价的渠道原生 `size: "720p"`。
+这两个模型仅支持 JSON 或 multipart 请求，且目前只验证了 URL 形式的图片输入。提交 `videos`、`audios` 或二进制 multipart 文件会返回 `400`，不会被静默丢弃。`metadata.duration` 是兼容别名，会归一为顶层 `duration`；与顶层 `duration` 或 `seconds` 冲突时返回 `400`。`size: "960x540"` 不能被推断为 `720p`；对 `grok-video-1.5` 应使用明确的 `resolution: "720p"`，或其等价的渠道原生 `size: "720p"`。
 
 ---
 
