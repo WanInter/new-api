@@ -30,6 +30,7 @@ import { SettingsPageTitleStatusPortal } from '../components/settings-page-conte
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { GroupRatioForm } from './group-ratio-form'
+import { saveBillingModels } from './model-billing-api'
 import { ModelRatioForm } from './model-ratio-form'
 import { ToolPriceSettings } from './tool-price-settings'
 import { UpstreamRatioSync } from './upstream-ratio-sync'
@@ -108,6 +109,7 @@ const createModelSchema = (t: Translate) =>
     ExposeRatioEnabled: z.boolean(),
     BillingMode: createJsonStringField(t),
     BillingExpr: createJsonStringField(t),
+    BillingSchema: createJsonStringField(t),
   })
 
 const createGroupSchema = (t: Translate) =>
@@ -180,6 +182,7 @@ export function RatioSettingsCard({
     ExposeRatioEnabled: modelDefaults.ExposeRatioEnabled,
     BillingMode: normalizeJsonString(modelDefaults.BillingMode),
     BillingExpr: normalizeJsonString(modelDefaults.BillingExpr),
+    BillingSchema: normalizeJsonString(modelDefaults.BillingSchema),
   })
   const [savedModelValues, setSavedModelValues] = useState(
     modelNormalizedDefaults.current
@@ -216,6 +219,7 @@ export function RatioSettingsCard({
       ),
       BillingMode: formatJsonForTextarea(modelDefaults.BillingMode),
       BillingExpr: formatJsonForTextarea(modelDefaults.BillingExpr),
+      BillingSchema: formatJsonForTextarea(modelDefaults.BillingSchema),
     },
   })
 
@@ -250,6 +254,7 @@ export function RatioSettingsCard({
       ExposeRatioEnabled: modelDefaults.ExposeRatioEnabled,
       BillingMode: normalizeJsonString(modelDefaults.BillingMode),
       BillingExpr: normalizeJsonString(modelDefaults.BillingExpr),
+      BillingSchema: normalizeJsonString(modelDefaults.BillingSchema),
     }
     setSavedModelValues(modelNormalizedDefaults.current)
 
@@ -267,6 +272,7 @@ export function RatioSettingsCard({
       ),
       BillingMode: formatJsonForTextarea(modelDefaults.BillingMode),
       BillingExpr: formatJsonForTextarea(modelDefaults.BillingExpr),
+      BillingSchema: formatJsonForTextarea(modelDefaults.BillingSchema),
     })
   }, [modelDefaults, modelForm])
 
@@ -310,6 +316,7 @@ export function RatioSettingsCard({
         ExposeRatioEnabled: values.ExposeRatioEnabled,
         BillingMode: normalizeJsonString(values.BillingMode),
         BillingExpr: normalizeJsonString(values.BillingExpr),
+        BillingSchema: normalizeJsonString(values.BillingSchema),
       }
 
       const apiKeyMap: Record<string, string> = {
@@ -328,7 +335,40 @@ export function RatioSettingsCard({
         return
       }
 
-      for (const key of updates) {
+      const billingKeys: Array<keyof ModelFormValues> = [
+        'BillingMode',
+        'BillingExpr',
+        'BillingSchema',
+      ]
+      const billingUpdates = updates.filter((key) => billingKeys.includes(key))
+      const nextSchema = JSON.parse(normalized.BillingSchema) as Record<
+        string,
+        string
+      >
+
+      if (billingUpdates.length > 0) {
+        const result = await saveBillingModels({
+          billing_mode: JSON.parse(normalized.BillingMode) as Record<
+            string,
+            string
+          >,
+          billing_expr: JSON.parse(normalized.BillingExpr) as Record<
+            string,
+            string
+          >,
+          billing_schema: nextSchema,
+        })
+        if (!result.success) {
+          const message = result.message || t('Failed to update billing models')
+          toast.error(message)
+          throw new Error(message)
+        }
+        queryClient.invalidateQueries({ queryKey: ['system-options'] })
+      }
+
+      for (const key of updates.filter(
+        (key) => !billingKeys.includes(key)
+      )) {
         const apiKey = apiKeyMap[key as string] || (key as string)
         await updateOption.mutateAsync({ key: apiKey, value: normalized[key] })
       }
@@ -336,7 +376,7 @@ export function RatioSettingsCard({
       modelNormalizedDefaults.current = normalized
       setSavedModelValues(normalized)
     },
-    [t, updateOption]
+    [queryClient, t, updateOption]
   )
 
   const saveGroupRatios = useCallback(
@@ -435,6 +475,7 @@ export function RatioSettingsCard({
           AudioCompletionRatio: modelDefaults.AudioCompletionRatio,
           'billing_setting.billing_mode': modelDefaults.BillingMode,
           'billing_setting.billing_expr': modelDefaults.BillingExpr,
+          'billing_setting.billing_schema': modelDefaults.BillingSchema,
         }}
       />
     )

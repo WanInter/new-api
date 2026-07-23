@@ -205,32 +205,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 	// BillingRequestInput is frozen by tiered pricing. Rebuild it on every task
 	// attempt so a retry on a different adaptor/profile cannot reuse stale input.
-	info.BillingRequestInput = nil
-	normalizer, hasNormalizer := adaptor.(channel.TaskBillingRequestBodyNormalizer)
-	provider, hasBillingInputProvider := adaptor.(channel.TaskBillingInputProvider)
-	if hasNormalizer || hasBillingInputProvider {
-		requestInput, err := helper.BuildIncomingBillingExprRequestInput(c, info)
-		if err != nil {
-			return nil, service.TaskErrorWrapperLocal(err, "billing_request_input_failed", http.StatusBadRequest)
-		}
-		if hasNormalizer {
-			normalizedBody, err := normalizer.NormalizeBillingRequestBody(info, requestInput.Body)
-			if err != nil {
-				return nil, service.TaskErrorWrapperLocal(err, "billing_request_normalization_failed", http.StatusBadRequest)
-			}
-			requestInput.Body = normalizedBody
-		}
-		if hasBillingInputProvider {
-			canonicalInput, err := provider.BuildBillingInput(c, info)
-			if err != nil {
-				return nil, service.TaskErrorWrapperLocal(err, "billing_request_normalization_failed", http.StatusBadRequest)
-			}
-			requestInput, err = helper.MergeCanonicalBillingExprRequestInput(requestInput, canonicalInput)
-			if err != nil {
-				return nil, service.TaskErrorWrapperLocal(err, "billing_request_normalization_failed", http.StatusBadRequest)
-			}
-		}
-		info.BillingRequestInput = &requestInput
+	if err := prepareTaskBillingRequestInput(c, info, adaptor, modelName); err != nil {
+		return nil, service.TaskErrorWrapperLocal(err, "billing_request_normalization_failed", http.StatusBadRequest)
 	}
 
 	// 3. 预生成公开 task ID（仅首次）

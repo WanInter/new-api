@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -671,7 +672,7 @@ func RelayTask(c *gin.Context) {
 		task.PrivateData.BillingSource = relayInfo.BillingSource
 		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
 		task.PrivateData.TokenId = relayInfo.TokenId
-		task.PrivateData.BillingContext = &model.TaskBillingContext{
+		billingContext := &model.TaskBillingContext{
 			ModelPrice:        relayInfo.PriceData.ModelPrice,
 			GroupRatio:        relayInfo.PriceData.GroupRatioInfo.GroupRatio,
 			ModelRatio:        relayInfo.PriceData.ModelRatio,
@@ -681,6 +682,33 @@ func RelayTask(c *gin.Context) {
 			PricingRuleSource: relayInfo.PriceData.GroupRatioInfo.PricingRuleSource,
 			PerCallBilling:    common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
 		}
+		if snapshot := relayInfo.TieredBillingSnapshot; snapshot != nil {
+			billingContext.BillingMode = snapshot.BillingMode
+			billingContext.BillingSchema = snapshot.BillingSchema
+			billingContext.BillingExpr = snapshot.ExprString
+			billingContext.BillingExprHash = snapshot.ExprHash
+			billingContext.BillingExprVersion = snapshot.ExprVersion
+			billingContext.QuotaPerUnit = snapshot.QuotaPerUnit
+			billingContext.EstimatedTier = snapshot.EstimatedTier
+			billingContext.MatchedTier = snapshot.EstimatedTier
+			billingContext.PreConsumedQuota = relayInfo.FinalPreConsumedQuota
+			billingContext.FinalQuota = result.Quota
+			billingContext.CanonicalBillingFields = make([]model.TaskBillingCanonicalField, 0, len(relayInfo.BillingCanonicalFields))
+			billingContext.CanonicalBillingFieldPaths = make([]string, 0, len(relayInfo.BillingCanonicalFields))
+			for _, field := range relayInfo.BillingCanonicalFields {
+				billingContext.CanonicalBillingFields = append(billingContext.CanonicalBillingFields, model.TaskBillingCanonicalField{
+					Path:       field.Path,
+					Type:       field.Type,
+					Required:   field.Required,
+					EnumValues: append([]string(nil), field.EnumValues...),
+				})
+				billingContext.CanonicalBillingFieldPaths = append(billingContext.CanonicalBillingFieldPaths, field.Path)
+			}
+			if snapshot.BillingSchema != "" && relayInfo.BillingRequestInput != nil {
+				billingContext.CanonicalBillingInput = json.RawMessage(append([]byte(nil), relayInfo.BillingRequestInput.Body...))
+			}
+		}
+		task.PrivateData.BillingContext = billingContext
 		task.Quota = result.Quota
 		task.Data = result.TaskData
 		task.Action = relayInfo.Action

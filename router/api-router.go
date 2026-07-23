@@ -196,6 +196,8 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			optionRoute.GET("/", controller.GetOptions)
 			optionRoute.PUT("/", controller.UpdateOption)
+			optionRoute.GET("/billing-capabilities", controller.GetBillingCapabilities)
+			optionRoute.PUT("/billing-models", controller.UpdateBillingModels)
 			optionRoute.GET("/task-result-rehost", controller.GetTaskResultRehostSettings)
 			optionRoute.PUT("/task-result-rehost", controller.UpdateTaskResultRehostSettings)
 			optionRoute.POST("/task-result-rehost/test", controller.TestTaskResultRehostSettings)

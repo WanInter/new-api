@@ -68,6 +68,7 @@ export const RATIO_TYPE_OPTIONS = [
   { label: 'Audio completion ratio', value: 'audio_completion_ratio' },
   { label: 'Fixed price', value: 'model_price' },
   { label: 'Expression billing', value: 'billing_expr' },
+  { label: 'Canonical billing schema', value: 'billing_schema' },
 ] as const
 
 export const CHANNEL_STATUS_CONFIG = {

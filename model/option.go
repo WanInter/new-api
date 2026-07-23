@@ -1,12 +1,14 @@
 package model
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/performance_setting"
@@ -211,11 +213,19 @@ func InitOptionMap() {
 
 func loadOptionsFromDatabase() {
 	options, _ := AllOption()
+	billingOptions := make(map[string]string)
 	for _, option := range options {
+		if isBillingSettingOptionKey(option.Key) {
+			billingOptions[option.Key] = option.Value
+			continue
+		}
 		err := updateOptionMap(option.Key, option.Value)
 		if err != nil {
 			common.SysLog("failed to update option map: " + err.Error())
 		}
+	}
+	if err := applyBillingSettingOptions(billingOptions); err != nil {
+		common.SysLog("failed to update billing setting options: " + err.Error())
 	}
 }
 
@@ -228,6 +238,9 @@ func SyncOptions(frequency int) {
 }
 
 func UpdateOption(key string, value string) error {
+	if isBillingSettingOptionKey(key) {
+		return fmt.Errorf("dynamic billing maps must be updated together with UpdateBillingSettingMaps")
+	}
 	// Save to database first
 	option := Option{
 		Key: key,
@@ -252,6 +265,11 @@ func UpdateOptionsBulk(values map[string]string) error {
 	if len(values) == 0 {
 		return nil
 	}
+	for key := range values {
+		if isBillingSettingOptionKey(key) {
+			return fmt.Errorf("dynamic billing maps must be updated together with UpdateBillingSettingMaps")
+		}
+	}
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		for k, v := range values {
 			option := Option{Key: k}
@@ -273,6 +291,119 @@ func UpdateOptionsBulk(values map[string]string) error {
 			return err
 		}
 	}
+	return nil
+}
+
+// UpdateBillingSettingMaps persists the three coupled dynamic-billing maps in
+// one transaction and publishes them to the runtime as one atomic snapshot.
+// Dynamic billing settings must use this method so no caller can publish a
+// mode, expression, or schema separately from its coupled configuration.
+func UpdateBillingSettingMaps(modes, exprs, schemas map[string]string) error {
+	modeJSON, err := common.Marshal(modes)
+	if err != nil {
+		return err
+	}
+	exprJSON, err := common.Marshal(exprs)
+	if err != nil {
+		return err
+	}
+	schemaJSON, err := common.Marshal(schemas)
+	if err != nil {
+		return err
+	}
+	modeKey := "billing_setting." + billing_setting.BillingModeField
+	exprKey := "billing_setting." + billing_setting.BillingExprField
+	schemaKey := "billing_setting." + billing_setting.BillingSchemaField
+	values := map[string]string{
+		modeKey:   string(modeJSON),
+		exprKey:   string(exprJSON),
+		schemaKey: string(schemaJSON),
+	}
+	// Keep the database row lock order stable for concurrent administrators.
+	// A map iteration here can acquire the three option-row locks in different
+	// orders and needlessly create a transaction deadlock.
+	orderedValues := []struct {
+		key   string
+		value string
+	}{
+		{
+			key:   modeKey,
+			value: values[modeKey],
+		},
+		{
+			key:   exprKey,
+			value: values[exprKey],
+		},
+		{
+			key:   schemaKey,
+			value: values[schemaKey],
+		},
+	}
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		for _, entry := range orderedValues {
+			option := Option{Key: entry.key}
+			if err := tx.FirstOrCreate(&option, Option{Key: entry.key}).Error; err != nil {
+				return err
+			}
+			option.Value = entry.value
+			if err := tx.Save(&option).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	return applyBillingSettingOptions(values)
+}
+
+func isBillingSettingOptionKey(key string) bool {
+	switch key {
+	case "billing_setting." + billing_setting.BillingModeField,
+		"billing_setting." + billing_setting.BillingExprField,
+		"billing_setting." + billing_setting.BillingSchemaField:
+		return true
+	default:
+		return false
+	}
+}
+
+// applyBillingSettingOptions publishes the three coupled billing maps as one
+// runtime snapshot. Database readers call this after loading every option row,
+// so another instance never observes a newly persisted expression with a stale
+// schema while its options are being refreshed.
+func applyBillingSettingOptions(values map[string]string) error {
+	if len(values) == 0 {
+		return nil
+	}
+	modes, exprs, schemas := billing_setting.GetBillingSettingsCopy()
+	for key, value := range values {
+		parsed := make(map[string]string)
+		if err := common.UnmarshalJsonStr(value, &parsed); err != nil {
+			return fmt.Errorf("decode %s: %w", key, err)
+		}
+		switch key {
+		case "billing_setting." + billing_setting.BillingModeField:
+			modes = parsed
+		case "billing_setting." + billing_setting.BillingExprField:
+			exprs = parsed
+		case "billing_setting." + billing_setting.BillingSchemaField:
+			schemas = parsed
+		}
+	}
+
+	common.OptionMapRWMutex.Lock()
+	if common.OptionMap == nil {
+		common.OptionMap = make(map[string]string)
+	}
+	for key, value := range values {
+		common.OptionMap[key] = value
+	}
+	common.OptionMapRWMutex.Unlock()
+	billing_setting.ReplaceBillingSettings(modes, exprs, schemas)
+	InvalidatePricingCache()
+	ratio_setting.InvalidateExposedDataCache()
 	return nil
 }
 
@@ -660,6 +791,15 @@ func handleConfigUpdate(key, value string) bool {
 		return false // 未注册的配置
 	}
 
+	if configName == "billing_setting" {
+		if err := billing_setting.UpdateBillingSettingOption(configKey, value); err != nil {
+			common.SysError("failed to update billing setting " + configKey + ": " + err.Error())
+		}
+		InvalidatePricingCache()
+		ratio_setting.InvalidateExposedDataCache()
+		return true
+	}
+
 	// 更新配置
 	configMap := map[string]string{
 		configKey: value,
@@ -671,9 +811,6 @@ func handleConfigUpdate(key, value string) bool {
 		performance_setting.UpdateAndSync()
 	} else if configName == "tool_price_setting" {
 		operation_setting.RebuildToolPriceIndex()
-	} else if configName == "billing_setting" {
-		InvalidatePricingCache()
-		ratio_setting.InvalidateExposedDataCache()
 	} else if configName == "theme" {
 		system_setting.UpdateAndSyncTheme()
 	}

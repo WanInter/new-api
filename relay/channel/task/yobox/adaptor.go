@@ -28,6 +28,8 @@ const (
 	defaultYoboxBaseURL              = "https://max.yoboxai.com"
 	defaultYoboxSeedance20Resolution = "720p"
 	yoboxTasksPath                   = "/async/tasks"
+	yoboxSeedance20FastNoFaceSchema  = "video.yobox.seedance-2.0.fast-noface.v1"
+	yoboxSeedance20NoFaceSchema      = "video.yobox.seedance-2.0.noface.v1"
 )
 
 var modelList = []string{
@@ -202,6 +204,56 @@ func (a *TaskAdaptor) BuildBillingInput(c *gin.Context, info *relaycommon.RelayI
 	return requestInput, nil
 }
 
+// GetTaskBillingCapability declares the stable dimensions that are shared by
+// the Seedance 2.0 payload resolver and canonical billing input. Only models
+// with confirmed price matrices are exposed here; other Yobox models retain
+// their legacy billing behaviour until they publish an equivalent contract.
+func (a *TaskAdaptor) GetTaskBillingCapability(info *relaycommon.RelayInfo) *channel.TaskBillingCapability {
+	modelName := ""
+	if info != nil {
+		if info.ChannelMeta != nil {
+			modelName = strings.TrimSpace(info.UpstreamModelName)
+		}
+		if modelName == "" {
+			modelName = strings.TrimSpace(info.OriginModelName)
+		}
+	}
+	resolutionValues := []string(nil)
+	schemaVersion := ""
+	switch modelName {
+	case "seedance-2.0-fast-noface":
+		resolutionValues = []string{"480p", "720p"}
+		schemaVersion = yoboxSeedance20FastNoFaceSchema
+	case "seedance-2.0-noface":
+		resolutionValues = []string{"480p", "720p", "1080p"}
+		schemaVersion = yoboxSeedance20NoFaceSchema
+	default:
+		return nil
+	}
+
+	durationValues := make([]string, 0, 12)
+	for seconds := 4; seconds <= 15; seconds++ {
+		durationValues = append(durationValues, strconv.Itoa(seconds))
+	}
+	return &channel.TaskBillingCapability{
+		SchemaVersion: schemaVersion,
+		Fields: []channel.TaskBillingField{
+			{
+				Path:       "billing.duration_seconds",
+				Type:       "number",
+				Required:   true,
+				EnumValues: durationValues,
+			},
+			{
+				Path:       "billing.resolution",
+				Type:       "string",
+				Required:   true,
+				EnumValues: resolutionValues,
+			},
+		},
+	}
+}
+
 func yoboxBillingHeaders(c *gin.Context, info *relaycommon.RelayInfo) map[string]string {
 	headers := make(map[string]string)
 	if info != nil {
@@ -329,6 +381,13 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			parsed.Message,
 			"task failed",
 		)
+	}
+	if seconds := firstPositive(parsed.Data.Data.Seconds, parsed.Data.Seconds); seconds > 0 {
+		info.ActualBillingInput = map[string]any{
+			"billing": map[string]any{
+				"duration_seconds": seconds,
+			},
+		}
 	}
 	return info, nil
 }

@@ -93,7 +93,7 @@ func initModelListColumnNames(t *testing.T) {
 	}
 }
 
-func withTieredBillingConfig(t *testing.T, modes map[string]string, exprs map[string]string) {
+func withTieredBillingConfig(t *testing.T, modes map[string]string, exprs map[string]string, schemas ...map[string]string) {
 	t.Helper()
 
 	saved := map[string]string{}
@@ -112,11 +112,17 @@ func withTieredBillingConfig(t *testing.T, modes map[string]string, exprs map[st
 	require.NoError(t, err)
 	exprBytes, err := common.Marshal(exprs)
 	require.NoError(t, err)
-
-	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+	values := map[string]string{
 		"billing_setting.billing_mode": string(modeBytes),
 		"billing_setting.billing_expr": string(exprBytes),
-	}))
+	}
+	if len(schemas) > 0 {
+		schemaBytes, err := common.Marshal(schemas[0])
+		require.NoError(t, err)
+		values["billing_setting.billing_schema"] = string(schemaBytes)
+	}
+
+	require.NoError(t, config.GlobalConfig.LoadFromDB(values))
 	model.InvalidatePricingCache()
 }
 
@@ -163,6 +169,8 @@ func TestListModelsIncludesTieredBillingModel(t *testing.T) {
 	}, map[string]string{
 		"zz-tiered-visible-model":    `tier("base", p * 1 + c * 2)`,
 		"zz-tiered-empty-expr-model": "   ",
+	}, map[string]string{
+		"zz-tiered-visible-model": "test.video.v1",
 	})
 
 	db := setupModelListControllerTestDB(t)
@@ -198,6 +206,7 @@ func TestListModelsIncludesTieredBillingModel(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "tiered_expr", visiblePricing.BillingMode)
 	require.NotEmpty(t, visiblePricing.BillingExpr)
+	require.Equal(t, "test.video.v1", visiblePricing.BillingSchema)
 
 	emptyExprPricing, ok := pricingByName["zz-tiered-empty-expr-model"]
 	require.True(t, ok)

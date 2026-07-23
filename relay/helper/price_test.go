@@ -171,6 +171,45 @@ func TestModelPriceHelperPerCallUsesTieredExpression(t *testing.T) {
 	require.Equal(t, "10s", info.TieredBillingSnapshot.EstimatedTier)
 }
 
+func TestModelPriceHelperPerCallUsesFrozenTaskBillingConfig(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const modelName = "task-tiered-frozen-config"
+	savedModes, savedExprs, savedSchemas := billing_setting.GetBillingSettingsCopy()
+	savedQuotaPerUnit := common.QuotaPerUnit
+	common.QuotaPerUnit = 20
+	billing_setting.ReplaceBillingSettings(
+		map[string]string{modelName: billing_setting.BillingModeTieredExpr},
+		map[string]string{modelName: `tier("new", 5000000)`},
+		map[string]string{},
+	)
+	t.Cleanup(func() {
+		billing_setting.ReplaceBillingSettings(savedModes, savedExprs, savedSchemas)
+		common.QuotaPerUnit = savedQuotaPerUnit
+	})
+
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+	context.Set("group", "default")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: modelName,
+		UserGroup:       "default",
+		UsingGroup:      "default",
+		TaskBillingConfig: &relaycommon.TaskBillingConfigSnapshot{
+			ModelName: modelName,
+			Mode:      billing_setting.BillingModeTieredExpr,
+			Expr:      `tier("frozen", 1000000)`,
+		},
+	}
+
+	priceData, err := ModelPriceHelperPerCall(context, info)
+
+	require.NoError(t, err)
+	assert.Equal(t, 20, priceData.Quota)
+	require.NotNil(t, info.TieredBillingSnapshot)
+	assert.Equal(t, `tier("frozen", 1000000)`, info.TieredBillingSnapshot.ExprString)
+	assert.Equal(t, "frozen", info.TieredBillingSnapshot.EstimatedTier)
+}
+
 func TestModelPriceHelperTieredUsesMultipartImageEditFields(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

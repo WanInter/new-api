@@ -161,6 +161,158 @@ func TestCalculateTaskQuotaByTokensUsesSubmittedModelRatio(t *testing.T) {
 	assert.Equal(t, 40000, quota)
 }
 
+func canonicalVideoBillingContext() *model.TaskBillingContext {
+	return &model.TaskBillingContext{
+		BillingMode:        "tiered_expr",
+		BillingSchema:      "video.yobox.seedance-2.0.fast-noface.v1",
+		BillingExpr:        `param("billing.duration_seconds") == 4 ? tier("720p_4s", 800000) : tier("720p_15s", 3000000)`,
+		BillingExprVersion: 1,
+		QuotaPerUnit:       20,
+		GroupRatio:         1,
+		OriginModelName:    "seedance-2.0-fast-noface",
+		EstimatedTier:      "720p_4s",
+		CanonicalBillingInput: json.RawMessage(
+			`{"billing":{"duration_seconds":4,"resolution":"720p"}}`,
+		),
+		CanonicalBillingFieldPaths: []string{
+			"billing.duration_seconds",
+			"billing.resolution",
+		},
+		CanonicalBillingFields: []model.TaskBillingCanonicalField{
+			{
+				Path:       "billing.duration_seconds",
+				Type:       "number",
+				Required:   true,
+				EnumValues: []string{"4", "15"},
+			},
+			{
+				Path:       "billing.resolution",
+				Type:       "string",
+				Required:   true,
+				EnumValues: []string{"480p", "720p"},
+			},
+		},
+		PreConsumedQuota: 16,
+		FinalQuota:       16,
+	}
+}
+
+func TestCalculateTaskQuotaByCanonicalBillingUsesFrozenSchemaAndActualInput(t *testing.T) {
+	task := &model.Task{
+		Quota: 16,
+		PrivateData: model.TaskPrivateData{
+			BillingContext: canonicalVideoBillingContext(),
+		},
+	}
+
+	quota, reason, ok := calculateTaskQuotaByCanonicalBilling(task, &relaycommon.TaskInfo{
+		ActualBillingInput: map[string]any{
+			"billing": map[string]any{"duration_seconds": 15},
+		},
+	})
+
+	require.True(t, ok)
+	assert.Equal(t, 60, quota)
+	assert.Contains(t, reason, "720p_15s")
+	assert.Equal(t, "720p_15s", task.PrivateData.BillingContext.MatchedTier)
+	assert.Equal(t, 60, task.PrivateData.BillingContext.FinalQuota)
+
+	var actual map[string]any
+	require.NoError(t, common.Unmarshal(task.PrivateData.BillingContext.ActualBillingInput, &actual))
+	assert.EqualValues(t, 15, actual["billing"].(map[string]any)["duration_seconds"])
+	assert.Equal(t, "720p", actual["billing"].(map[string]any)["resolution"])
+}
+
+func TestCalculateTaskQuotaByCanonicalBillingRejectsActualValuesOutsideFrozenSchema(t *testing.T) {
+	task := &model.Task{
+		Quota: 16,
+		PrivateData: model.TaskPrivateData{
+			BillingContext: canonicalVideoBillingContext(),
+		},
+	}
+
+	_, _, ok := calculateTaskQuotaByCanonicalBilling(task, &relaycommon.TaskInfo{
+		ActualBillingInput: map[string]any{
+			"billing": map[string]any{"duration_seconds": 99},
+		},
+	})
+
+	assert.False(t, ok)
+	assert.Empty(t, task.PrivateData.BillingContext.ActualBillingInput)
+	assert.Equal(t, 16, task.PrivateData.BillingContext.FinalQuota)
+}
+
+func TestSettleCanonicalBillingRecordsActualCanonicalAudit(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 81, 81, 81
+	const initialQuota, tokenRemain = 1000, 1000
+	seedUser(t, userID, initialQuota)
+	seedToken(t, tokenID, userID, "sk-canonical-settlement", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, 16, tokenID, BillingSourceWallet, 0)
+	task.PrivateData.BillingContext = canonicalVideoBillingContext()
+	adaptor := &mockAdaptor{}
+	result := &relaycommon.TaskInfo{
+		Status: model.TaskStatusSuccess,
+		ActualBillingInput: map[string]any{
+			"billing": map[string]any{"duration_seconds": 15},
+		},
+	}
+
+	settleTaskBillingOnComplete(ctx, adaptor, task, result)
+
+	assert.Equal(t, 60, task.Quota)
+	assert.Equal(t, initialQuota-44, getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain-44, getTokenRemainQuota(t, tokenID))
+
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	var other map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
+	assert.Equal(t, "tiered_expr", other["billing_mode"])
+	assert.Equal(t, "video.yobox.seedance-2.0.fast-noface.v1", other["billing_schema"])
+	assert.EqualValues(t, 16, other["pre_consumed_quota"])
+	assert.EqualValues(t, 60, other["actual_quota"])
+	assert.EqualValues(t, 60, other["final_quota"])
+	assert.Equal(t, map[string]any{
+		"billing": map[string]any{
+			"duration_seconds": float64(15),
+			"resolution":       "720p",
+		},
+	}, other["actual_billing_input"])
+}
+
+func TestRefundTaskQuotaRecordsCanonicalAuditWithoutRequestBody(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 82, 82, 82
+	seedUser(t, userID, 100)
+	seedToken(t, tokenID, userID, "sk-canonical-refund", 100)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, 16, tokenID, BillingSourceWallet, 0)
+	task.PrivateData.BillingContext = canonicalVideoBillingContext()
+	RefundTaskQuota(ctx, task, "upstream failed")
+
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	var other map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
+	assert.Equal(t, "tiered_expr", other["billing_mode"])
+	assert.Equal(t, map[string]any{
+		"billing": map[string]any{
+			"duration_seconds": float64(4),
+			"resolution":       "720p",
+		},
+	}, other["canonical_billing_input"])
+	assert.NotContains(t, other, "request_body")
+	assert.NotContains(t, other, "headers")
+}
+
 // ---------------------------------------------------------------------------
 // Read-back helpers
 // ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -868,6 +869,24 @@ func TestBuildBillingInputMatchesSeedance20ResolvedPayload(t *testing.T) {
 			resolution:         "1080p",
 		},
 		{
+			name: "input duration and top-level output resolution conflicts",
+			newContext: func(t *testing.T) *gin.Context {
+				body := `{
+					"model":"seedance-2.0-noface",
+					"prompt":"animate",
+					"duration":4,
+					"resolution":"720p",
+					"metadata":{"duration":5,"resolution":"480p"},
+					"input":{"duration":15,"resolution":"1080p"}
+				}`
+				return newYoboxBillingTestContext(t, "application/json", strings.NewReader(body))
+			},
+			upstreamDuration:   float64(15),
+			upstreamResolution: "720p",
+			duration:           15,
+			resolution:         "720p",
+		},
+		{
 			name: "json duration string with unit",
 			newContext: func(t *testing.T) *gin.Context {
 				body := `{"model":"seedance-2.0-fast-noface","prompt":"animate","duration":" 15 seconds ","resolution":"720P"}`
@@ -877,6 +896,17 @@ func TestBuildBillingInputMatchesSeedance20ResolvedPayload(t *testing.T) {
 			upstreamResolution: "720p",
 			duration:           15,
 			resolution:         "720p",
+		},
+		{
+			name: "json seconds alias with unit",
+			newContext: func(t *testing.T) *gin.Context {
+				body := `{"model":"seedance-2.0-fast-noface","prompt":"animate","seconds":" 15 s ","resolution":"480P"}`
+				return newYoboxBillingTestContext(t, "application/json", strings.NewReader(body))
+			},
+			upstreamDuration:   15,
+			upstreamResolution: "480p",
+			duration:           15,
+			resolution:         "480p",
 		},
 		{
 			name: "url encoded form",
@@ -935,6 +965,170 @@ func TestBuildBillingInputMatchesSeedance20ResolvedPayload(t *testing.T) {
 			assert.EqualValues(t, testCase.duration, gjson.GetBytes(billingInput.Body, "billing.duration_seconds").Int())
 			assert.Equal(t, testCase.resolution, gjson.GetBytes(billingInput.Body, "billing.resolution").String())
 			assert.Equal(t, map[string]float64{"seconds": float64(testCase.duration)}, adaptor.EstimateBilling(c, info))
+		})
+	}
+}
+
+type yoboxCanonicalVideoRate struct {
+	resolution       string
+	creditsPerSecond int
+}
+
+func yoboxCanonicalVideoExpr(rates []yoboxCanonicalVideoRate) string {
+	resolutionBranches := make([]string, 0, len(rates))
+	for _, rate := range rates {
+		durationBranches := make([]string, 0, 12)
+		for duration := 4; duration <= 15; duration++ {
+			rawCost := float64(rate.creditsPerSecond*duration) * 1_000_000 / 20
+			durationBranches = append(durationBranches, fmt.Sprintf(
+				`param("billing.duration_seconds") == %d ? tier(%q, %.0f)`,
+				duration,
+				fmt.Sprintf("%s_%ds", rate.resolution, duration),
+				rawCost,
+			))
+		}
+		resolutionBranches = append(resolutionBranches, fmt.Sprintf(
+			`param("billing.resolution") == %q ? (%s : tier(%q, 0))`,
+			rate.resolution,
+			strings.Join(durationBranches, " : "),
+			fmt.Sprintf("%s_unsupported_duration", rate.resolution),
+		))
+	}
+	return strings.Join(resolutionBranches, " : ") + ` : tier("unsupported_resolution", 0)`
+}
+
+func TestSeedance20CanonicalBillingMatrixMatchesPayloadAndQuota(t *testing.T) {
+	testCases := []struct {
+		model string
+		rates []yoboxCanonicalVideoRate
+	}{
+		{
+			model: "seedance-2.0-fast-noface",
+			rates: []yoboxCanonicalVideoRate{
+				{resolution: "480p", creditsPerSecond: 3},
+				{resolution: "720p", creditsPerSecond: 4},
+			},
+		},
+		{
+			model: "seedance-2.0-noface",
+			rates: []yoboxCanonicalVideoRate{
+				{resolution: "480p", creditsPerSecond: 4},
+				{resolution: "720p", creditsPerSecond: 6},
+				{resolution: "1080p", creditsPerSecond: 11},
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.model, func(t *testing.T) {
+			adaptor := &TaskAdaptor{}
+			info := &relaycommon.RelayInfo{
+				OriginModelName: testCase.model,
+				TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+			}
+			capability := adaptor.GetTaskBillingCapability(info)
+			require.NotNil(t, capability)
+			fields := make([]billingexpr.CanonicalBillingField, 0, len(capability.Fields))
+			for _, field := range capability.Fields {
+				fields = append(fields, billingexpr.CanonicalBillingField{
+					Path:       field.Path,
+					Type:       field.Type,
+					Required:   field.Required,
+					EnumValues: field.EnumValues,
+				})
+			}
+
+			expression := yoboxCanonicalVideoExpr(testCase.rates)
+			snapshot := &billingexpr.BillingSnapshot{
+				BillingMode:   "tiered_expr",
+				BillingSchema: capability.SchemaVersion,
+				ExprString:    expression,
+				ExprHash:      billingexpr.ExprHashString(expression),
+				GroupRatio:    1,
+				QuotaPerUnit:  20,
+				ExprVersion:   1,
+			}
+
+			for _, rate := range testCase.rates {
+				for duration := 4; duration <= 15; duration++ {
+					t.Run(fmt.Sprintf("%s_%ds", rate.resolution, duration), func(t *testing.T) {
+						body := fmt.Sprintf(
+							`{"model":%q,"prompt":"animate","duration":%d,"resolution":%q}`,
+							testCase.model,
+							duration,
+							rate.resolution,
+						)
+						c := newYoboxBillingTestContext(t, "application/json", strings.NewReader(body))
+						requestInfo := *info
+						require.Nil(t, adaptor.ValidateRequestAndSetAction(c, &requestInfo))
+
+						billingInput, err := adaptor.BuildBillingInput(c, &requestInfo)
+						require.NoError(t, err)
+						req, err := relaycommon.GetTaskRequest(c)
+						require.NoError(t, err)
+						payload, err := adaptor.convertToRequestPayload(&req, &requestInfo)
+						require.NoError(t, err)
+						upstreamInput := payload.(map[string]any)["input"].(map[string]any)
+
+						upstreamDuration, durationOK := yoboxInputDurationSeconds(upstreamInput)
+						upstreamResolution, resolutionOK := yoboxInputResolution(upstreamInput)
+						require.True(t, durationOK)
+						require.True(t, resolutionOK)
+						assert.Equal(t, duration, upstreamDuration)
+						assert.Equal(t, rate.resolution, upstreamResolution)
+						assert.EqualValues(t, upstreamDuration, gjson.GetBytes(billingInput.Body, "billing.duration_seconds").Int())
+						assert.Equal(t, upstreamResolution, gjson.GetBytes(billingInput.Body, "billing.resolution").String())
+						require.NoError(t, billingexpr.ValidateCanonicalBillingInput(billingInput.Body, fields))
+
+						settlement, err := billingexpr.ComputeTieredQuotaWithRequest(
+							snapshot,
+							billingexpr.TokenParams{},
+							billingInput,
+						)
+						require.NoError(t, err)
+						assert.Equal(t, rate.creditsPerSecond*duration, settlement.ActualQuotaAfterGroup)
+						assert.Equal(t, fmt.Sprintf("%s_%ds", rate.resolution, duration), settlement.MatchedTier)
+					})
+				}
+			}
+		})
+	}
+}
+
+func TestSeedance20CanonicalBillingUsesResolvedDefaultResolution(t *testing.T) {
+	testCases := []struct {
+		model string
+	}{
+		{model: "seedance-2.0-fast-noface"},
+		{model: "seedance-2.0-noface"},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.model, func(t *testing.T) {
+			c := newYoboxBillingTestContext(
+				t,
+				"application/json",
+				strings.NewReader(fmt.Sprintf(`{"model":%q,"prompt":"animate","duration":15}`, testCase.model)),
+			)
+			info := &relaycommon.RelayInfo{
+				OriginModelName: testCase.model,
+				TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+			}
+			adaptor := &TaskAdaptor{}
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+
+			billingInput, err := adaptor.BuildBillingInput(c, info)
+			require.NoError(t, err)
+			req, err := relaycommon.GetTaskRequest(c)
+			require.NoError(t, err)
+			payload, err := adaptor.convertToRequestPayload(&req, info)
+			require.NoError(t, err)
+			upstreamInput := payload.(map[string]any)["input"].(map[string]any)
+
+			assert.Equal(t, "720p", upstreamInput["resolution"])
+			assert.Equal(t, "720p", gjson.GetBytes(billingInput.Body, "billing.resolution").String())
+			assert.EqualValues(t, 15, gjson.GetBytes(billingInput.Body, "billing.duration_seconds").Int())
+			assert.Equal(t, map[string]float64{"seconds": 15}, adaptor.EstimateBilling(c, info))
 		})
 	}
 }

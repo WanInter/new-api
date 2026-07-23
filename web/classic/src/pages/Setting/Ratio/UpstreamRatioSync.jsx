@@ -277,6 +277,7 @@ export default function UpstreamRatioSync(props) {
     'model_price',
     'billing_mode',
     'billing_expr',
+    'billing_schema',
   ];
 
   function getSyncFieldLabel(ratioType) {
@@ -291,6 +292,7 @@ export default function UpstreamRatioSync(props) {
       model_price: t('固定价格'),
       billing_mode: t('计费模式'),
       billing_expr: t('表达式计费'),
+      billing_schema: t('Canonical billing schema'),
     };
     return typeMap[ratioType] || ratioType;
   }
@@ -309,11 +311,12 @@ export default function UpstreamRatioSync(props) {
   function deleteResolutionField(newRes, model, ratioType) {
     if (!newRes[model]) return;
     delete newRes[model][ratioType];
-    if (ratioType === 'billing_expr') {
+    if (
+      ['billing_mode', 'billing_expr', 'billing_schema'].includes(ratioType)
+    ) {
       delete newRes[model].billing_mode;
-    }
-    if (ratioType === 'billing_mode') {
       delete newRes[model].billing_expr;
+      delete newRes[model].billing_schema;
     }
     if (Object.keys(newRes[model]).length === 0) {
       delete newRes[model];
@@ -322,7 +325,11 @@ export default function UpstreamRatioSync(props) {
 
   function getBillingCategory(ratioType) {
     if (ratioType === 'model_price') return 'price';
-    if (ratioType === 'billing_mode' || ratioType === 'billing_expr') {
+    if (
+      ratioType === 'billing_mode' ||
+      ratioType === 'billing_expr' ||
+      ratioType === 'billing_schema'
+    ) {
       return 'tiered';
     }
     return 'ratio';
@@ -332,6 +339,7 @@ export default function UpstreamRatioSync(props) {
     const explicit = {
       billing_mode: 'billing_setting.billing_mode',
       billing_expr: 'billing_setting.billing_expr',
+      billing_schema: 'billing_setting.billing_schema',
     };
     if (explicit[ratioType]) return explicit[ratioType];
     return ratioType
@@ -388,6 +396,12 @@ export default function UpstreamRatioSync(props) {
           }
         });
 
+        if (category !== 'tiered') {
+          delete newModelRes.billing_mode;
+          delete newModelRes.billing_expr;
+          delete newModelRes.billing_schema;
+        }
+
         newModelRes[ratioType] = value;
 
         if (category === 'tiered' && sourceName) {
@@ -395,6 +409,8 @@ export default function UpstreamRatioSync(props) {
             differences[model]?.billing_mode?.upstreams?.[sourceName];
           const exprValue =
             differences[model]?.billing_expr?.upstreams?.[sourceName];
+          const schemaValue =
+            differences[model]?.billing_schema?.upstreams?.[sourceName];
           if (
             modeValue !== undefined &&
             modeValue !== null &&
@@ -404,12 +420,15 @@ export default function UpstreamRatioSync(props) {
           } else if (ratioType === 'billing_expr') {
             newModelRes.billing_mode = 'tiered_expr';
           }
-          if (
-            exprValue !== undefined &&
-            exprValue !== null &&
-            exprValue !== 'same'
-          ) {
+          if (isSelectableUpstreamValue(exprValue)) {
             newModelRes.billing_expr = exprValue;
+          }
+          if (isSelectableUpstreamValue(schemaValue)) {
+            newModelRes.billing_schema = schemaValue;
+          } else if (schemaValue !== 'same') {
+            // An upstream expression without schema is legacy. Persist an empty
+            // entry so the final map removes any stale canonical schema.
+            newModelRes.billing_schema = '';
           }
         }
 
@@ -439,6 +458,9 @@ export default function UpstreamRatioSync(props) {
       ),
       'billing_setting.billing_expr': JSON.parse(
         props.options['billing_setting.billing_expr'] || '{}',
+      ),
+      'billing_setting.billing_schema': JSON.parse(
+        props.options['billing_setting.billing_schema'] || '{}',
       ),
     };
 
@@ -532,6 +554,9 @@ export default function UpstreamRatioSync(props) {
         'billing_setting.billing_expr': {
           ...currentRatios['billing_setting.billing_expr'],
         },
+        'billing_setting.billing_schema': {
+          ...currentRatios['billing_setting.billing_schema'],
+        },
       };
 
       Object.entries(resolutions).forEach(([model, ratios]) => {
@@ -553,6 +578,11 @@ export default function UpstreamRatioSync(props) {
         if (hasRatio) {
           delete finalRatios.ModelPrice[model];
         }
+        if (hasPrice || hasRatio) {
+          delete finalRatios['billing_setting.billing_mode'][model];
+          delete finalRatios['billing_setting.billing_expr'][model];
+          delete finalRatios['billing_setting.billing_schema'][model];
+        }
 
         Object.entries(ratios).forEach(([ratioType, value]) => {
           const optionKey = optionKeyBySyncField(ratioType);
@@ -566,10 +596,26 @@ export default function UpstreamRatioSync(props) {
       showInfo(t('正在同步价格，请稍候'));
       let success = false;
       try {
-        const updates = Object.entries(finalRatios).map(([key, value]) =>
-          API.put('/api/option/', {
-            key,
-            value: JSON.stringify(value, null, 2),
+        const updates = Object.entries(finalRatios)
+          .filter(
+            ([key]) =>
+              ![
+                'billing_setting.billing_mode',
+                'billing_setting.billing_expr',
+                'billing_setting.billing_schema',
+              ].includes(key),
+          )
+          .map(([key, value]) =>
+            API.put('/api/option/', {
+              key,
+              value: JSON.stringify(value, null, 2),
+            }),
+          );
+        updates.push(
+          API.put('/api/option/billing-models', {
+            billing_mode: finalRatios['billing_setting.billing_mode'],
+            billing_expr: finalRatios['billing_setting.billing_expr'],
+            billing_schema: finalRatios['billing_setting.billing_schema'],
           }),
         );
 
@@ -691,6 +737,9 @@ export default function UpstreamRatioSync(props) {
               <Select.Option value='model_price'>{t('固定价格')}</Select.Option>
               <Select.Option value='billing_expr'>
                 {t('表达式计费')}
+              </Select.Option>
+              <Select.Option value='billing_schema'>
+                {t('Canonical billing schema')}
               </Select.Option>
             </Select>
           </div>
@@ -1100,6 +1149,9 @@ export default function UpstreamRatioSync(props) {
             ),
             'billing_setting.billing_expr': JSON.parse(
               props.options['billing_setting.billing_expr'] || '{}',
+            ),
+            'billing_setting.billing_schema': JSON.parse(
+              props.options['billing_setting.billing_schema'] || '{}',
             ),
           };
           try {

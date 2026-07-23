@@ -60,6 +60,34 @@ func GetAllEnableAbilities() []Ability {
 	return abilities
 }
 
+// GetEnabledChannelsForModel returns every enabled channel that can currently
+// route an enabled ability for modelName. It is intentionally model-wide rather
+// than group-specific because billing_setting is model-wide as well.
+func GetEnabledChannelsForModel(modelName string) ([]*Channel, error) {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return []*Channel{}, nil
+	}
+
+	var channelIDs []int
+	if err := DB.Model(&Ability{}).
+		Where("model = ? AND enabled = ?", modelName, true).
+		Distinct("channel_id").
+		Pluck("channel_id", &channelIDs).Error; err != nil {
+		return nil, err
+	}
+	if len(channelIDs) == 0 {
+		return []*Channel{}, nil
+	}
+
+	channels := make([]*Channel, 0, len(channelIDs))
+	if err := DB.Where("id IN ? AND status = ?", channelIDs, common.ChannelStatusEnabled).
+		Find(&channels).Error; err != nil {
+		return nil, err
+	}
+	return channels, nil
+}
+
 type ChannelFilter func(channel *Channel) bool
 
 type channelSelectionExclusions struct {

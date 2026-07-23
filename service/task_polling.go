@@ -1124,6 +1124,12 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 按次计费，跳过差额结算", task.TaskID))
 		return
 	}
+	if bc := task.PrivateData.BillingContext; bc != nil && bc.BillingMode == "tiered_expr" && bc.BillingSchema != "" {
+		if actualQuota, reason, ok := calculateTaskQuotaByCanonicalBilling(task, taskResult); ok {
+			RecalculateTaskQuota(ctx, task, actualQuota, reason)
+		}
+		return
+	}
 	// 1. 优先让 adaptor 决定最终额度
 	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {
 		RecalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整")

@@ -49,6 +49,7 @@ export const SYNC_FIELD_ORDER: RatioType[] = [
   'model_price',
   'billing_mode',
   'billing_expr',
+  'billing_schema',
 ]
 
 export const NUMERIC_SYNC_FIELDS = new Set<string>([
@@ -97,6 +98,6 @@ export function getPreferredSyncField(
 
 export function isSelectableUpstreamValue(
   value: number | string | 'same' | null | undefined
-): boolean {
+): value is number | string {
   return value !== null && value !== undefined && value !== 'same'
 }

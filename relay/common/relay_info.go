@@ -80,6 +80,17 @@ type ChannelMeta struct {
 	SupportStreamOptions bool // 是否支持流式选项
 }
 
+// TaskBillingConfigSnapshot freezes the model-level billing configuration
+// selected after task request validation and channel mapping. It prevents an
+// in-flight task from pairing a canonical request input with an expression or
+// schema saved by an administrator between normalization and pre-consume.
+type TaskBillingConfigSnapshot struct {
+	ModelName string
+	Mode      string
+	Expr      string
+	Schema    string
+}
+
 type TokenCountMeta struct {
 	//promptTokens int
 	estimatePromptTokens int
@@ -167,6 +178,15 @@ type RelayInfo struct {
 	// captured at pre-consume time. Non-nil only when billing mode is "tiered_expr".
 	TieredBillingSnapshot *billingexpr.BillingSnapshot
 	BillingRequestInput   *billingexpr.RequestInput
+	// TaskBillingConfig is set by task relay after request normalization. It is
+	// intentionally transient; BillingSnapshot and TaskBillingContext retain
+	// the audit data required after the task has been submitted.
+	TaskBillingConfig *TaskBillingConfigSnapshot
+	// BillingCanonicalFields is populated only for schema-pinned task billing.
+	// It lets asynchronous settlement validate trusted actual values against the
+	// exact field contract frozen at submission time, without retaining the
+	// original request body or provider-specific field aliases.
+	BillingCanonicalFields []billingexpr.CanonicalBillingField
 
 	Request dto.Request
 
@@ -1056,6 +1076,10 @@ type TaskInfo struct {
 	Progress         string `json:"progress,omitempty"`
 	CompletionTokens int    `json:"completion_tokens,omitempty"` // 用于按倍率计费
 	TotalTokens      int    `json:"total_tokens,omitempty"`      // 用于按倍率计费
+	// ActualBillingInput is a trusted, non-sensitive canonical object produced
+	// by a task adaptor from an upstream response. It must only contain the
+	// declared billing dimensions, never raw request data or credentials.
+	ActualBillingInput map[string]any `json:"actual_billing_input,omitempty"`
 }
 
 func FailTaskInfo(reason string) *TaskInfo {

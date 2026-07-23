@@ -31,6 +31,7 @@ export type ModelPricingSnapshotInput = {
   audioCompletionRatio: string
   billingMode: string
   billingExpr: string
+  billingSchema: string
 }
 
 export type ModelPricingSnapshot = {
@@ -46,6 +47,7 @@ export type ModelPricingSnapshot = {
   billingMode?: string
   billingExpr?: string
   requestRuleExpr?: string
+  billingSchema?: string
   hasConflict: boolean
 }
 
@@ -167,6 +169,7 @@ export const buildModelSnapshots = ({
   audioCompletionRatio,
   billingMode,
   billingExpr,
+  billingSchema,
 }: ModelPricingSnapshotInput): ModelPricingSnapshot[] => {
   const priceMap = safeJsonParse<Record<string, number>>(modelPrice, {
     fallback: {},
@@ -208,6 +211,13 @@ export const buildModelSnapshots = ({
     fallback: {},
     context: 'billing expression',
   })
+  const billingSchemaMap = safeJsonParse<Record<string, string>>(
+    billingSchema,
+    {
+      fallback: {},
+      context: 'billing schema',
+    }
+  )
 
   const modelNames = new Set([
     ...Object.keys(priceMap),
@@ -220,6 +230,7 @@ export const buildModelSnapshots = ({
     ...Object.keys(audioCompletionMap),
     ...Object.keys(billingModeMap),
     ...Object.keys(billingExprMap),
+    ...Object.keys(billingSchemaMap),
   ])
 
   return Array.from(modelNames).map((name) => {
@@ -242,6 +253,7 @@ export const buildModelSnapshots = ({
         billingMode: 'tiered_expr',
         billingExpr: pureExpr,
         requestRuleExpr,
+        billingSchema: billingSchemaMap[name] || '',
         price,
         ratio,
         cacheRatio: cache,
@@ -292,5 +304,6 @@ export const getSnapshotSignature = (snapshot?: ModelPricingSnapshot) => {
     billingMode: snapshot.billingMode || 'per-token',
     billingExpr: snapshot.billingExpr || '',
     requestRuleExpr: snapshot.requestRuleExpr || '',
+    billingSchema: snapshot.billingSchema || '',
   })
 }

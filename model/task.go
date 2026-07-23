@@ -142,6 +142,33 @@ type TaskBillingContext struct {
 	PricingRuleId     int                `json:"pricing_rule_id,omitempty"`     // 命中的精确计费规则
 	PricingRuleSource string             `json:"pricing_rule_source,omitempty"` // 计费规则来源
 	PerCallBilling    bool               `json:"per_call_billing,omitempty"`    // 按次计费：跳过轮询阶段的差额结算
+	// Tiered task-billing audit snapshot. These fields deliberately contain
+	// only expression metadata and canonical provider-produced values; never
+	// persist the original request body, headers, or upstream credentials.
+	BillingMode                string                      `json:"billing_mode,omitempty"`
+	BillingSchema              string                      `json:"billing_schema,omitempty"`
+	BillingExpr                string                      `json:"billing_expr,omitempty"`
+	BillingExprHash            string                      `json:"billing_expr_hash,omitempty"`
+	BillingExprVersion         int                         `json:"billing_expr_version,omitempty"`
+	QuotaPerUnit               float64                     `json:"quota_per_unit,omitempty"`
+	EstimatedTier              string                      `json:"estimated_tier,omitempty"`
+	MatchedTier                string                      `json:"matched_tier,omitempty"`
+	CanonicalBillingInput      json.RawMessage             `json:"canonical_billing_input,omitempty"`
+	ActualBillingInput         json.RawMessage             `json:"actual_billing_input,omitempty"`
+	CanonicalBillingFieldPaths []string                    `json:"canonical_billing_field_paths,omitempty"`
+	CanonicalBillingFields     []TaskBillingCanonicalField `json:"canonical_billing_fields,omitempty"`
+	PreConsumedQuota           int                         `json:"pre_consumed_quota,omitempty"`
+	FinalQuota                 int                         `json:"final_quota,omitempty"`
+}
+
+// TaskBillingCanonicalField is the immutable schema fragment saved with a
+// schema-pinned task. Keeping it with the task means asynchronous settlement
+// never has to infer semantics from a newer channel configuration.
+type TaskBillingCanonicalField struct {
+	Path       string   `json:"path"`
+	Type       string   `json:"type"`
+	Required   bool     `json:"required"`
+	EnumValues []string `json:"enum_values,omitempty"`
 }
 
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）

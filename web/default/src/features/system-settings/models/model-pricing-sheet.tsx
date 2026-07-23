@@ -22,6 +22,7 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
+  useRef,
   useState,
 } from 'react'
 import { useForm } from 'react-hook-form'
@@ -61,6 +62,19 @@ import {
 } from '@/components/ui/sheet'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { sideDrawerContentClassName } from '@/components/drawer-layout'
+import {
+  areCanonicalRatesComplete,
+  buildCanonicalVideoExpr,
+  extractCanonicalVideoRates,
+  getCanonicalVideoDimensions,
+  isCanonicalVideoAvailable,
+  type CanonicalVideoRates,
+} from './canonical-video-billing'
+import { CanonicalVideoBillingEditor } from './canonical-video-billing-editor'
+import {
+  getBillingCapability,
+  type BillingCapability,
+} from './model-billing-api'
 import {
   EMPTY_LANE_ENABLED,
   EMPTY_LANE_PRICES,
@@ -153,6 +167,14 @@ export const ModelPricingEditorPanel = forwardRef<
   })
   const [billingExpr, setBillingExpr] = useState('')
   const [requestRuleExpr, setRequestRuleExpr] = useState('')
+  const [billingCapability, setBillingCapability] =
+    useState<BillingCapability | null>(null)
+  const [billingCapabilityError, setBillingCapabilityError] = useState('')
+  const [billingCapabilityLoading, setBillingCapabilityLoading] =
+    useState(false)
+  const [canonicalVideoBilling, setCanonicalVideoBilling] = useState(false)
+  const [canonicalRates, setCanonicalRates] = useState<CanonicalVideoRates>({})
+  const billingCapabilityRequestRef = useRef(0)
   const isEditMode = !!editData
 
   const form = useForm<ModelPricingFormValues>({
@@ -194,6 +216,8 @@ export const ModelPricingEditorPanel = forwardRef<
       )
       setBillingExpr(editData.billingExpr || '')
       setRequestRuleExpr(editData.requestRuleExpr || '')
+      setCanonicalVideoBilling(Boolean(editData.billingSchema))
+      setCanonicalRates({})
     } else {
       form.reset({
         name: '',
@@ -209,12 +233,59 @@ export const ModelPricingEditorPanel = forwardRef<
       setPricingMode('per-token')
       setBillingExpr('')
       setRequestRuleExpr('')
+      setCanonicalVideoBilling(false)
+      setCanonicalRates({})
     }
 
     setPromptPrice(nextLaneState.promptPrice)
     setLanePrices(nextLaneState.prices)
     setLaneEnabled(nextLaneState.enabled)
   }, [editData, form])
+
+  const watchedValues = form.watch()
+  const modelName = watchedValues.name.trim()
+
+  useEffect(() => {
+    const requestId = ++billingCapabilityRequestRef.current
+    if (!modelName) {
+      setBillingCapability(null)
+      setBillingCapabilityError('')
+      setBillingCapabilityLoading(false)
+      return
+    }
+
+    setBillingCapabilityLoading(true)
+    setBillingCapabilityError('')
+    getBillingCapability(modelName)
+      .then((response) => {
+        if (billingCapabilityRequestRef.current !== requestId) return
+        if (!response.success || !response.data) {
+          setBillingCapability(null)
+          setBillingCapabilityError(response.message || t('Request failed'))
+          return
+        }
+        setBillingCapability(response.data)
+      })
+      .catch((error: unknown) => {
+        if (billingCapabilityRequestRef.current !== requestId) return
+        setBillingCapability(null)
+        setBillingCapabilityError(
+          error instanceof Error ? error.message : t('Request failed')
+        )
+      })
+      .finally(() => {
+        if (billingCapabilityRequestRef.current === requestId) {
+          setBillingCapabilityLoading(false)
+        }
+      })
+  }, [modelName, t])
+
+  useEffect(() => {
+    if (!billingCapability || !editData?.billingSchema) return
+    setCanonicalRates(
+      extractCanonicalVideoRates(editData.billingExpr || '', billingCapability)
+    )
+  }, [billingCapability, editData?.billingExpr, editData?.billingSchema])
 
   const setFormValue = (field: keyof ModelPricingFormValues, value: string) => {
     form.setValue(field, value, {
@@ -331,31 +402,46 @@ export const ModelPricingEditorPanel = forwardRef<
   const handleModeChange = (value: string) => {
     const nextMode = value as PricingMode
     setPricingMode(nextMode)
+    if (nextMode !== 'tiered_expr') {
+      setCanonicalVideoBilling(false)
+    }
     if (nextMode === 'tiered_expr' && !billingExpr) {
       setBillingExpr('tier("base", p * 0 + c * 0)')
     }
   }
 
-  const watchedValues = form.watch()
+  const effectiveCanonicalExpr = useMemo(
+    () =>
+      canonicalVideoBilling && billingCapability
+        ? buildCanonicalVideoExpr(billingCapability, canonicalRates)
+        : '',
+    [billingCapability, canonicalRates, canonicalVideoBilling]
+  )
+  const effectiveBillingExpr =
+    canonicalVideoBilling && effectiveCanonicalExpr
+      ? effectiveCanonicalExpr
+      : billingExpr
+  const effectiveRequestRuleExpr = canonicalVideoBilling ? '' : requestRuleExpr
+
   const previewRows = useMemo(
     () =>
       buildPreviewRows(
         watchedValues,
         pricingMode,
-        billingExpr,
-        requestRuleExpr,
+        effectiveBillingExpr,
+        effectiveRequestRuleExpr,
         promptPrice,
         lanePrices,
         laneEnabled,
         t
       ),
     [
-      billingExpr,
+      effectiveBillingExpr,
+      effectiveRequestRuleExpr,
       laneEnabled,
       lanePrices,
       pricingMode,
       promptPrice,
-      requestRuleExpr,
       t,
       watchedValues,
     ]
@@ -407,6 +493,24 @@ export const ModelPricingEditorPanel = forwardRef<
   }, [editData, laneEnabled, lanePrices, pricingMode, promptPrice, t])
 
   const validatePricingValues = useCallback(() => {
+    if (pricingMode === 'tiered_expr' && canonicalVideoBilling) {
+      const { resolutions } = getCanonicalVideoDimensions(billingCapability)
+      if (!billingCapability || !isCanonicalVideoAvailable(billingCapability)) {
+        form.setError('ratio', {
+          message: t('Canonical video billing is unavailable for this model.'),
+        })
+        return false
+      }
+      if (!areCanonicalRatesComplete(canonicalRates, resolutions)) {
+        form.setError('ratio', {
+          message: t(
+            'Set a per-second credit price for every supported resolution.'
+          ),
+        })
+        return false
+      }
+    }
+
     if (
       pricingMode === 'per-token' &&
       toNumberOrNull(promptPrice) === null &&
@@ -432,7 +536,31 @@ export const ModelPricingEditorPanel = forwardRef<
     }
 
     return true
-  }, [form, laneEnabled, lanePrices, pricingMode, promptPrice, t])
+  }, [
+    billingCapability,
+    canonicalRates,
+    canonicalVideoBilling,
+    form,
+    laneEnabled,
+    lanePrices,
+    pricingMode,
+    promptPrice,
+    t,
+  ])
+
+  const handleCanonicalVideoBillingChange = (enabled: boolean) => {
+    if (enabled && billingCapability) {
+      const { resolutions } = getCanonicalVideoDimensions(billingCapability)
+      setCanonicalRates((previous) =>
+        resolutions.reduce<CanonicalVideoRates>((next, resolution) => {
+          next[resolution] = previous[resolution] || ''
+          return next
+        }, {})
+      )
+      setRequestRuleExpr('')
+    }
+    setCanonicalVideoBilling(enabled)
+  }
 
   const buildSubmitData = useCallback(
     (values: ModelPricingFormValues) => {
@@ -450,13 +578,22 @@ export const ModelPricingEditorPanel = forwardRef<
       }
 
       if (pricingMode === 'tiered_expr') {
-        data.billingExpr = billingExpr
-        data.requestRuleExpr = requestRuleExpr
+        data.billingExpr = effectiveBillingExpr
+        data.requestRuleExpr = effectiveRequestRuleExpr
+        data.billingSchema = canonicalVideoBilling
+          ? billingCapability?.schema_version || ''
+          : ''
       }
 
       return data
     },
-    [billingExpr, pricingMode, requestRuleExpr]
+    [
+      billingCapability?.schema_version,
+      canonicalVideoBilling,
+      effectiveBillingExpr,
+      effectiveRequestRuleExpr,
+      pricingMode,
+    ]
   )
 
   useImperativeHandle(
@@ -637,13 +774,24 @@ export const ModelPricingEditorPanel = forwardRef<
 
                   <TabsContent value='tiered_expr' className='pt-0'>
                     <FieldGroup className='gap-5'>
-                      <TieredPricingEditor
-                        modelName={watchedValues.name}
-                        billingExpr={billingExpr}
-                        requestRuleExpr={requestRuleExpr}
-                        onBillingExprChange={setBillingExpr}
-                        onRequestRuleExprChange={setRequestRuleExpr}
+                      <CanonicalVideoBillingEditor
+                        capability={billingCapability}
+                        capabilityError={billingCapabilityError}
+                        isLoading={billingCapabilityLoading}
+                        enabled={canonicalVideoBilling}
+                        rates={canonicalRates}
+                        onEnabledChange={handleCanonicalVideoBillingChange}
+                        onRatesChange={setCanonicalRates}
                       />
+                      {!canonicalVideoBilling && (
+                        <TieredPricingEditor
+                          modelName={watchedValues.name}
+                          billingExpr={billingExpr}
+                          requestRuleExpr={requestRuleExpr}
+                          onBillingExprChange={setBillingExpr}
+                          onRequestRuleExprChange={setRequestRuleExpr}
+                        />
+                      )}
                     </FieldGroup>
                   </TabsContent>
                 </Tabs>

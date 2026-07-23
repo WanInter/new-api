@@ -42,6 +42,7 @@ const EMPTY_MODEL = {
   audioOutputPrice: '',
   billingExpr: '',
   requestRuleExpr: '',
+  billingSchema: '',
   rawRatios: {
     modelRatio: '',
     completionRatio: '',
@@ -133,6 +134,7 @@ const buildModelState = (name, sourceMaps) => {
       billingMode: 'tiered_expr',
       billingExpr,
       requestRuleExpr,
+      billingSchema: sourceMaps.ModelBillingSchema?.[name] || '',
       rawRatios: { ...EMPTY_MODEL.rawRatios },
       hasConflict: false,
     };
@@ -225,7 +227,8 @@ const buildModelState = (name, sourceMaps) => {
 
 export const isBasePricingUnset = (model) =>
   model.billingMode !== 'tiered_expr' &&
-  !hasValue(model.fixedPrice) && !hasValue(model.inputPrice);
+  !hasValue(model.fixedPrice) &&
+  !hasValue(model.inputPrice);
 
 export const getModelWarnings = (model, t) => {
   if (!model) {
@@ -291,8 +294,8 @@ export const getModelWarnings = (model, t) => {
 export const buildSummaryText = (model, t) => {
   const requestRuleSuffix =
     model.billingMode === 'tiered_expr' && model.requestRuleExpr
-    ? `，${t('请求规则')}`
-    : '';
+      ? `，${t('请求规则')}`
+      : '';
   if (model.billingMode === 'tiered_expr') {
     const expr = model.billingExpr;
     if (!expr) return `${t('表达式计费')}${requestRuleSuffix}`;
@@ -646,8 +649,15 @@ export function useModelPricingEditorState({
       ImageRatio: parseOptionJSON(options.ImageRatio),
       AudioRatio: parseOptionJSON(options.AudioRatio),
       AudioCompletionRatio: parseOptionJSON(options.AudioCompletionRatio),
-      ModelBillingMode: parseOptionJSON(options['billing_setting.billing_mode']),
-      ModelBillingExpr: parseOptionJSON(options['billing_setting.billing_expr']),
+      ModelBillingMode: parseOptionJSON(
+        options['billing_setting.billing_mode'],
+      ),
+      ModelBillingExpr: parseOptionJSON(
+        options['billing_setting.billing_expr'],
+      ),
+      ModelBillingSchema: parseOptionJSON(
+        options['billing_setting.billing_schema'],
+      ),
     };
 
     const names = new Set([
@@ -663,6 +673,7 @@ export function useModelPricingEditorState({
       ...Object.keys(sourceMaps.AudioCompletionRatio),
       ...Object.keys(sourceMaps.ModelBillingMode),
       ...Object.keys(sourceMaps.ModelBillingExpr),
+      ...Object.keys(sourceMaps.ModelBillingSchema),
     ]);
 
     const nextModels = Array.from(names)
@@ -879,6 +890,9 @@ export function useModelPricingEditorState({
       if (value === 'tiered_expr' && !model.billingExpr) {
         next.billingExpr = 'tier("base", p * 0 + c * 0)';
       }
+      if (value !== 'tiered_expr') {
+        next.billingSchema = '';
+      }
       return next;
     });
   };
@@ -896,6 +910,16 @@ export function useModelPricingEditorState({
     upsertModel(selectedModel.name, (model) => ({
       ...model,
       requestRuleExpr: newExpr,
+    }));
+  };
+
+  const handleCanonicalBillingChange = ({ billingExpr, billingSchema }) => {
+    if (!selectedModel) return;
+    upsertModel(selectedModel.name, (model) => ({
+      ...model,
+      billingExpr,
+      billingSchema,
+      requestRuleExpr: '',
     }));
   };
 
@@ -949,6 +973,10 @@ export function useModelPricingEditorState({
     }
     if (selectedModelNames.length === 0) {
       showError(t('请先勾选需要批量设置的模型'));
+      return false;
+    }
+    if (selectedModel.billingSchema) {
+      showError(t('Canonical video pricing cannot be copied between models.'));
       return false;
     }
 
@@ -1037,6 +1065,7 @@ export function useModelPricingEditorState({
       const tieredOutput = {
         'billing_setting.billing_mode': {},
         'billing_setting.billing_expr': {},
+        'billing_setting.billing_schema': {},
       };
 
       for (const model of models) {
@@ -1046,8 +1075,14 @@ export function useModelPricingEditorState({
             model.requestRuleExpr,
           );
           if (finalBillingExpr) {
-            tieredOutput['billing_setting.billing_mode'][model.name] = 'tiered_expr';
-            tieredOutput['billing_setting.billing_expr'][model.name] = finalBillingExpr;
+            tieredOutput['billing_setting.billing_mode'][model.name] =
+              'tiered_expr';
+            tieredOutput['billing_setting.billing_expr'][model.name] =
+              finalBillingExpr;
+            if (model.billingSchema) {
+              tieredOutput['billing_setting.billing_schema'][model.name] =
+                model.billingSchema;
+            }
           }
         }
 
@@ -1069,6 +1104,14 @@ export function useModelPricingEditorState({
         }
       }
 
+      const billingRequests = [
+        API.put('/api/option/billing-models', {
+          billing_mode: tieredOutput['billing_setting.billing_mode'],
+          billing_expr: tieredOutput['billing_setting.billing_expr'],
+          billing_schema: tieredOutput['billing_setting.billing_schema'],
+        }),
+      ];
+
       const requestQueue = [
         ...Object.entries(output).map(([key, value]) =>
           API.put('/api/option/', {
@@ -1076,12 +1119,7 @@ export function useModelPricingEditorState({
             value: JSON.stringify(value, null, 2),
           }),
         ),
-        ...Object.entries(tieredOutput).map(([key, value]) =>
-          API.put('/api/option/', {
-            key,
-            value: JSON.stringify(value, null, 2),
-          }),
-        ),
+        ...billingRequests,
       ];
 
       const results = await Promise.all(requestQueue);
@@ -1125,6 +1163,7 @@ export function useModelPricingEditorState({
     handleBillingModeChange,
     handleBillingExprChange,
     handleRequestRuleExprChange,
+    handleCanonicalBillingChange,
     handleSubmit,
     addModel,
     deleteModel,

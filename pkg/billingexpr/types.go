@@ -38,6 +38,7 @@ type TraceResult struct {
 // It is fully serializable and contains no compiled program pointers.
 type BillingSnapshot struct {
 	BillingMode               string  `json:"billing_mode"`
+	BillingSchema             string  `json:"billing_schema,omitempty"`
 	ModelName                 string  `json:"model_name"`
 	ExprString                string  `json:"expr_string"`
 	ExprHash                  string  `json:"expr_hash"`

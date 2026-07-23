@@ -51,9 +51,11 @@ import {
   NUMERIC_SYNC_FIELDS,
   RATIO_SYNC_FIELDS,
   getPreferredSyncField,
+  isSelectableUpstreamValue,
   type ResolutionsMap,
 } from './upstream-ratio-sync-helpers'
 import { UpstreamRatioSyncTable } from './upstream-ratio-sync-table'
+import { saveBillingModels } from './model-billing-api'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -71,8 +73,21 @@ type UpstreamRatioSyncProps = {
     AudioCompletionRatio: string
     'billing_setting.billing_mode': string
     'billing_setting.billing_expr': string
+    'billing_setting.billing_schema': string
   }
 }
+
+const BILLING_SYNC_FIELDS = new Set<RatioType>([
+  'billing_mode',
+  'billing_expr',
+  'billing_schema',
+])
+
+const BILLING_OPTION_KEYS = new Set([
+  'billing_setting.billing_mode',
+  'billing_setting.billing_expr',
+  'billing_setting.billing_schema',
+])
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -90,7 +105,11 @@ function getDefaultEndpointForChannel(channel: UpstreamChannel): string {
 
 function getBillingCategory(ratioType: string): 'price' | 'ratio' | 'tiered' {
   if (ratioType === 'model_price') return 'price'
-  if (ratioType === 'billing_mode' || ratioType === 'billing_expr')
+  if (
+    ratioType === 'billing_mode' ||
+    ratioType === 'billing_expr' ||
+    ratioType === 'billing_schema'
+  )
     return 'tiered'
   return 'ratio'
 }
@@ -99,6 +118,7 @@ function optionKeyBySyncField(ratioType: string): string {
   const explicit: Record<string, string> = {
     billing_mode: 'billing_setting.billing_mode',
     billing_expr: 'billing_setting.billing_expr',
+    billing_schema: 'billing_setting.billing_schema',
   }
   if (explicit[ratioType]) return explicit[ratioType]
   return ratioType
@@ -123,8 +143,11 @@ function deleteResolutionField(
   if (!res[model]) return res
   const newModelRes = { ...res[model] }
   delete newModelRes[ratioType]
-  if (ratioType === 'billing_expr') delete newModelRes['billing_mode']
-  if (ratioType === 'billing_mode') delete newModelRes['billing_expr']
+  if (BILLING_SYNC_FIELDS.has(ratioType as RatioType)) {
+    delete newModelRes['billing_mode']
+    delete newModelRes['billing_expr']
+    delete newModelRes['billing_schema']
+  }
   const next = { ...res }
   if (Object.keys(newModelRes).length === 0) {
     delete next[model]
@@ -212,9 +235,26 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
   })
 
   const { mutate: syncMutate, isPending: isSyncPending } = useMutation({
-    mutationFn: async (updates: Array<{ key: string; value: string }>) => {
+    mutationFn: async ({
+      updates,
+      billingModels,
+    }: {
+      updates: Array<{ key: string; value: string }>
+      billingModels: {
+        billing_mode: Record<string, string>
+        billing_expr: Record<string, string>
+        billing_schema: Record<string, string>
+      }
+    }) => {
+      const billingResult = await saveBillingModels(billingModels)
+      if (!billingResult.success) {
+        throw new Error(billingResult.message || t('Failed to sync prices'))
+      }
       for (const update of updates) {
-        await updateSystemOption(update)
+        const result = await updateSystemOption(update)
+        if (!result.success) {
+          throw new Error(result.message || t('Failed to sync prices'))
+        }
       }
     },
     onSuccess: () => {
@@ -303,19 +343,33 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
           }
         })
 
+        if (category !== 'tiered') {
+          delete newModelRes['billing_mode']
+          delete newModelRes['billing_expr']
+          delete newModelRes['billing_schema']
+        }
+
         newModelRes[finalType] = finalValue
 
         // When selecting a tiered field, auto-populate paired fields from the same source
         if (category === 'tiered' && sourceName && modelDiffs) {
           const modeVal = modelDiffs.billing_mode?.upstreams?.[sourceName]
           const exprVal = modelDiffs.billing_expr?.upstreams?.[sourceName]
+          const schemaVal = modelDiffs.billing_schema?.upstreams?.[sourceName]
           if (modeVal !== undefined && modeVal !== null && modeVal !== 'same') {
             newModelRes['billing_mode'] = modeVal
           } else if (finalType === 'billing_expr') {
             newModelRes['billing_mode'] = 'tiered_expr'
           }
-          if (exprVal !== undefined && exprVal !== null && exprVal !== 'same') {
+          if (isSelectableUpstreamValue(exprVal)) {
             newModelRes['billing_expr'] = exprVal
+          }
+          if (isSelectableUpstreamValue(schemaVal)) {
+            newModelRes['billing_schema'] = schemaVal
+          } else if (schemaVal !== 'same') {
+            // An upstream expression without schema is legacy. Persist an empty
+            // entry so the final map removes any stale canonical schema.
+            newModelRes['billing_schema'] = ''
           }
         }
 
@@ -349,6 +403,9 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
       ),
       'billing_setting.billing_expr': parseJsonRecord<string>(
         modelRatios['billing_setting.billing_expr']
+      ),
+      'billing_setting.billing_schema': parseJsonRecord<string>(
+        modelRatios['billing_setting.billing_schema']
       ),
     }
   }, [modelRatios])
@@ -390,6 +447,9 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
         'billing_setting.billing_expr': {
           ...currentRatios['billing_setting.billing_expr'],
         },
+        'billing_setting.billing_schema': {
+          ...currentRatios['billing_setting.billing_schema'],
+        },
       }
 
       Object.entries(resolutions).forEach(([model, ratios]) => {
@@ -411,6 +471,11 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
         if (hasRatio) {
           delete finalRatios.ModelPrice[model]
         }
+        if (hasPrice || hasRatio) {
+          delete finalRatios['billing_setting.billing_mode'][model]
+          delete finalRatios['billing_setting.billing_expr'][model]
+          delete finalRatios['billing_setting.billing_schema'][model]
+        }
 
         Object.entries(ratios).forEach(([ratioType, value]) => {
           const optionKey = optionKeyBySyncField(ratioType)
@@ -420,13 +485,29 @@ export function UpstreamRatioSync({ modelRatios }: UpstreamRatioSyncProps) {
         })
       })
 
-      const updates = Object.entries(finalRatios).map(([key, value]) => ({
-        key,
-        value: JSON.stringify(value, null, 2),
-      }))
+      const updates = Object.entries(finalRatios)
+        .filter(([key]) => !BILLING_OPTION_KEYS.has(key))
+        .map(([key, value]) => ({
+          key,
+          value: JSON.stringify(value, null, 2),
+        }))
+
+      const billingModels = {
+        billing_mode: finalRatios['billing_setting.billing_mode'] as Record<
+          string,
+          string
+        >,
+        billing_expr: finalRatios['billing_setting.billing_expr'] as Record<
+          string,
+          string
+        >,
+        billing_schema: finalRatios[
+          'billing_setting.billing_schema'
+        ] as Record<string, string>,
+      }
 
       return new Promise<boolean>((resolve) => {
-        syncMutate(updates, {
+        syncMutate({ updates, billingModels }, {
           onSuccess: () => resolve(true),
           onError: () => resolve(false),
         })

@@ -3,12 +3,14 @@ package service
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -54,6 +56,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = info.UpstreamModelName
 	}
+	appendTaskTieredBillingAudit(other, info)
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
 		ModelName: info.OriginModelName,
@@ -66,6 +69,26 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
+}
+
+// appendTaskTieredBillingAudit records the frozen task billing contract at
+// submission time. Request input is only exposed when it is the schema-pinned
+// canonical object, never the client's original body or headers.
+func appendTaskTieredBillingAudit(other map[string]interface{}, info *relaycommon.RelayInfo) {
+	if other == nil || info == nil || info.TieredBillingSnapshot == nil {
+		return
+	}
+	snapshot := info.TieredBillingSnapshot
+	InjectTieredBillingInfo(other, info, &billingexpr.TieredResult{MatchedTier: snapshot.EstimatedTier})
+	other["estimated_quota"] = snapshot.EstimatedQuotaAfterGroup
+	other["pre_consumed_quota"] = info.FinalPreConsumedQuota
+	other["final_quota"] = info.PriceData.Quota
+	if snapshot.BillingSchema == "" || info.BillingRequestInput == nil {
+		return
+	}
+	if input := canonicalBillingInputMap(info.BillingRequestInput.Body); input != nil {
+		other["canonical_billing_input"] = input
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +146,10 @@ func taskAdjustTokenQuota(ctx context.Context, task *model.Task, delta int) {
 // taskBillingOther 从 task 的 BillingContext 构建日志 Other 字段。
 func taskBillingOther(task *model.Task) map[string]interface{} {
 	other := make(map[string]interface{})
+	if task == nil {
+		return other
+	}
+	appendTaskBillingContextAudit(other, task.PrivateData.BillingContext)
 	if bc := task.PrivateData.BillingContext; bc != nil {
 		other["model_price"] = bc.ModelPrice
 		if bc.ModelRatio > 0 {
@@ -147,6 +174,93 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 	return other
 }
 
+func appendTaskBillingContextAudit(other map[string]interface{}, billingContext *model.TaskBillingContext) {
+	if other == nil || billingContext == nil || billingContext.BillingMode == "" {
+		return
+	}
+	other["billing_mode"] = billingContext.BillingMode
+	if billingContext.BillingSchema != "" {
+		other["billing_schema"] = billingContext.BillingSchema
+	}
+	if billingContext.BillingExprHash != "" {
+		other["expr_hash"] = billingContext.BillingExprHash
+	}
+	if billingContext.BillingExprVersion != 0 {
+		other["expr_version"] = billingContext.BillingExprVersion
+	}
+	if billingContext.EstimatedTier != "" {
+		other["estimated_tier"] = billingContext.EstimatedTier
+	}
+	if billingContext.MatchedTier != "" {
+		other["matched_tier"] = billingContext.MatchedTier
+	}
+	if input := canonicalBillingInputMap(billingContext.CanonicalBillingInput); input != nil {
+		other["canonical_billing_input"] = input
+	}
+	if input := canonicalBillingInputMap(billingContext.ActualBillingInput); input != nil {
+		other["actual_billing_input"] = input
+	}
+	other["pre_consumed_quota"] = billingContext.PreConsumedQuota
+	other["final_quota"] = billingContext.FinalQuota
+}
+
+func canonicalBillingInputMap(raw []byte) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var root map[string]any
+	if err := common.Unmarshal(raw, &root); err != nil || len(root) != 1 {
+		return nil
+	}
+	billing, ok := root["billing"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	result := make(map[string]any, len(billing))
+	for key, value := range billing {
+		if strings.TrimSpace(key) == "" || !isSafeCanonicalBillingValue(value) {
+			return nil
+		}
+		result[key] = value
+	}
+	return map[string]any{"billing": result}
+}
+
+func isSafeCanonicalBillingValue(value any) bool {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed) != ""
+	case bool:
+		return true
+	case float64:
+		return !math.IsNaN(typed) && !math.IsInf(typed, 0)
+	case float32:
+		return !math.IsNaN(float64(typed)) && !math.IsInf(float64(typed), 0)
+	case int:
+		return true
+	case int8:
+		return true
+	case int16:
+		return true
+	case int32:
+		return true
+	case int64:
+		return true
+	case uint:
+		return true
+	case uint8:
+		return true
+	case uint16:
+		return true
+	case uint32:
+		return true
+	case uint64:
+		return true
+	default:
+		return false
+	}
+}
+
 // taskModelName 从 BillingContext 或 Properties 中获取模型名称。
 func taskModelName(task *model.Task) string {
 	if bc := task.PrivateData.BillingContext; bc != nil && bc.OriginModelName != "" {
@@ -163,12 +277,27 @@ func setTaskBillingIntent(task *model.Task, finalQuota int, reason string) {
 	task.BillingFinalQuota = finalQuota
 	task.BillingDelta = finalQuota - task.Quota
 	task.BillingReason = strings.TrimSpace(reason)
+	if billingContext := task.PrivateData.BillingContext; billingContext != nil {
+		billingContext.FinalQuota = finalQuota
+	}
 }
 
 func prepareTaskBillingIntent(adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
 	finalQuota := task.Quota
 	reason := "任务完成，保持预扣额度"
 	if bc := task.PrivateData.BillingContext; bc != nil && bc.PerCallBilling {
+		setTaskBillingIntent(task, finalQuota, reason)
+		return
+	}
+	if bc := task.PrivateData.BillingContext; bc != nil && bc.BillingMode == "tiered_expr" && bc.BillingSchema != "" {
+		if actualQuota, settlementReason, ok := calculateTaskQuotaByCanonicalBilling(task, taskResult); ok {
+			setTaskBillingIntent(task, actualQuota, settlementReason)
+			return
+		}
+		// A schema-pinned task must never fall back to a provider ratio helper:
+		// that would reintroduce provider-specific parsing after canonical pricing
+		// has been frozen. Preserve its pre-charge if a trusted actual input is
+		// unavailable or invalid.
 		setTaskBillingIntent(task, finalQuota, reason)
 		return
 	}
@@ -183,6 +312,124 @@ func prepareTaskBillingIntent(adaptor TaskPollingAdaptor, task *model.Task, task
 		}
 	}
 	setTaskBillingIntent(task, finalQuota, reason)
+}
+
+func calculateTaskQuotaByCanonicalBilling(task *model.Task, taskResult *relaycommon.TaskInfo) (int, string, bool) {
+	if task == nil || taskResult == nil {
+		return 0, "", false
+	}
+	billingContext := task.PrivateData.BillingContext
+	if billingContext == nil || billingContext.BillingMode != "tiered_expr" || billingContext.BillingSchema == "" || strings.TrimSpace(billingContext.BillingExpr) == "" {
+		return 0, "", false
+	}
+	input, actualInput, err := mergeTaskCanonicalBillingInput(billingContext, taskResult.ActualBillingInput)
+	if err != nil {
+		return 0, "", false
+	}
+	quotaPerUnit := billingContext.QuotaPerUnit
+	if quotaPerUnit <= 0 {
+		quotaPerUnit = common.QuotaPerUnit
+	}
+	expressionHash := billingContext.BillingExprHash
+	if expressionHash == "" {
+		expressionHash = billingexpr.ExprHashString(billingContext.BillingExpr)
+	}
+	snapshot := &billingexpr.BillingSnapshot{
+		BillingMode:   billingContext.BillingMode,
+		BillingSchema: billingContext.BillingSchema,
+		ModelName:     billingContext.OriginModelName,
+		ExprString:    billingContext.BillingExpr,
+		ExprHash:      expressionHash,
+		GroupRatio:    billingContext.GroupRatio,
+		EstimatedTier: billingContext.EstimatedTier,
+		QuotaPerUnit:  quotaPerUnit,
+		ExprVersion:   billingContext.BillingExprVersion,
+	}
+	result, err := billingexpr.ComputeTieredQuotaWithRequest(snapshot, billingexpr.TokenParams{}, billingexpr.RequestInput{Body: input})
+	if err != nil || result.ActualQuotaAfterGroup < 0 {
+		return 0, "", false
+	}
+	billingContext.MatchedTier = result.MatchedTier
+	billingContext.FinalQuota = result.ActualQuotaAfterGroup
+	if actualInput != nil {
+		billingContext.ActualBillingInput = actualInput
+	}
+	reason := fmt.Sprintf("规范计费结算：schema=%s, tier=%s", billingContext.BillingSchema, result.MatchedTier)
+	return result.ActualQuotaAfterGroup, reason, true
+}
+func mergeTaskCanonicalBillingInput(billingContext *model.TaskBillingContext, actual map[string]any) ([]byte, []byte, error) {
+	base := canonicalBillingInputMap(billingContext.CanonicalBillingInput)
+	if base == nil {
+		return nil, nil, fmt.Errorf("missing canonical billing input")
+	}
+	billing := base["billing"].(map[string]any)
+	if len(actual) == 0 {
+		body, err := common.Marshal(base)
+		return body, nil, err
+	}
+	actualBody, err := common.Marshal(actual)
+	if err != nil {
+		return nil, nil, err
+	}
+	actualCanonical := canonicalBillingInputMap(actualBody)
+	if actualCanonical == nil {
+		return nil, nil, fmt.Errorf("invalid actual canonical billing input")
+	}
+	allowedFields := make(map[string]struct{}, len(billingContext.CanonicalBillingFields)+len(billingContext.CanonicalBillingFieldPaths))
+	for _, field := range billingContext.CanonicalBillingFields {
+		path := strings.TrimSpace(field.Path)
+		if strings.HasPrefix(path, "billing.") {
+			allowedFields[strings.TrimPrefix(path, "billing.")] = struct{}{}
+		}
+	}
+	for _, path := range billingContext.CanonicalBillingFieldPaths {
+		path = strings.TrimSpace(path)
+		if strings.HasPrefix(path, "billing.") {
+			allowedFields[strings.TrimPrefix(path, "billing.")] = struct{}{}
+		}
+	}
+	if len(allowedFields) == 0 {
+		for key := range billing {
+			allowedFields[key] = struct{}{}
+		}
+	}
+	actualBilling := actualCanonical["billing"].(map[string]any)
+	for key, value := range actualBilling {
+		if _, ok := allowedFields[key]; !ok {
+			return nil, nil, fmt.Errorf("actual canonical billing input contains undeclared field %q", key)
+		}
+		billing[key] = value
+	}
+	mergedBody, err := common.Marshal(base)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := validateTaskCanonicalBillingInput(billingContext, mergedBody); err != nil {
+		return nil, nil, err
+	}
+	return mergedBody, mergedBody, nil
+}
+
+func validateTaskCanonicalBillingInput(billingContext *model.TaskBillingContext, body []byte) error {
+	if billingContext == nil {
+		return fmt.Errorf("missing canonical billing context")
+	}
+	if len(billingContext.CanonicalBillingFields) == 0 {
+		// Tasks created before the field contract was persisted have already had
+		// their allowed paths checked by mergeTaskCanonicalBillingInput. Do not
+		// infer types or enum values from a live channel configuration.
+		return nil
+	}
+	fields := make([]billingexpr.CanonicalBillingField, 0, len(billingContext.CanonicalBillingFields))
+	for _, field := range billingContext.CanonicalBillingFields {
+		fields = append(fields, billingexpr.CanonicalBillingField{
+			Path:       field.Path,
+			Type:       field.Type,
+			Required:   field.Required,
+			EnumValues: append([]string(nil), field.EnumValues...),
+		})
+	}
+	return billingexpr.ValidateCanonicalBillingInput(body, fields)
 }
 
 func processPendingTaskBilling(ctx context.Context, taskID int64) error {
@@ -309,6 +556,9 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	taskAdjustTokenQuota(ctx, task, quotaDelta)
 
 	task.Quota = actualQuota
+	if billingContext := task.PrivateData.BillingContext; billingContext != nil {
+		billingContext.FinalQuota = actualQuota
+	}
 
 	var logType int
 	var logQuota int
