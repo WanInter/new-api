@@ -5,8 +5,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -41,6 +43,53 @@ func TestAttachUpstreamRequestContextCoversCustomRequests(t *testing.T) {
 	upstreamRequest := attachUpstreamRequestContext(ginContext, customRequest)
 	cancel()
 	require.ErrorIs(t, upstreamRequest.Context().Err(), context.Canceled)
+}
+
+func TestDoRequestClassifiesCanceledDownstreamRequest(t *testing.T) {
+	t.Parallel()
+
+	upstreamStarted := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(upstreamStarted)
+		<-r.Context().Done()
+	}))
+	t.Cleanup(upstream.Close)
+
+	requestContext, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequestWithContext(requestContext, http.MethodPost, "/v1/chat/completions", nil)
+	upstreamRequest, err := http.NewRequest(http.MethodPost, upstream.URL, nil)
+	require.NoError(t, err)
+
+	result := make(chan error, 1)
+	go func() {
+		_, requestErr := doRequest(c, upstreamRequest, &relaycommon.RelayInfo{
+			ChannelMeta: &relaycommon.ChannelMeta{},
+		})
+		result <- requestErr
+	}()
+
+	select {
+	case <-upstreamStarted:
+	case <-time.After(time.Second):
+		t.Fatal("upstream request did not start")
+	}
+	cancel()
+
+	select {
+	case err = <-result:
+	case <-time.After(time.Second):
+		t.Fatal("canceled upstream request did not return")
+	}
+	require.Error(t, err)
+	var apiErr *types.NewAPIError
+	require.ErrorAs(t, err, &apiErr)
+	require.True(t, types.IsRequestCanceledError(apiErr))
+	require.Equal(t, types.StatusClientClosedRequest, apiErr.StatusCode)
+	require.True(t, types.IsSkipRetryError(apiErr))
+	require.False(t, types.IsRecordErrorLog(apiErr))
 }
 
 func TestProcessHeaderOverride_ChannelTestSkipsPassthroughRules(t *testing.T) {

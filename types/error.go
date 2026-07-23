@@ -38,6 +38,10 @@ const (
 type ErrorCode string
 
 const (
+	// StatusClientClosedRequest is the non-standard status commonly used by
+	// reverse proxies when the downstream client closes the request first.
+	StatusClientClosedRequest = 499
+
 	ErrorCodeInvalidRequest         ErrorCode = "invalid_request"
 	ErrorCodeSensitiveWordsDetected ErrorCode = "sensitive_words_detected"
 	ErrorCodeViolationFeeGrokCSAM   ErrorCode = "violation_fee.grok.csam"
@@ -48,6 +52,7 @@ const (
 	ErrorCodeInvalidApiType     ErrorCode = "invalid_api_type"
 	ErrorCodeJsonMarshalFailed  ErrorCode = "json_marshal_failed"
 	ErrorCodeDoRequestFailed    ErrorCode = "do_request_failed"
+	ErrorCodeRequestCanceled    ErrorCode = "request_canceled"
 	ErrorCodeGetChannelFailed   ErrorCode = "get_channel_failed"
 	ErrorCodeGenRelayInfoFailed ErrorCode = "gen_relay_info_failed"
 
@@ -368,6 +373,10 @@ func IsChannelError(err *NewAPIError) bool {
 		return false
 	}
 	return strings.HasPrefix(string(err.errorCode), "channel:")
+}
+
+func IsRequestCanceledError(err *NewAPIError) bool {
+	return err != nil && err.errorCode == ErrorCodeRequestCanceled
 }
 
 func IsSkipRetryError(err *NewAPIError) bool {
