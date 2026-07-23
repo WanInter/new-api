@@ -30,14 +30,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   areCanonicalRatesComplete,
-  buildCanonicalVideoExpr,
-  getCanonicalVideoBlockReason,
-  getCanonicalVideoDimensions,
+  buildCanonicalPricingExpr,
+  formatCanonicalSpecificationLabel,
+  getCanonicalPricingBlockReason,
+  getCanonicalPricingSchema,
+  hasCanonicalSchemaVersionConflict,
+  isCanonicalPricingAvailable,
   isCanonicalRateDraft,
-  isCanonicalVideoAvailable,
-  type CanonicalVideoRates,
+  type CanonicalPricingMode,
+  type CanonicalPricingRates,
 } from './canonical-video-billing'
 import type { BillingCapability } from './model-billing-api'
 
@@ -46,15 +50,17 @@ type CanonicalVideoBillingEditorProps = {
   capabilityError: string
   isLoading: boolean
   enabled: boolean
-  rates: CanonicalVideoRates
+  configuredSchemaVersion: string
+  pricingMode: CanonicalPricingMode
+  rates: CanonicalPricingRates
   onEnabledChange: (enabled: boolean) => void
-  onRatesChange: (rates: CanonicalVideoRates) => void
+  onSchemaVersionAccept: () => void
+  onPricingModeChange: (mode: CanonicalPricingMode) => void
+  onRatesChange: (rates: CanonicalPricingRates) => void
 }
 
 function SchemaSummary({ capability }: { capability: BillingCapability }) {
   const { t } = useTranslation()
-  const { durationField, resolutionField } =
-    getCanonicalVideoDimensions(capability)
 
   return (
     <div className='bg-muted/30 space-y-3 rounded-md border p-3'>
@@ -71,16 +77,17 @@ function SchemaSummary({ capability }: { capability: BillingCapability }) {
 
       <div className='space-y-1.5'>
         <div className='text-muted-foreground text-xs'>
-          {t('Required canonical fields')}
+          {t('Canonical billing fields')}
         </div>
         <div className='flex flex-wrap gap-1.5'>
-          {[durationField, resolutionField].filter(Boolean).map((field) => (
+          {capability.fields.map((field) => (
             <Badge
-              key={field!.path}
+              key={field.path}
               variant='secondary'
               className='font-mono text-xs'
             >
-              {field!.path}
+              {field.path} ({field.type})
+              {!field.required ? ` [${t('Optional')}]` : ''}
             </Badge>
           ))}
         </div>
@@ -131,7 +138,8 @@ function SchemaSummary({ capability }: { capability: BillingCapability }) {
       </div>
       {capability.checked_at > 0 && (
         <div className='text-muted-foreground text-xs'>
-          {t('Last validation')}: {new Date(capability.checked_at * 1000).toLocaleString()}
+          {t('Last validation')}:{' '}
+          {new Date(capability.checked_at * 1000).toLocaleString()}
         </div>
       )}
     </div>
@@ -143,41 +151,52 @@ export function CanonicalVideoBillingEditor({
   capabilityError,
   isLoading,
   enabled,
+  configuredSchemaVersion,
+  pricingMode,
   rates,
   onEnabledChange,
+  onSchemaVersionAccept,
+  onPricingModeChange,
   onRatesChange,
 }: CanonicalVideoBillingEditorProps) {
   const { t } = useTranslation()
-  const { durations, resolutions } = useMemo(
-    () => getCanonicalVideoDimensions(capability),
-    [capability]
+  const schema = useMemo(
+    () => getCanonicalPricingSchema(capability, pricingMode),
+    [capability, pricingMode]
   )
   const [previewDuration, setPreviewDuration] = useState('')
-  const available = isCanonicalVideoAvailable(capability)
-  const blockReason = getCanonicalVideoBlockReason(capability)
+  const available = isCanonicalPricingAvailable(capability)
+  const blockReason = getCanonicalPricingBlockReason(capability)
 
   useEffect(() => {
-    if (durations.length === 0) {
+    if (schema.durations.length === 0) {
       setPreviewDuration('')
       return
     }
     setPreviewDuration((current) =>
-      durations.some((duration) => String(duration) === current)
+      schema.durations.some((duration) => String(duration) === current)
         ? current
-        : String(durations[durations.length - 1])
+        : String(schema.durations[schema.durations.length - 1])
     )
-  }, [durations])
+  }, [schema.durations])
 
   const expression = useMemo(
-    () => (capability ? buildCanonicalVideoExpr(capability, rates) : ''),
-    [capability, rates]
+    () =>
+      capability
+        ? buildCanonicalPricingExpr(capability, rates, pricingMode)
+        : '',
+    [capability, pricingMode, rates]
   )
-  const configured = areCanonicalRatesComplete(rates, resolutions)
+  const configured = areCanonicalRatesComplete(rates, schema.rateKeys)
+  const schemaVersionConflict = hasCanonicalSchemaVersionConflict(
+    configuredSchemaVersion,
+    capability
+  )
   const previewDurationNumber = Number(previewDuration)
 
-  const changeRate = (resolution: string, value: string) => {
+  const changeRate = (key: string, value: string) => {
     if (!isCanonicalRateDraft(value)) return
-    onRatesChange({ ...rates, [resolution]: value })
+    onRatesChange({ ...rates, [key]: value })
   }
 
   if (isLoading) {
@@ -194,16 +213,29 @@ export function CanonicalVideoBillingEditor({
 
   if (capabilityError) {
     return (
-      <Alert variant='destructive'>
-        <CircleAlert />
-        <AlertTitle>{t('Canonical video billing')}</AlertTitle>
-        <AlertDescription>
-          {t(
-            'Unable to load billing capability. Generic expressions remain available.'
-          )}
-          <span className='mt-1 block text-xs'>{capabilityError}</span>
-        </AlertDescription>
-      </Alert>
+      <div className='flex flex-col gap-2'>
+        <Alert variant='destructive'>
+          <CircleAlert />
+          <AlertTitle>{t('Canonical video billing')}</AlertTitle>
+          <AlertDescription>
+            {t(
+              'Unable to load billing capability. Generic expressions remain available.'
+            )}
+            <span className='mt-1 block text-xs'>{capabilityError}</span>
+          </AlertDescription>
+        </Alert>
+        {enabled && (
+          <Button
+            type='button'
+            size='sm'
+            variant='outline'
+            className='self-start'
+            onClick={() => onEnabledChange(false)}
+          >
+            {t('Use general expression pricing')}
+          </Button>
+        )}
+      </div>
     )
   }
 
@@ -224,19 +256,57 @@ export function CanonicalVideoBillingEditor({
                 )
               : blockReason === 'canonical_schema_incomplete'
                 ? t(
-                    'Every routed channel must use the same canonical schema before dynamic video pricing can be enabled.'
+                    'The canonical billing schema is not supported by this editor.'
                   )
                 : blockReason}
           </AlertDescription>
         </Alert>
         <SchemaSummary capability={capability} />
+        {enabled && (
+          <Button
+            type='button'
+            size='sm'
+            variant='outline'
+            className='self-start'
+            onClick={() => onEnabledChange(false)}
+          >
+            {t('Use general expression pricing')}
+          </Button>
+        )}
       </div>
     )
   }
 
+  const isPerSecond = schema.priceMode === 'per-second'
   return (
     <div className='space-y-3'>
       <SchemaSummary capability={capability} />
+
+      {enabled && schemaVersionConflict && (
+        <Alert variant='destructive'>
+          <CircleAlert />
+          <AlertTitle>{t('Canonical billing schema')}</AlertTitle>
+          <AlertDescription>
+            {t(
+              'The canonical schema for {{model}} changed from {{configured}} to {{current}}.',
+              {
+                model: capability.model,
+                configured: configuredSchemaVersion || '-',
+                current: capability.schema_version || '-',
+              }
+            )}
+            <Button
+              type='button'
+              size='sm'
+              variant='outline'
+              className='mt-2'
+              onClick={onSchemaVersionAccept}
+            >
+              {t('Use current canonical schema')}
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div className='flex flex-wrap gap-2'>
         <Button
@@ -263,7 +333,11 @@ export function CanonicalVideoBillingEditor({
       {enabled && (
         <div className='space-y-4 rounded-md border p-3'>
           <div className='space-y-1'>
-            <h4 className='text-sm font-medium'>{t('Per-second credits')}</h4>
+            <h4 className='text-sm font-medium'>
+              {isPerSecond
+                ? t('Per-second credits')
+                : t('Fixed credits by specification')}
+            </h4>
             <p className='text-muted-foreground text-xs'>
               {t(
                 'Canonical video pricing only uses normalized billing fields.'
@@ -271,65 +345,108 @@ export function CanonicalVideoBillingEditor({
             </p>
           </div>
 
+          {schema.durationField?.required && (
+            <Field className='gap-2'>
+              <FieldLabel>{t('Pricing method')}</FieldLabel>
+              <ToggleGroup
+                value={[pricingMode]}
+                onValueChange={(values) => {
+                  const next = values.find((value) => value !== pricingMode)
+                  if (next === 'per-second' || next === 'fixed') {
+                    onPricingModeChange(next)
+                  }
+                }}
+                variant='outline'
+                size='sm'
+                aria-label={t('Pricing method')}
+              >
+                <ToggleGroupItem value='per-second'>
+                  {t('Per second')}
+                </ToggleGroupItem>
+                <ToggleGroupItem value='fixed'>
+                  {t('Per specification')}
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </Field>
+          )}
+
           <div className='grid gap-3 sm:grid-cols-2'>
-            {resolutions.map((resolution) => (
-              <Field key={resolution} className='gap-2'>
-                <FieldLabel>{resolution}</FieldLabel>
+            {schema.specifications.map((specification) => (
+              <Field key={specification.key} className='gap-2'>
+                <FieldLabel>
+                  {formatCanonicalSpecificationLabel(specification, t) ||
+                    t('All supported durations')}
+                </FieldLabel>
                 <Input
                   inputMode='decimal'
                   placeholder='0'
-                  value={rates[resolution] || ''}
+                  value={rates[specification.key] || ''}
                   onChange={(event) =>
-                    changeRate(resolution, event.target.value)
+                    changeRate(specification.key, event.target.value)
                   }
                   aria-invalid={
-                    rates[resolution] === '' || rates[resolution] === undefined
+                    rates[specification.key] === '' ||
+                    rates[specification.key] === undefined
                   }
                 />
-                <FieldDescription>{t('Credits / second')}</FieldDescription>
+                <FieldDescription>
+                  {isPerSecond ? t('Credits / second') : t('Credits / request')}
+                </FieldDescription>
               </Field>
             ))}
           </div>
 
           <div className='flex flex-wrap items-end gap-3 border-t pt-3'>
-            <Field className='gap-2'>
-              <FieldLabel>{t('Preview duration')}</FieldLabel>
-              <Select
-                items={durations.map((duration) => ({
-                  value: String(duration),
-                  label: `${duration}s`,
-                }))}
-                value={previewDuration}
-                onValueChange={(value) => setPreviewDuration(value ?? '')}
-              >
-                <SelectTrigger className='w-28' size='sm'>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent alignItemWithTrigger={false}>
-                  <SelectGroup>
-                    {durations.map((duration) => (
-                      <SelectItem key={duration} value={String(duration)}>
-                        {duration}s
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
+            {isPerSecond && (
+              <Field className='gap-2'>
+                <FieldLabel>{t('Preview duration')}</FieldLabel>
+                <Select
+                  items={schema.durations.map((duration) => ({
+                    value: String(duration),
+                    label: `${duration}s`,
+                  }))}
+                  value={previewDuration}
+                  onValueChange={(value) => setPreviewDuration(value ?? '')}
+                >
+                  <SelectTrigger className='w-28' size='sm'>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {schema.durations.map((duration) => (
+                        <SelectItem key={duration} value={String(duration)}>
+                          {duration}s
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
             <div className='flex flex-wrap gap-x-4 gap-y-1 pb-1 text-sm'>
-              {resolutions.map((resolution) => {
-                const credits =
-                  (Number(rates[resolution]) || 0) * previewDurationNumber
+              {schema.specifications.map((specification) => {
+                const rate = Number(rates[specification.key]) || 0
+                const credits = isPerSecond
+                  ? rate * previewDurationNumber
+                  : rate
+                const specificationLabel =
+                  formatCanonicalSpecificationLabel(specification, t) ||
+                  t('All supported durations')
                 return (
-                  <span key={resolution}>
-                    {t(
-                      '{{resolution}}, {{duration}} seconds = {{credits}} credits',
-                      {
-                        resolution,
-                        duration: previewDurationNumber || '-',
-                        credits: Number.isFinite(credits) ? credits : 0,
-                      }
-                    )}
+                  <span key={specification.key}>
+                    {isPerSecond
+                      ? t(
+                          '{{specification}}, {{duration}} seconds = {{credits}} credits',
+                          {
+                            specification: specificationLabel,
+                            duration: previewDurationNumber || '-',
+                            credits: Number.isFinite(credits) ? credits : 0,
+                          }
+                        )
+                      : t('{{specification}} = {{credits}} credits', {
+                          specification: specificationLabel,
+                          credits: Number.isFinite(credits) ? credits : 0,
+                        })}
                   </span>
                 )
               })}
@@ -338,9 +455,7 @@ export function CanonicalVideoBillingEditor({
 
           {!configured && (
             <p className='text-destructive text-xs'>
-              {t(
-                'Set a per-second credit price for every supported resolution.'
-              )}
+              {t('Set a credit price for every supported specification.')}
             </p>
           )}
 

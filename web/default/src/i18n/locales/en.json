@@ -4989,12 +4989,26 @@
     "No compatible channels": "No compatible channels",
     "Per-second credits": "Per-second credits",
     "Preview duration": "Preview duration",
-    "Required canonical fields": "Required canonical fields",
+    "Canonical billing fields": "Canonical billing fields",
+    "Optional": "Optional",
+    "Provider default": "Provider default",
+    "The canonical schema for {{model}} changed from {{configured}} to {{current}}.": "The canonical schema for {{model}} changed from {{configured}} to {{current}}.",
+    "Use current canonical schema": "Use current canonical schema",
     "Set a per-second credit price for every supported resolution.": "Set a per-second credit price for every supported resolution.",
     "Unable to load billing capability. Generic expressions remain available.": "Unable to load billing capability. Generic expressions remain available.",
     "Use canonical video pricing": "Use canonical video pricing",
     "Use general expression pricing": "Use general expression pricing",
     "{{resolution}}, {{duration}} seconds = {{credits}} credits": "{{resolution}}, {{duration}} seconds = {{credits}} credits",
-    "Failed to update billing models": "Failed to update billing models"
+    "Failed to update billing models": "Failed to update billing models",
+    "All supported durations": "All supported durations",
+    "Credits / request": "Credits / request",
+    "Fixed credits by specification": "Fixed credits by specification",
+    "Per second": "Per second",
+    "Per specification": "Per specification",
+    "Pricing method": "Pricing method",
+    "Set a credit price for every supported specification.": "Set a credit price for every supported specification.",
+    "The canonical billing schema is not supported by this editor.": "The canonical billing schema is not supported by this editor.",
+    "{{specification}}, {{duration}} seconds = {{credits}} credits": "{{specification}}, {{duration}} seconds = {{credits}} credits",
+    "{{specification}} = {{credits}} credits": "{{specification}} = {{credits}} credits"
   }
 }

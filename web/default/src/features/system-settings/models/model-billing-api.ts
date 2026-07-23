@@ -113,7 +113,7 @@ function normalizeField(value: unknown): BillingCapabilityField | null {
 
   return {
     path: toString(field.path),
-    type: toString(field.type),
+    type: toString(field.type).toLowerCase(),
     required: toBoolean(field.required),
     enum_values: Array.isArray(field.enum_values)
       ? field.enum_values.map(toString).filter(Boolean)

@@ -52,7 +52,7 @@ type AliVideoParameters struct {
 	Duration     int    `json:"duration,omitempty"`      // 时长: 3-10秒
 	PromptExtend bool   `json:"prompt_extend,omitempty"` // 是否开启prompt智能改写
 	Watermark    bool   `json:"watermark,omitempty"`     // 是否添加水印
-	Audio        *bool  `json:"audio,omitempty"`         // 是否添加音频（wan2.5）
+	Audio        *bool  `json:"audio,omitempty"`         // 是否添加音频（仅 wan2.6-i2v-flash 支持开关）
 	Seed         int    `json:"seed,omitempty"`          // 随机数种子
 }
 
@@ -101,7 +101,7 @@ type AliMetadata struct {
 	Duration     *int    `json:"duration,omitempty"`      // 时长
 	PromptExtend *bool   `json:"prompt_extend,omitempty"` // 是否开启prompt智能改写
 	Watermark    *bool   `json:"watermark,omitempty"`     // 是否添加水印
-	Audio        *bool   `json:"audio,omitempty"`         // 是否添加音频
+	Audio        *bool   `json:"audio,omitempty"`         // 是否添加音频（仅 wan2.6-i2v-flash 支持开关）
 	Seed         *int    `json:"seed,omitempty"`          // 随机数种子
 }
 
@@ -347,6 +347,9 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 		return nil, err
 	}
 	if err := applyAliCanonicalVideoOutput(aliReq.Parameters, req, upstreamModel); err != nil {
+		return nil, err
+	}
+	if err := applyAliCanonicalAudio(aliReq.Parameters, upstreamModel); err != nil {
 		return nil, err
 	}
 

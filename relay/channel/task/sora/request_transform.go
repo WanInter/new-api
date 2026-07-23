@@ -17,32 +17,12 @@ func applyTokenStackJSONRequest(body map[string]interface{}) {
 		return
 	}
 	applyTokenStackMediaFields(body)
-	mapDurationToSoraSeconds(body)
-	if strings.TrimSpace(stringValue(body["size"])) == "" {
-		if size := tokenStackSizeFromLegacyFields(body); size != "" {
-			body["size"] = size
-		}
-	}
+	body["seconds"] = "15"
+	body["size"] = "1280x720"
+	delete(body, "duration")
 
 	// Fields without a documented TokenStack mapping stay in the request. The
 	// upstream can reject them instead of this adaptor silently discarding data.
-}
-
-func tokenStackSizeFromLegacyFields(body map[string]interface{}) string {
-	ratio := firstNonEmpty(stringValue(body["aspect_ratio"]), stringValue(body["ratio"]))
-	resolution := strings.ToLower(strings.TrimSpace(stringValue(body["resolution"])))
-	if resolution != "" && resolution != "720p" {
-		return ""
-	}
-
-	switch ratio {
-	case "16:9":
-		return "1280x720"
-	case "9:16":
-		return "720x1280"
-	default:
-		return ""
-	}
 }
 
 func applyTokenStackMediaFields(body map[string]interface{}) {
@@ -120,10 +100,49 @@ func applySoraModelJSONProfile(body map[string]interface{}, profile soraModelPro
 	return nil
 }
 
-func applySoraModelJSONFinalProfile(body map[string]interface{}, profile soraModelProfile) {
-	if profile.JSONFinalTransform == requestTransformTokenStackSora15s {
+func applySoraModelJSONFinalProfile(body map[string]interface{}, profile soraModelProfile) error {
+	switch profile.JSONFinalTransform {
+	case requestTransformTokenStackSora15s:
 		applyTokenStackJSONRequest(body)
+	case requestTransformTokenStackDoubao:
+		if _, exists := body["seconds"]; !exists {
+			body["seconds"] = "5"
+		}
+	case requestTransformFixedContent15s:
+		body["duration"] = 15
+		delete(body, "seconds")
+		if _, exists := body["generate_audio"]; !exists {
+			body["generate_audio"] = false
+		}
+	case requestTransformFixedSora15s:
+		body["seconds"] = "15"
+		delete(body, "duration")
+	case requestTransformSeedanceGateway:
+		return applySeedanceGatewayDefaults(body)
 	}
+	return nil
+}
+
+func applySeedanceGatewayDefaults(body map[string]interface{}) error {
+	metadata, encoded := soraJSONMetadata(body)
+	if metadata == nil {
+		metadata = make(map[string]interface{})
+		body["metadata"] = metadata
+	}
+	if _, exists := metadata["duration"]; !exists {
+		metadata["duration"] = 15
+	}
+	delete(body, "duration")
+	delete(body, "seconds")
+	if !encoded {
+		return nil
+	}
+	serialized, err := common.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+	body["metadata"] = string(serialized)
+	return nil
 }
 
 func applySoraModelMultipartProfile(writer *multipart.Writer, values map[string][]string, profile soraModelProfile) error {

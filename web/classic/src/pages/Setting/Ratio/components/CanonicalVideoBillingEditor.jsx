@@ -14,23 +14,33 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
-import React, { useEffect, useMemo, useState } from 'react';
-import { Banner, Button, Card, Input, Select, Tag } from '@douyinfe/semi-ui';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Banner,
+  Button,
+  Card,
+  Input,
+  Radio,
+  RadioGroup,
+  Select,
+  Tag,
+} from '@douyinfe/semi-ui';
 import { API } from '../../../../helpers';
 import {
-  buildCanonicalVideoExpr,
-  extractCanonicalVideoRates,
-  getCanonicalVideoBlockReason,
-  getCanonicalVideoDimensions,
+  CANONICAL_DURATION_PATH,
+  areCanonicalRatesComplete,
+  buildCanonicalPricingExpr,
+  detectCanonicalPricingMode,
+  extractCanonicalPricingRates,
+  formatCanonicalSpecificationLabel,
+  getCanonicalPricingBlockReason,
+  getCanonicalPricingSchema,
+  isCanonicalPricingAvailable,
   isCanonicalRateDraft,
-  isCanonicalVideoAvailable,
   normalizeCanonicalBillingCapability,
 } from './canonicalVideoBilling';
 
 function SchemaSummary({ capability, t }) {
-  const { durationField, resolutionField } =
-    getCanonicalVideoDimensions(capability);
-
   return (
     <Card bodyStyle={{ padding: 12 }} style={{ marginBottom: 12 }}>
       <div className='flex items-center justify-between gap-3 mb-3'>
@@ -42,12 +52,13 @@ function SchemaSummary({ capability, t }) {
         ) : null}
       </div>
       <div className='text-xs text-gray-500 mb-1'>
-        {t('Required canonical fields')}
+        {t('Canonical billing fields')}
       </div>
       <div className='flex flex-wrap gap-2 mb-3'>
-        {[durationField, resolutionField].filter(Boolean).map((field) => (
+        {capability.fields.map((field) => (
           <Tag key={field.path} size='small' color='grey'>
-            {field.path}
+            {field.path} ({field.type})
+            {!field.required ? ` [${t('Optional')}]` : ''}
           </Tag>
         ))}
       </div>
@@ -98,9 +109,22 @@ function SchemaSummary({ capability, t }) {
   );
 }
 
+function localizedBlockReason(blockReason, t) {
+  if (blockReason === 'canonical_unavailable') {
+    return t(
+      'Every routed channel must use the same canonical schema before dynamic video pricing can be enabled.',
+    );
+  }
+  if (blockReason === 'canonical_schema_incomplete') {
+    return t('The canonical billing schema is not supported by this editor.');
+  }
+  return blockReason;
+}
+
 export default function CanonicalVideoBillingEditor({
   model,
   onCanonicalChange,
+  onValidationChange,
   t,
 }) {
   const [capability, setCapability] = useState(null);
@@ -108,19 +132,62 @@ export default function CanonicalVideoBillingEditor({
   const [error, setError] = useState('');
   const [rates, setRates] = useState({});
   const [previewDuration, setPreviewDuration] = useState('');
+  const [pricingMode, setPricingMode] = useState('per-second');
+  const [draftEnabled, setDraftEnabled] = useState(false);
+  const lastGeneratedExprRef = useRef({ modelName: '', expression: '' });
 
   const modelName = model?.name || '';
-  const canonicalEnabled = Boolean(model?.billingSchema);
-  const { durations, resolutions } = useMemo(
-    () => getCanonicalVideoDimensions(capability),
-    [capability],
+  const persistedEnabled = Boolean(model?.billingSchema);
+  const canonicalEnabled = draftEnabled || persistedEnabled;
+  const schema = useMemo(
+    () => getCanonicalPricingSchema(capability, pricingMode),
+    [capability, pricingMode],
   );
-  const available = isCanonicalVideoAvailable(capability);
-  const blockReason = getCanonicalVideoBlockReason(capability);
+  const available = isCanonicalPricingAvailable(capability);
+  const blockReason = getCanonicalPricingBlockReason(capability);
   const expression = useMemo(
-    () => (capability ? buildCanonicalVideoExpr(capability, rates) : ''),
-    [capability, rates],
+    () =>
+      capability
+        ? buildCanonicalPricingExpr(capability, rates, pricingMode)
+        : '',
+    [capability, pricingMode, rates],
   );
+  const configured = areCanonicalRatesComplete(rates, schema.rateKeys);
+
+  useEffect(() => {
+    if (!onValidationChange || !modelName) return;
+    let validationError = '';
+    if (canonicalEnabled) {
+      if (loading) {
+        validationError = t('Loading billing capability...');
+      } else if (error) {
+        validationError = error;
+      } else if (!capability || !available) {
+        validationError = localizedBlockReason(blockReason, t);
+      } else if (!configured) {
+        validationError = t(
+          'Set a credit price for every supported specification.',
+        );
+      }
+    }
+    onValidationChange({
+      modelName,
+      active: canonicalEnabled,
+      valid: validationError === '',
+      reason: validationError,
+    });
+  }, [
+    available,
+    blockReason,
+    canonicalEnabled,
+    capability,
+    configured,
+    error,
+    loading,
+    modelName,
+    onValidationChange,
+    t,
+  ]);
 
   useEffect(() => {
     let active = true;
@@ -166,51 +233,126 @@ export default function CanonicalVideoBillingEditor({
 
   useEffect(() => {
     if (!capability) return;
+    if (
+      modelName === lastGeneratedExprRef.current.modelName &&
+      model?.billingExpr === lastGeneratedExprRef.current.expression
+    ) {
+      return;
+    }
+    const detectedMode = model?.billingSchema
+      ? detectCanonicalPricingMode(model.billingExpr, capability)
+      : capability.fields.some(
+            (field) => field.path === CANONICAL_DURATION_PATH && field.required,
+          )
+        ? 'per-second'
+        : 'fixed';
+    setDraftEnabled(Boolean(model?.billingSchema));
+    setPricingMode(detectedMode);
     const nextRates = model?.billingSchema
-      ? extractCanonicalVideoRates(model.billingExpr, capability)
+      ? extractCanonicalPricingRates(
+          model.billingExpr,
+          capability,
+          detectedMode,
+        )
       : {};
     setRates(nextRates);
   }, [capability, model?.billingExpr, model?.billingSchema]);
 
   useEffect(() => {
-    if (!durations.length) {
+    if (!schema.durations.length) {
       setPreviewDuration('');
       return;
     }
     setPreviewDuration((current) =>
-      durations.some((duration) => String(duration) === current)
+      schema.durations.some((duration) => String(duration) === current)
         ? current
-        : String(durations[durations.length - 1]),
+        : String(schema.durations[schema.durations.length - 1]),
     );
-  }, [durations]);
+  }, [schema.durations]);
 
   const enableCanonical = () => {
     if (!capability || !available) return;
-    const nextRates = resolutions.reduce((next, resolution) => {
-      next[resolution] = rates[resolution] ?? '0';
+    const nextRates = schema.rateKeys.reduce((next, key) => {
+      next[key] = rates[key] ?? '';
       return next;
     }, {});
+    setDraftEnabled(true);
     setRates(nextRates);
+    if (!areCanonicalRatesComplete(nextRates, schema.rateKeys)) return;
+    const nextExpression = buildCanonicalPricingExpr(
+      capability,
+      nextRates,
+      pricingMode,
+    );
+    lastGeneratedExprRef.current = {
+      modelName,
+      expression: nextExpression,
+    };
     onCanonicalChange({
-      billingExpr: buildCanonicalVideoExpr(capability, nextRates),
+      billingExpr: nextExpression,
       billingSchema: capability.schema_version,
     });
   };
 
   const disableCanonical = () => {
+    setDraftEnabled(false);
+    if (!persistedEnabled) return;
     onCanonicalChange({
       billingExpr: model?.billingExpr || '',
       billingSchema: '',
     });
   };
 
-  const updateRate = (resolution, value) => {
+  const updateRate = (key, value) => {
     if (!isCanonicalRateDraft(value)) return;
-    const nextRates = { ...rates, [resolution]: value };
+    const nextRates = { ...rates, [key]: value };
     setRates(nextRates);
-    if (canonicalEnabled && capability) {
+    if (
+      canonicalEnabled &&
+      capability &&
+      areCanonicalRatesComplete(nextRates, schema.rateKeys)
+    ) {
+      const nextExpression = buildCanonicalPricingExpr(
+        capability,
+        nextRates,
+        pricingMode,
+      );
+      lastGeneratedExprRef.current = {
+        modelName,
+        expression: nextExpression,
+      };
       onCanonicalChange({
-        billingExpr: buildCanonicalVideoExpr(capability, nextRates),
+        billingExpr: nextExpression,
+        billingSchema: capability.schema_version,
+      });
+    }
+  };
+
+  const changePricingMode = (event) => {
+    if (!capability) return;
+    const nextMode = event.target.value;
+    const nextSchema = getCanonicalPricingSchema(capability, nextMode);
+    const nextRates = nextSchema.rateKeys.reduce((next, key) => {
+      next[key] = rates[key] ?? '';
+      return next;
+    }, {});
+    setPricingMode(nextMode);
+    setRates(nextRates);
+    if (
+      canonicalEnabled &&
+      areCanonicalRatesComplete(nextRates, nextSchema.rateKeys)
+    ) {
+      const nextExpression = buildCanonicalPricingExpr(
+        capability,
+        nextRates,
+        nextMode,
+      );
+      lastGeneratedExprRef.current = {
+        modelName,
+        expression: nextExpression,
+      };
+      onCanonicalChange({
+        billingExpr: nextExpression,
         billingSchema: capability.schema_version,
       });
     }
@@ -231,27 +373,27 @@ export default function CanonicalVideoBillingEditor({
 
   if (error) {
     return (
-      <Banner
-        type='warning'
-        fullMode={false}
-        closeIcon={null}
-        style={{ marginBottom: 16 }}
-        title={t('Canonical video billing')}
-        description={`${t('Unable to load billing capability. Generic expressions remain available.')} ${error}`}
-      />
+      <div style={{ marginBottom: 16 }}>
+        <Banner
+          type='warning'
+          fullMode={false}
+          closeIcon={null}
+          style={{ marginBottom: canonicalEnabled ? 8 : 0 }}
+          title={t('Canonical video billing')}
+          description={`${t('Unable to load billing capability. Generic expressions remain available.')} ${error}`}
+        />
+        {canonicalEnabled ? (
+          <Button theme='borderless' type='tertiary' onClick={disableCanonical}>
+            {t('Use general expression pricing')}
+          </Button>
+        ) : null}
+      </div>
     );
   }
 
   if (!capability) return null;
 
   if (!available) {
-    const genericReason =
-      blockReason === 'canonical_unavailable' ||
-      blockReason === 'canonical_schema_incomplete'
-        ? t(
-            'Every routed channel must use the same canonical schema before dynamic video pricing can be enabled.',
-          )
-        : blockReason;
     return (
       <div style={{ marginBottom: 16 }}>
         <Banner
@@ -259,7 +401,7 @@ export default function CanonicalVideoBillingEditor({
           fullMode={false}
           closeIcon={null}
           title={t('Canonical video billing is unavailable for this model.')}
-          description={genericReason}
+          description={localizedBlockReason(blockReason, t)}
           style={{ marginBottom: 12 }}
         />
         <SchemaSummary capability={capability} t={t} />
@@ -273,6 +415,7 @@ export default function CanonicalVideoBillingEditor({
   }
 
   const previewSeconds = Number(previewDuration);
+  const isPerSecond = schema.priceMode === 'per-second';
   return (
     <div style={{ marginBottom: 16 }}>
       <SchemaSummary capability={capability} t={t} />
@@ -293,56 +436,98 @@ export default function CanonicalVideoBillingEditor({
 
       {canonicalEnabled ? (
         <Card bodyStyle={{ padding: 16 }}>
-          <div className='font-medium mb-1'>{t('Per-second credits')}</div>
+          <div className='font-medium mb-1'>
+            {isPerSecond
+              ? t('Per-second credits')
+              : t('Fixed credits by specification')}
+          </div>
           <div className='text-xs text-gray-500 mb-4'>
             {t('Canonical video pricing only uses normalized billing fields.')}
           </div>
+          {schema.durationField?.required ? (
+            <div className='mb-4'>
+              <div className='text-xs text-gray-500 mb-1'>
+                {t('Pricing method')}
+              </div>
+              <RadioGroup
+                type='button'
+                value={pricingMode}
+                onChange={changePricingMode}
+              >
+                <Radio value='per-second'>{t('Per second')}</Radio>
+                <Radio value='fixed'>{t('Per specification')}</Radio>
+              </RadioGroup>
+            </div>
+          ) : null}
           <div className='grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4'>
-            {resolutions.map((resolution) => (
-              <div key={resolution}>
-                <div className='text-sm font-medium mb-1'>{resolution}</div>
+            {schema.specifications.map((specification) => (
+              <div key={specification.key}>
+                <div className='text-sm font-medium mb-1'>
+                  {formatCanonicalSpecificationLabel(specification, t) ||
+                    t('All supported durations')}
+                </div>
                 <Input
-                  value={rates[resolution] ?? ''}
+                  value={rates[specification.key] ?? ''}
                   placeholder='0'
-                  onChange={(value) => updateRate(resolution, value)}
-                  suffix={t('Credits / second')}
+                  onChange={(value) => updateRate(specification.key, value)}
+                  suffix={
+                    isPerSecond ? t('Credits / second') : t('Credits / request')
+                  }
                 />
               </div>
             ))}
           </div>
           <div className='flex flex-wrap items-end gap-3 border-t pt-3 mb-3'>
-            <div>
-              <div className='text-xs text-gray-500 mb-1'>
-                {t('Preview duration')}
+            {isPerSecond ? (
+              <div>
+                <div className='text-xs text-gray-500 mb-1'>
+                  {t('Preview duration')}
+                </div>
+                <Select
+                  value={previewDuration}
+                  style={{ width: 120 }}
+                  onChange={setPreviewDuration}
+                >
+                  {schema.durations.map((duration) => (
+                    <Select.Option key={duration} value={String(duration)}>
+                      {duration}s
+                    </Select.Option>
+                  ))}
+                </Select>
               </div>
-              <Select
-                value={previewDuration}
-                style={{ width: 120 }}
-                onChange={setPreviewDuration}
-              >
-                {durations.map((duration) => (
-                  <Select.Option key={duration} value={String(duration)}>
-                    {duration}s
-                  </Select.Option>
-                ))}
-              </Select>
-            </div>
+            ) : null}
             <div className='flex flex-wrap gap-x-4 gap-y-1 text-sm pb-1'>
-              {resolutions.map((resolution) => (
-                <span key={resolution}>
-                  {t(
-                    '{{resolution}}, {{duration}} seconds = {{credits}} credits',
-                    {
-                      resolution,
-                      duration: previewSeconds || '-',
-                      credits:
-                        (Number(rates[resolution]) || 0) * previewSeconds,
-                    },
-                  )}
-                </span>
-              ))}
+              {schema.specifications.map((specification) => {
+                const rate = Number(rates[specification.key]) || 0;
+                const credits = isPerSecond ? rate * previewSeconds : rate;
+                const specificationLabel =
+                  formatCanonicalSpecificationLabel(specification, t) ||
+                  t('All supported durations');
+                return (
+                  <span key={specification.key}>
+                    {isPerSecond
+                      ? t(
+                          '{{specification}}, {{duration}} seconds = {{credits}} credits',
+                          {
+                            specification: specificationLabel,
+                            duration: previewSeconds || '-',
+                            credits: Number.isFinite(credits) ? credits : 0,
+                          },
+                        )
+                      : t('{{specification}} = {{credits}} credits', {
+                          specification: specificationLabel,
+                          credits: Number.isFinite(credits) ? credits : 0,
+                        })}
+                  </span>
+                );
+              })}
             </div>
           </div>
+          {!configured ? (
+            <div className='text-xs text-red-600 mb-3'>
+              {t('Set a credit price for every supported specification.')}
+            </div>
+          ) : null}
           <div className='text-xs text-gray-500 mb-1'>
             {t('Generated canonical expression')}
           </div>

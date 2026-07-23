@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildRequestBodyMapsTokenStackDurationWithoutChangingValue(t *testing.T) {
+func TestBuildRequestBodyMaterializesTokenStackSora15sFixedOutput(t *testing.T) {
 	bodyJSON := `{
 		"duration":5,
 		"images":["image-1","image-2","image-3","image-4"],
@@ -44,8 +44,8 @@ func TestBuildRequestBodyMapsTokenStackDurationWithoutChangingValue(t *testing.T
 		"prompt":      "animate the references",
 		"ratio":       "9:16",
 		"resolution":  "720p",
-		"seconds":     "5",
-		"size":        "720x1280",
+		"seconds":     "15",
+		"size":        "1280x720",
 		"unsupported": "drop-me",
 	}, got)
 }
@@ -127,20 +127,21 @@ func TestBuildRequestBodyAppliesTokenStackFilterAfterOriginModelProfile(t *testi
 	require.NoError(t, common.Unmarshal(data, &got))
 	assert.Equal(t, "seedance-2-0-15s-slow", got["model"])
 	assert.Equal(t, []any{"image-1"}, got["images"])
-	assert.Equal(t, "5", got["seconds"])
+	assert.Equal(t, "15", got["seconds"])
+	assert.Equal(t, "1280x720", got["size"])
 	assert.NotContains(t, got, "duration")
 	assert.Contains(t, got, "content")
 }
 
-func TestBuildRequestBodyPreservesUnmappedTokenStackSizeFields(t *testing.T) {
+func TestBuildRequestBodyUsesDocumentedTokenStackSora15sSize(t *testing.T) {
 	tests := []struct {
 		name     string
 		fields   string
 		wantSize string
 	}{
-		{name: "portrait ratio", fields: `"ratio":"9:16","resolution":"720p"`, wantSize: "720x1280"},
+		{name: "portrait ratio", fields: `"ratio":"9:16","resolution":"720p"`, wantSize: "1280x720"},
 		{name: "landscape aspect ratio", fields: `"aspect_ratio":"16:9","resolution":"720p"`, wantSize: "1280x720"},
-		{name: "other resolution", fields: `"ratio":"9:16","resolution":"1080p"`},
+		{name: "other resolution", fields: `"ratio":"9:16","resolution":"1080p"`, wantSize: "1280x720"},
 	}
 
 	for _, tt := range tests {
@@ -158,11 +159,7 @@ func TestBuildRequestBodyPreservesUnmappedTokenStackSizeFields(t *testing.T) {
 
 			var got map[string]any
 			require.NoError(t, common.Unmarshal(data, &got))
-			if tt.wantSize == "" {
-				assert.NotContains(t, got, "size")
-			} else {
-				assert.Equal(t, tt.wantSize, got["size"])
-			}
+			assert.Equal(t, tt.wantSize, got["size"])
 			if strings.Contains(tt.fields, `"ratio"`) {
 				assert.Equal(t, "9:16", got["ratio"])
 			} else {
@@ -281,21 +278,52 @@ func TestTokenStackSora15sTransformIsLimitedToDocumentedModels(t *testing.T) {
 		})
 	}
 
-	for _, model := range []string{
-		"seedance-2-0-sale",
-		"doubao-seedance-2-0-260128",
-		"doubao-seedance-2-0-fast-260128",
-		"seedance-2.0-720p-fast-15s",
-	} {
+	for _, model := range []string{"seedance-2-0-sale"} {
 		t.Run(model, func(t *testing.T) {
 			profile, ok := soraModelProfileForInfo(tokenStackRelayInfo("https://www.tokenstack.cc", model))
 			assert.False(t, ok)
 			assert.Equal(t, requestTransformNone, profile.JSONFinalTransform)
 		})
 	}
+
+	for _, model := range []string{"doubao-seedance-2-0-260128", "doubao-seedance-2-0-fast-260128"} {
+		t.Run(model, func(t *testing.T) {
+			profile, ok := soraModelProfileForInfo(tokenStackRelayInfo("https://www.tokenstack.cc", model))
+			require.True(t, ok)
+			assert.Equal(t, requestTransformTokenStackDoubao, profile.JSONFinalTransform)
+			assert.Equal(t, 5, profile.DefaultDuration)
+		})
+	}
+
+	profile, ok := soraModelProfileForInfo(tokenStackRelayInfo("https://www.tokenstack.cc", tokenStackMultiResolution720FastModel))
+	require.True(t, ok)
+	assert.Equal(t, requestTransformNone, profile.JSONFinalTransform)
+	assert.Equal(t, 15, profile.FixedDuration)
 }
 
-func TestEstimateBillingUsesSubmittedTokenStackDuration(t *testing.T) {
+func TestTokenStackMappedProfileOverridesOriginDurationSemantics(t *testing.T) {
+	info := tokenStackRelayInfo("https://www.tokenstack.cc", tokenStackDoubaoModel)
+	info.OriginModelName = axMultimodalVideoModel
+	profile, ok := soraModelProfileForInfo(info)
+	require.True(t, ok)
+	assert.Equal(t, 5, profile.DefaultDuration)
+	assert.Zero(t, profile.FixedDuration)
+	assert.False(t, profile.SkipGenericDurationMapping)
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"alias","prompt":"animate","duration":12}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	body, err := (&TaskAdaptor{}).BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var got map[string]any
+	require.NoError(t, common.Unmarshal(data, &got))
+	assert.Equal(t, "12", got["seconds"])
+}
+
+func TestEstimateBillingUsesEffectiveTokenStackDuration(t *testing.T) {
 	tests := []struct {
 		name          string
 		upstreamModel string
@@ -309,16 +337,16 @@ func TestEstimateBillingUsesSubmittedTokenStackDuration(t *testing.T) {
 			wantSeconds:   15,
 		},
 		{
-			name:          "multiresolution submitted duration",
+			name:          "multiresolution fixed duration unit",
 			upstreamModel: "seedance-2.0-720p-fast-15s",
 			bodyJSON:      `{"model":"sd-bak-1","prompt":"animate","aspect_ratio":"16:9","seconds":"1"}`,
-			wantSeconds:   1,
+			wantSeconds:   15,
 		},
 		{
-			name:          "sora compatible submitted duration",
+			name:          "sora compatible fixed duration",
 			upstreamModel: "seedance-2-0-15s-slow",
 			bodyJSON:      `{"model":"sd-bak-1","prompt":"animate","duration":5}`,
-			wantSeconds:   5,
+			wantSeconds:   15,
 		},
 	}
 

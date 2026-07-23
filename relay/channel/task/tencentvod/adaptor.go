@@ -501,6 +501,10 @@ func convertToRequestPayload(req *relaycommon.TaskSubmitReq, info *relaycommon.R
 	if err != nil {
 		return nil, err
 	}
+	audioGeneration := normalizeEnabled(metadata.AudioGeneration)
+	if audioGeneration == "" {
+		audioGeneration = "Disabled"
+	}
 	payload := &requestPayload{
 		SubAppID:        subAppID,
 		ModelName:       "Kling",
@@ -519,7 +523,7 @@ func convertToRequestPayload(req *relaycommon.TaskSubmitReq, info *relaycommon.R
 			Duration:              &durationFloat,
 			Resolution:            resolution,
 			AspectRatio:           aspectRatio,
-			AudioGeneration:       normalizeEnabled(metadata.AudioGeneration),
+			AudioGeneration:       audioGeneration,
 			PersonGeneration:      metadata.PersonGeneration,
 			InputComplianceCheck:  metadata.InputComplianceCheck,
 			OutputComplianceCheck: metadata.OutputComplianceCheck,

@@ -35,7 +35,7 @@ type requestPayload struct {
 	Seed              int      `json:"seed,omitempty"`
 	Resolution        string   `json:"resolution,omitempty"`
 	MovementAmplitude string   `json:"movement_amplitude,omitempty"`
-	Bgm               bool     `json:"bgm,omitempty"`
+	Bgm               bool     `json:"bgm"`
 	Payload           string   `json:"payload,omitempty"`
 	CallbackUrl       string   `json:"callback_url,omitempty"`
 }

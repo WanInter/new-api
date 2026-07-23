@@ -4989,12 +4989,26 @@
     "No compatible channels": "没有兼容渠道",
     "Per-second credits": "每秒积分",
     "Preview duration": "预览时长",
-    "Required canonical fields": "必需规范字段",
+    "Canonical billing fields": "规范计费字段",
+    "Optional": "可选",
+    "Provider default": "供应商默认值",
+    "The canonical schema for {{model}} changed from {{configured}} to {{current}}.": "模型 {{model}} 的规范架构已从 {{configured}} 变更为 {{current}}。",
+    "Use current canonical schema": "使用当前规范架构",
     "Set a per-second credit price for every supported resolution.": "请为每个支持的分辨率设置每秒积分价格。",
     "Unable to load billing capability. Generic expressions remain available.": "无法加载计费能力，仍可使用通用表达式。",
     "Use canonical video pricing": "使用规范视频计费",
     "Use general expression pricing": "使用通用表达式计费",
     "{{resolution}}, {{duration}} seconds = {{credits}} credits": "{{resolution}}，{{duration}} 秒 = {{credits}} 积分",
-    "Failed to update billing models": "更新计费模型失败"
+    "Failed to update billing models": "更新计费模型失败",
+    "All supported durations": "所有支持的时长",
+    "Credits / request": "积分/次",
+    "Fixed credits by specification": "按规格固定积分",
+    "Per second": "按秒",
+    "Per specification": "按规格",
+    "Pricing method": "计价方式",
+    "Set a credit price for every supported specification.": "请为每个支持的规格设置积分价格。",
+    "The canonical billing schema is not supported by this editor.": "此编辑器不支持当前规范计费架构。",
+    "{{specification}}, {{duration}} seconds = {{credits}} credits": "{{specification}}，{{duration}} 秒 = {{credits}} 积分",
+    "{{specification}} = {{credits}} credits": "{{specification}} = {{credits}} 积分"
   }
 }

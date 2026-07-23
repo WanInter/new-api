@@ -4989,12 +4989,26 @@
     "No compatible channels": "Khong co kenh tuong thich",
     "Per-second credits": "Tin dung moi giay",
     "Preview duration": "Thoi luong xem truoc",
-    "Required canonical fields": "Truong chuan hoa bat buoc",
+    "Canonical billing fields": "Các trường tính phí chuẩn hóa",
+    "Optional": "Tùy chọn",
+    "Provider default": "Mặc định của nhà cung cấp",
+    "The canonical schema for {{model}} changed from {{configured}} to {{current}}.": "Schema chuẩn hóa của {{model}} đã đổi từ {{configured}} thành {{current}}.",
+    "Use current canonical schema": "Dùng schema chuẩn hóa hiện tại",
     "Set a per-second credit price for every supported resolution.": "Dat gia tin dung moi giay cho moi do phan giai duoc ho tro.",
     "Unable to load billing capability. Generic expressions remain available.": "Khong the tai kha nang tinh phi. Bieu thuc chung van kha dung.",
     "Use canonical video pricing": "Dung gia video chuan hoa",
     "Use general expression pricing": "Dung gia bieu thuc chung",
     "{{resolution}}, {{duration}} seconds = {{credits}} credits": "{{resolution}}, {{duration}} giay = {{credits}} tin dung",
-    "Failed to update billing models": "Khong the cap nhat cac mo hinh tinh phi"
+    "Failed to update billing models": "Không thể cập nhật các mô hình tính phí",
+    "All supported durations": "Tất cả thời lượng được hỗ trợ",
+    "Credits / request": "Tín dụng / yêu cầu",
+    "Fixed credits by specification": "Tín dụng cố định theo thông số",
+    "Per second": "Theo giây",
+    "Per specification": "Theo thông số",
+    "Pricing method": "Phương thức định giá",
+    "Set a credit price for every supported specification.": "Đặt giá tín dụng cho từng thông số được hỗ trợ.",
+    "The canonical billing schema is not supported by this editor.": "Trình chỉnh sửa này không hỗ trợ schema tính phí chuẩn hóa hiện tại.",
+    "{{specification}}, {{duration}} seconds = {{credits}} credits": "{{specification}}, {{duration}} giây = {{credits}} tín dụng",
+    "{{specification}} = {{credits}} credits": "{{specification}} = {{credits}} tín dụng"
   }
 }

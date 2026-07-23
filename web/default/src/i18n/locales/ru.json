@@ -4989,12 +4989,26 @@
     "No compatible channels": "Нет совместимых каналов",
     "Per-second credits": "Кредиты за секунду",
     "Preview duration": "Длительность предпросмотра",
-    "Required canonical fields": "Обязательные канонические поля",
+    "Canonical billing fields": "Канонические поля тарификации",
+    "Optional": "Необязательно",
+    "Provider default": "Значение провайдера по умолчанию",
+    "The canonical schema for {{model}} changed from {{configured}} to {{current}}.": "Каноническая схема для {{model}} изменилась с {{configured}} на {{current}}.",
+    "Use current canonical schema": "Использовать текущую каноническую схему",
     "Set a per-second credit price for every supported resolution.": "Укажите цену в кредитах за секунду для каждого поддерживаемого разрешения.",
     "Unable to load billing capability. Generic expressions remain available.": "Не удалось загрузить возможности тарификации. Обычные выражения по-прежнему доступны.",
     "Use canonical video pricing": "Использовать каноническую тарификацию видео",
     "Use general expression pricing": "Использовать тарификацию общим выражением",
     "{{resolution}}, {{duration}} seconds = {{credits}} credits": "{{resolution}}, {{duration}} сек. = {{credits}} кредитов",
-    "Failed to update billing models": "Не удалось обновить модели тарификации"
+    "Failed to update billing models": "Не удалось обновить модели тарификации",
+    "All supported durations": "Все поддерживаемые длительности",
+    "Credits / request": "Кредиты / запрос",
+    "Fixed credits by specification": "Фиксированные кредиты по спецификации",
+    "Per second": "За секунду",
+    "Per specification": "За спецификацию",
+    "Pricing method": "Способ тарификации",
+    "Set a credit price for every supported specification.": "Укажите цену в кредитах для каждой поддерживаемой спецификации.",
+    "The canonical billing schema is not supported by this editor.": "Этот редактор не поддерживает данную каноническую схему тарификации.",
+    "{{specification}}, {{duration}} seconds = {{credits}} credits": "{{specification}}, {{duration}} сек. = {{credits}} кредитов",
+    "{{specification}} = {{credits}} credits": "{{specification}} = {{credits}} кредитов"
   }
 }

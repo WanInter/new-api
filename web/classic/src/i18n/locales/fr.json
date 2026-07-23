@@ -3870,11 +3870,26 @@
     "No compatible channels": "Aucun canal compatible",
     "Per-second credits": "Credits par seconde",
     "Preview duration": "Duree de l apercu",
-    "Required canonical fields": "Champs canoniques requis",
+    "Canonical billing fields": "Champs de facturation canoniques",
+    "Optional": "Facultatif",
+    "Provider default": "Valeur par défaut du fournisseur",
     "Set a per-second credit price for every supported resolution.": "Definissez un prix en credits par seconde pour chaque resolution prise en charge.",
     "Unable to load billing capability. Generic expressions remain available.": "Impossible de charger la capacite de facturation. Les expressions generiques restent disponibles.",
     "Use canonical video pricing": "Utiliser la tarification video canonique",
     "Use general expression pricing": "Utiliser la tarification par expression generale",
-    "{{resolution}}, {{duration}} seconds = {{credits}} credits": "{{resolution}}, {{duration}} secondes = {{credits}} credits"
+    "{{resolution}}, {{duration}} seconds = {{credits}} credits": "{{resolution}}, {{duration}} secondes = {{credits}} crédits",
+    "All supported durations": "Toutes les durées prises en charge",
+    "Canonical pricing cannot be saved for {{model}}: {{reason}}": "Impossible d’enregistrer la tarification canonique de {{model}} : {{reason}}",
+    "Credits / request": "Crédits / requête",
+    "Fixed credits by specification": "Crédits fixes par spécification",
+    "Per second": "Par seconde",
+    "Per specification": "Par spécification",
+    "Pricing method": "Mode de tarification",
+    "Request failed": "Échec de la requête",
+    "Set a credit price for every supported specification.": "Définissez un prix en crédits pour chaque spécification prise en charge.",
+    "The canonical billing schema is not supported by this editor.": "Le schéma de facturation canonique n’est pas pris en charge par cet éditeur.",
+    "The canonical schema for {{model}} changed from {{configured}} to {{current}}.": "Le schéma canonique de {{model}} est passé de {{configured}} à {{current}}.",
+    "{{specification}}, {{duration}} seconds = {{credits}} credits": "{{specification}}, {{duration}} secondes = {{credits}} crédits",
+    "{{specification}} = {{credits}} credits": "{{specification}} = {{credits}} crédits"
   }
 }

@@ -514,7 +514,7 @@ func TestBuildRequestBodyConvertsAllLegacyImageFieldsWithoutLimit(t *testing.T) 
 	assert.Len(t, content, 11)
 }
 
-func TestProfiledModelsEstimateSubmittedDuration(t *testing.T) {
+func TestProfiledFixedModelsEstimateDocumentedDuration(t *testing.T) {
 	for _, modelName := range []string{axMultimodalVideoModel, sdquanImageVideoModel} {
 		for _, requestedDuration := range []int{0, 5, 30} {
 			t.Run(fmt.Sprintf("%s_duration_%d", modelName, requestedDuration), func(t *testing.T) {
@@ -528,17 +528,13 @@ func TestProfiledModelsEstimateSubmittedDuration(t *testing.T) {
 					Duration: requestedDuration,
 				}, info)
 
-				expected := requestedDuration
-				if expected == 0 {
-					expected = defaultUnprofiledVideoSeconds
-				}
-				assert.Equal(t, expected, seconds)
+				assert.Equal(t, 15, seconds)
 			})
 		}
 	}
 }
 
-func TestBuildRequestBodyPreservesProfiledDuration(t *testing.T) {
+func TestBuildRequestBodyMaterializesProfiledFixedDuration(t *testing.T) {
 	bodyJSON := `{
 		"model":"ax2.0-9tu",
 		"prompt":"animate",
@@ -560,19 +556,19 @@ func TestBuildRequestBodyPreservesProfiledDuration(t *testing.T) {
 
 	var got map[string]any
 	require.NoError(t, common.Unmarshal(data, &got))
-	assert.Equal(t, float64(5), got["duration"])
+	assert.Equal(t, float64(15), got["duration"])
 	assert.NotContains(t, got, "seconds")
+	assert.Equal(t, false, got["generate_audio"])
 }
 
-func TestBuildRequestBodyMapsProfiledSecondsAliasToDurationWithoutChangingValue(t *testing.T) {
+func TestBuildRequestBodyReplacesProfiledSecondsAliasWithFixedDuration(t *testing.T) {
 	tests := []struct {
 		name    string
 		seconds string
-		want    any
 	}{
-		{name: "string value", seconds: `"5"`, want: "5"},
-		{name: "explicit numeric zero", seconds: "0", want: float64(0)},
-		{name: "fractional numeric value", seconds: "14.5", want: float64(14.5)},
+		{name: "string value", seconds: `"5"`},
+		{name: "explicit numeric zero", seconds: "0"},
+		{name: "fractional numeric value", seconds: "14.5"},
 	}
 
 	for _, tt := range tests {
@@ -598,13 +594,13 @@ func TestBuildRequestBodyMapsProfiledSecondsAliasToDurationWithoutChangingValue(
 
 			var got map[string]any
 			require.NoError(t, common.Unmarshal(data, &got))
-			assert.Equal(t, tt.want, got["duration"])
+			assert.Equal(t, float64(15), got["duration"])
 			assert.NotContains(t, got, "seconds")
 		})
 	}
 }
 
-func TestEstimateBillingPreservesProfiledDuration(t *testing.T) {
+func TestEstimateBillingUsesProfiledFixedDuration(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Set("task_request", relaycommon.TaskSubmitReq{
 		Model:    "public-ax-alias",
@@ -618,10 +614,10 @@ func TestEstimateBillingPreservesProfiledDuration(t *testing.T) {
 
 	ratios := (&TaskAdaptor{}).EstimateBilling(c, info)
 
-	assert.Equal(t, float64(5), ratios["seconds"])
+	assert.Equal(t, float64(15), ratios["seconds"])
 }
 
-func TestModelProfilesDoNotOverrideRequestedDuration(t *testing.T) {
+func TestCanvasProfileOverridesRequestedDuration(t *testing.T) {
 	info := &relaycommon.RelayInfo{
 		OriginModelName: seedanceGatewayModel,
 		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: canvasStandardSeedanceModel},
@@ -629,5 +625,5 @@ func TestModelProfilesDoNotOverrideRequestedDuration(t *testing.T) {
 
 	seconds := estimateVideoSeconds(relaycommon.TaskSubmitReq{Model: seedanceGatewayModel, Duration: 20}, info)
 
-	assert.Equal(t, 20, seconds)
+	assert.Equal(t, 15, seconds)
 }

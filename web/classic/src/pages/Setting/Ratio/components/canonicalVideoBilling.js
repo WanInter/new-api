@@ -16,13 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 
 export const CANONICAL_DURATION_PATH = 'billing.duration_seconds';
-export const CANONICAL_RESOLUTION_PATH = 'billing.resolution';
+export const CANONICAL_DEFAULT_RATE_KEY = '__all__';
+
 const DEFAULT_QUOTA_PER_UNIT = 20;
 const LEGACY_CREDIT_SCALE = 1000000 / DEFAULT_QUOTA_PER_UNIT;
-
-const DURATION_EXPR = `param("${CANONICAL_DURATION_PATH}")`;
-const RESOLUTION_EXPR = `param("${CANONICAL_RESOLUTION_PATH}")`;
+const OMITTED_SPECIFICATION_VALUE = '__omitted__';
 const NUMERIC_DRAFT_REGEX = /^(?:\d+(?:\.\d*)?|\.\d*)?$/;
+const NUMBER_PATTERN = '[0-9.eE+-]+';
+const SUPPORTED_FIELD_TYPES = new Set(['number', 'string', 'boolean']);
 
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -81,7 +82,7 @@ function normalizeField(value) {
   if (!field) return null;
   return {
     path: toString(field.path),
-    type: toString(field.type),
+    type: toString(field.type).toLowerCase(),
     required: toBoolean(field.required),
     enum_values: Array.isArray(field.enum_values)
       ? field.enum_values.map(toString).filter(Boolean)
@@ -125,110 +126,354 @@ function getCanonicalCreditScale(capability) {
   return quotaPerUnit > 0 ? 1000000 / quotaPerUnit : LEGACY_CREDIT_SCALE;
 }
 
-export function getCanonicalVideoDimensions(capability) {
+function normalizeEnumValue(field, value) {
+  const text = String(value).trim();
+  switch (field.type) {
+    case 'string':
+      return text ? text : null;
+    case 'number': {
+      const number = Number(text);
+      return Number.isFinite(number) ? formatNumber(number) : null;
+    }
+    case 'boolean':
+      if (text === 'true' || text === 'false') return text;
+      return null;
+    default:
+      return null;
+  }
+}
+
+function getEnumValues(field) {
+  const values = (field?.enum_values || [])
+    .map((value) => normalizeEnumValue(field, value))
+    .filter((value) => value !== null);
+  return [...new Set(values)];
+}
+
+function getFieldName(path) {
+  return String(path || '').replace(/^billing\./, '');
+}
+
+function buildSpecificationKey(entries) {
+  if (entries.length === 0) return CANONICAL_DEFAULT_RATE_KEY;
+  return JSON.stringify(
+    entries.map((entry) => [
+      entry.field.path,
+      entry.omitted ? null : entry.value,
+    ]),
+  );
+}
+
+function buildSpecificationLabel(entries) {
+  if (entries.length === 0) return '';
+  const entryLabel = (entry) =>
+    entry.omitted ? OMITTED_SPECIFICATION_VALUE : entry.value;
+  if (entries.length === 1) return entryLabel(entries[0]);
+  return entries
+    .map((entry) => `${getFieldName(entry.field.path)}=${entryLabel(entry)}`)
+    .join(', ');
+}
+
+export function formatCanonicalSpecificationLabel(specification, t) {
+  const entries = specification?.entries || [];
+  const translate = typeof t === 'function' ? t : (value) => value;
+  const entryLabel = (entry) =>
+    entry.omitted ? translate('Provider default') : entry.value;
+  if (entries.length === 0) return '';
+  if (entries.length === 1) return entryLabel(entries[0]);
+  return entries
+    .map((entry) => `${getFieldName(entry.field.path)}=${entryLabel(entry)}`)
+    .join(', ');
+}
+
+function buildSpecifications(fields) {
+  let specifications = [{ entries: [] }];
+  for (const field of fields) {
+    const entries = getEnumValues(field).map((value) => ({
+      field,
+      value,
+      omitted: false,
+    }));
+    if (!field.required) {
+      entries.unshift({ field, value: '', omitted: true });
+    }
+    const next = [];
+    for (const specification of specifications) {
+      for (const entry of entries) {
+        next.push({
+          entries: [...specification.entries, entry],
+        });
+      }
+    }
+    specifications = next;
+  }
+  return specifications.map((specification) => ({
+    ...specification,
+    key: buildSpecificationKey(specification.entries),
+    label: buildSpecificationLabel(specification.entries),
+  }));
+}
+
+export function getCanonicalPricingSchema(
+  capability,
+  pricingMode = 'per-second',
+) {
   const fields = capability?.fields || [];
   const durationField = fields.find(
     (field) => field.path === CANONICAL_DURATION_PATH,
   );
-  const resolutionField = fields.find(
-    (field) => field.path === CANONICAL_RESOLUTION_PATH,
-  );
-  const durations = (durationField?.enum_values || [])
+  const priceMode =
+    pricingMode === 'per-second' && durationField?.required
+      ? 'per-second'
+      : 'fixed';
+  const specificationFields =
+    priceMode === 'per-second'
+      ? fields.filter((field) => field.path !== CANONICAL_DURATION_PATH)
+      : fields;
+  const durations = getEnumValues(durationField)
     .map((value) => Number(value))
     .filter((value) => Number.isFinite(value) && value > 0)
     .sort((a, b) => a - b);
-  const resolutions = (resolutionField?.enum_values || []).filter(Boolean);
-  return { durationField, resolutionField, durations, resolutions };
+  const specifications = buildSpecifications(specificationFields);
+
+  return {
+    fields,
+    durationField,
+    specificationFields,
+    durations,
+    specifications,
+    rateKeys: specifications.map((specification) => specification.key),
+    priceMode,
+  };
 }
 
-export function getCanonicalVideoBlockReason(capability) {
+function isSupportedCanonicalField(field) {
+  if (!field || !/^billing\.[^.]+$/.test(field.path)) return false;
+  if (!SUPPORTED_FIELD_TYPES.has(field.type)) return false;
+  return (
+    field.enum_values.length > 0 &&
+    getEnumValues(field).length === field.enum_values.length
+  );
+}
+
+export function getCanonicalPricingBlockReason(capability) {
   if (!capability) return '';
-  if (capability.validation_error) return capability.validation_error;
   if ((capability.incompatible_channels || []).length > 0) {
     return capability.incompatible_channels
       .map((channel) => `${channel.name}: ${channel.reason}`)
       .join('; ');
   }
+  if (capability.validation_error) return capability.validation_error;
   if (!capability.canonical_available) return 'canonical_unavailable';
+  if (!capability.schema_version) return 'canonical_schema_incomplete';
 
-  const { durationField, resolutionField, durations, resolutions } =
-    getCanonicalVideoDimensions(capability);
+  const schema = getCanonicalPricingSchema(capability);
+  const paths = schema.fields.map((field) => field.path);
   if (
-    durationField?.type !== 'number' ||
-    !durationField.required ||
-    resolutionField?.type !== 'string' ||
-    !resolutionField.required ||
-    durations.length === 0 ||
-    resolutions.length === 0
+    schema.fields.length === 0 ||
+    new Set(paths).size !== paths.length ||
+    schema.fields.some((field) => !isSupportedCanonicalField(field)) ||
+    (schema.durationField &&
+      (schema.durationField.type !== 'number' ||
+        schema.durations.length === 0 ||
+        getEnumValues(schema.durationField).length !==
+          schema.durations.length)) ||
+    (!schema.durationField && schema.specificationFields.length === 0) ||
+    schema.specifications.length === 0
   ) {
     return 'canonical_schema_incomplete';
   }
   return '';
 }
 
-export function isCanonicalVideoAvailable(capability) {
-  return Boolean(capability && !getCanonicalVideoBlockReason(capability));
+export function isCanonicalPricingAvailable(capability) {
+  return Boolean(capability && !getCanonicalPricingBlockReason(capability));
 }
 
 export function isCanonicalRateDraft(value) {
   return NUMERIC_DRAFT_REGEX.test(value);
 }
 
-export function buildCanonicalVideoExpr(capability, rates) {
-  const { durations, resolutions } = getCanonicalVideoDimensions(capability);
-  if (durations.length === 0 || resolutions.length === 0) return '';
+export function areCanonicalRatesComplete(rates, rateKeys) {
+  return rateKeys.every((key) => {
+    const value = rates?.[key];
+    return (
+      value !== undefined &&
+      value !== '' &&
+      Number.isFinite(Number(value)) &&
+      Number(value) >= 0
+    );
+  });
+}
+
+export function hasCanonicalSchemaVersionConflict(
+  configuredSchema,
+  capability,
+) {
+  if (!capability) return false;
+  return (
+    String(configuredSchema || '').trim() !==
+    String(capability.schema_version || '').trim()
+  );
+}
+
+function enumLiteral(field, value) {
+  switch (field.type) {
+    case 'number':
+      return formatNumber(value);
+    case 'boolean':
+      return value === 'true' ? 'true' : 'false';
+    default:
+      return JSON.stringify(value);
+  }
+}
+
+function specificationCondition(specification) {
+  return specification.entries
+    .map(({ field, value, omitted }) =>
+      omitted
+        ? `param(${JSON.stringify(field.path)}) == nil`
+        : `param(${JSON.stringify(field.path)}) == ${enumLiteral(field, value)}`,
+    )
+    .join(' && ');
+}
+
+function specificationTierStem(specification) {
+  if (specification.entries.length === 0) return '';
+  if (specification.entries.some(({ field }) => !field.required)) {
+    return `spec:${specification.key}`;
+  }
+  if (specification.entries.length === 1) {
+    return specification.entries[0].value;
+  }
+  return specification.entries
+    .map(({ field, value }) => `${getFieldName(field.path)}=${value}`)
+    .join('|');
+}
+
+function tierLabel(specification, duration) {
+  const stem = specificationTierStem(specification);
+  if (duration !== null) return stem ? `${stem}_${duration}s` : `${duration}s`;
+  return stem || 'default';
+}
+
+function buildDurationExpression(specification, durations, rate, creditScale) {
+  const branches = durations.map((duration) => {
+    const rawCost = formatNumber(rate * duration * creditScale);
+    return `param(${JSON.stringify(
+      CANONICAL_DURATION_PATH,
+    )}) == ${duration} ? tier(${JSON.stringify(
+      tierLabel(specification, duration),
+    )}, ${rawCost})`;
+  });
+  return `(${branches.join(' : ')} : tier("unsupported_duration", 0))`;
+}
+
+export function buildCanonicalPricingExpr(
+  capability,
+  rates,
+  pricingMode = 'per-second',
+) {
+  if (!isCanonicalPricingAvailable(capability)) return '';
+  const schema = getCanonicalPricingSchema(capability, pricingMode);
+  if (!areCanonicalRatesComplete(rates, schema.rateKeys)) return '';
   const creditScale = getCanonicalCreditScale(capability);
 
-  const durationExpr = (resolution) => {
-    const rate = Number(rates?.[resolution]) || 0;
-    const branches = durations.map((duration) => {
-      const rawCost = formatNumber(rate * duration * creditScale);
-      return `${DURATION_EXPR} == ${duration} ? tier(${JSON.stringify(
-        `${resolution}_${duration}s`,
-      )}, ${rawCost})`;
+  if (schema.priceMode === 'per-second') {
+    const durationExpressions = schema.specifications.map((specification) => {
+      const rate = Number(rates?.[specification.key]) || 0;
+      return buildDurationExpression(
+        specification,
+        schema.durations,
+        rate,
+        creditScale,
+      );
     });
-    return `(${branches.join(' : ')} : tier(${JSON.stringify(
-      `${resolution}_unsupported_duration`,
-    )}, 0))`;
-  };
+    if (schema.specificationFields.length === 0) return durationExpressions[0];
+    return schema.specifications
+      .map(
+        (specification, index) =>
+          `${specificationCondition(specification)} ? ${durationExpressions[index]}`,
+      )
+      .concat('tier("unsupported_specification", 0)')
+      .join(' : ');
+  }
 
-  return resolutions
-    .map(
-      (resolution) =>
-        `${RESOLUTION_EXPR} == ${JSON.stringify(resolution)} ? ${durationExpr(resolution)}`,
-    )
-    .concat('tier("unsupported_resolution", 0)')
+  return schema.specifications
+    .map((specification) => {
+      const rawCost = formatNumber(
+        (Number(rates?.[specification.key]) || 0) * creditScale,
+      );
+      return `${specificationCondition(specification)} ? tier(${JSON.stringify(
+        tierLabel(specification, null),
+      )}, ${rawCost})`;
+    })
+    .concat('tier("unsupported_specification", 0)')
     .join(' : ');
 }
 
-export function extractCanonicalVideoRates(expr, capability) {
-  if (!capability || !String(expr || '').includes(DURATION_EXPR)) return {};
-  const { durations, resolutions } = getCanonicalVideoDimensions(capability);
-  if (durations.length === 0) return {};
-  const creditScale = getCanonicalCreditScale(capability);
-
-  return resolutions.reduce((rates, resolution) => {
-    const values = durations
-      .map((duration) => {
-        const label = `${resolution}_${duration}s`;
-        const match = String(expr).match(
-          new RegExp(
-            `tier\\(${escapeRegExp(JSON.stringify(label))},\\s*([0-9.]+)\\)`,
-          ),
-        );
-        if (!match) return null;
-        const rawCost = Number(match[1]);
-        return Number.isFinite(rawCost)
-          ? rawCost / duration / creditScale
-          : null;
-      })
-      .filter((value) => value !== null);
-    if (
-      values.length === durations.length &&
-      values.every((value) => Math.abs(value - values[0]) < 1e-8)
-    ) {
-      rates[resolution] = formatNumber(values[0]);
-    }
-    return rates;
-  }, {});
+function extractTierRawCost(expr, label) {
+  const match = String(expr || '').match(
+    new RegExp(
+      `tier\\(${escapeRegExp(JSON.stringify(label))},\\s*(${NUMBER_PATTERN})\\)`,
+    ),
+  );
+  if (!match) return null;
+  const rawCost = Number(match[1]);
+  return Number.isFinite(rawCost) ? rawCost : null;
 }
+
+export function detectCanonicalPricingMode(expr, capability) {
+  const requiredDuration = capability?.fields?.find(
+    (field) => field.path === CANONICAL_DURATION_PATH,
+  );
+  if (!requiredDuration?.required) return 'fixed';
+  return /tier\("[^"]*unsupported_duration",\s*0\)/.test(String(expr || ''))
+    ? 'per-second'
+    : 'fixed';
+}
+
+export function extractCanonicalPricingRates(
+  expr,
+  capability,
+  pricingMode = detectCanonicalPricingMode(expr, capability),
+) {
+  if (!capability || !String(expr || '').includes('param("billing.')) return {};
+  const schema = getCanonicalPricingSchema(capability, pricingMode);
+  const creditScale = getCanonicalCreditScale(capability);
+  const rates = {};
+
+  for (const specification of schema.specifications) {
+    if (schema.priceMode === 'per-second') {
+      const samples = schema.durations
+        .map((duration) => {
+          const rawCost = extractTierRawCost(
+            expr,
+            tierLabel(specification, duration),
+          );
+          return rawCost === null ? null : rawCost / duration / creditScale;
+        })
+        .filter((value) => value !== null);
+      if (
+        samples.length === schema.durations.length &&
+        samples.every((value) => Math.abs(value - samples[0]) < 1e-8)
+      ) {
+        rates[specification.key] = formatNumber(samples[0]);
+      }
+      continue;
+    }
+
+    const rawCost = extractTierRawCost(expr, tierLabel(specification, null));
+    if (rawCost !== null) {
+      rates[specification.key] = formatNumber(rawCost / creditScale);
+    }
+  }
+  return rates;
+}
+
+// Compatibility exports for callers that still use the original video-specific names.
+export const getCanonicalVideoDimensions = getCanonicalPricingSchema;
+export const getCanonicalVideoBlockReason = getCanonicalPricingBlockReason;
+export const isCanonicalVideoAvailable = isCanonicalPricingAvailable;
+export const buildCanonicalVideoExpr = buildCanonicalPricingExpr;
+export const extractCanonicalVideoRates = extractCanonicalPricingRates;

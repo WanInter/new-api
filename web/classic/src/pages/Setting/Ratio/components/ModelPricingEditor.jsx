@@ -120,6 +120,7 @@ export default function ModelPricingEditor({
     filteredModels,
     pagedData,
     selectedWarnings,
+    selectedCanonicalDraftActive,
     previewRows,
     isOptionalFieldEnabled,
     handleOptionalFieldToggle,
@@ -128,6 +129,7 @@ export default function ModelPricingEditor({
     handleBillingExprChange,
     handleRequestRuleExprChange,
     handleCanonicalBillingChange,
+    handleCanonicalValidationChange,
     handleSubmit,
     addModel,
     deleteModel,
@@ -463,11 +465,14 @@ export default function ModelPricingEditor({
                 ) : selectedModel.billingMode === 'tiered_expr' ? (
                   <>
                     <CanonicalVideoBillingEditor
+                      key={selectedModel.name}
                       model={selectedModel}
                       onCanonicalChange={handleCanonicalBillingChange}
+                      onValidationChange={handleCanonicalValidationChange}
                       t={t}
                     />
-                    {!selectedModel.billingSchema ? (
+                    {!selectedModel.billingSchema &&
+                    !selectedCanonicalDraftActive ? (
                       <TieredPricingEditor
                         model={selectedModel}
                         onExprChange={handleBillingExprChange}

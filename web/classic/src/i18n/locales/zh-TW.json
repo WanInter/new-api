@@ -3863,11 +3863,26 @@
     "No compatible channels": "沒有相容渠道",
     "Per-second credits": "每秒積分",
     "Preview duration": "預覽時長",
-    "Required canonical fields": "必要的規範欄位",
+    "Canonical billing fields": "規範計費欄位",
+    "Optional": "選填",
+    "Provider default": "供應商預設值",
     "Set a per-second credit price for every supported resolution.": "請為每個支援的解析度設定每秒積分價格。",
     "Unable to load billing capability. Generic expressions remain available.": "無法載入計費能力，仍可使用一般表達式。",
     "Use canonical video pricing": "使用規範影片計費",
     "Use general expression pricing": "使用一般表達式計費",
-    "{{resolution}}, {{duration}} seconds = {{credits}} credits": "{{resolution}}，{{duration}} 秒 = {{credits}} 積分"
+    "{{resolution}}, {{duration}} seconds = {{credits}} credits": "{{resolution}}，{{duration}} 秒 = {{credits}} 積分",
+    "All supported durations": "所有支援的時長",
+    "Canonical pricing cannot be saved for {{model}}: {{reason}}": "無法儲存模型 {{model}} 的規範計費：{{reason}}",
+    "Credits / request": "積分／次",
+    "Fixed credits by specification": "按規格固定積分",
+    "Per second": "按秒",
+    "Per specification": "按規格",
+    "Pricing method": "計價方式",
+    "Request failed": "請求失敗",
+    "Set a credit price for every supported specification.": "請為每個支援的規格設定積分價格。",
+    "The canonical billing schema is not supported by this editor.": "此編輯器不支援目前的規範計費結構。",
+    "The canonical schema for {{model}} changed from {{configured}} to {{current}}.": "模型 {{model}} 的規範結構已從 {{configured}} 變更為 {{current}}。",
+    "{{specification}}, {{duration}} seconds = {{credits}} credits": "{{specification}}，{{duration}} 秒 = {{credits}} 積分",
+    "{{specification}} = {{credits}} credits": "{{specification}} = {{credits}} 積分"
   }
 }

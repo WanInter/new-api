@@ -30,6 +30,10 @@ const (
 	requestTransformOtoySeedanceReference
 	requestTransformVeoReferenceImages
 	requestTransformTokenStackSora15s
+	requestTransformTokenStackDoubao
+	requestTransformFixedContent15s
+	requestTransformFixedSora15s
+	requestTransformSeedanceGateway
 	requestTransformGrokImageVideo
 	requestTransformGrokVideo15
 )
@@ -45,18 +49,25 @@ type soraModelProfile struct {
 	SkipGenericDurationMapping bool
 	RequireFinalUpstreamModel  bool
 	DefaultDuration            int
+	FixedDuration              int
 }
 
 var soraModelProfiles = map[string]soraModelProfile{
 	axMultimodalVideoModel: {
 		JSONTransform:              requestTransformOpenAIContent,
+		JSONFinalTransform:         requestTransformFixedContent15s,
 		DropSecondsField:           true,
 		SkipGenericDurationMapping: true,
+		DefaultDuration:            15,
+		FixedDuration:              15,
 	},
 	sdquanImageVideoModel: {
 		JSONTransform:              requestTransformOpenAIContent,
+		JSONFinalTransform:         requestTransformFixedContent15s,
 		DropSecondsField:           true,
 		SkipGenericDurationMapping: true,
+		DefaultDuration:            15,
+		FixedDuration:              15,
 	},
 	otoySeedanceMiniReferenceModel: {
 		JSONTransform:              requestTransformOtoySeedanceReference,
@@ -83,11 +94,24 @@ var soraModelProfiles = map[string]soraModelProfile{
 		RequireFinalUpstreamModel:  true,
 		DefaultDuration:            6,
 	},
+	seedanceGatewayModel: {
+		JSONFinalTransform:         requestTransformSeedanceGateway,
+		SkipGenericDurationMapping: true,
+		DefaultDuration:            15,
+	},
+	canvasStandardSeedanceModel: {
+		JSONFinalTransform: requestTransformFixedSora15s,
+		DefaultDuration:    15,
+		FixedDuration:      15,
+	},
 }
 
 const (
-	tokenStackHostname       = "tokenstack.cc"
-	tokenStackMultiModeModel = "seedance-2-0-sale"
+	tokenStackHostname                    = "tokenstack.cc"
+	tokenStackMultiModeModel              = "seedance-2-0-sale"
+	tokenStackDoubaoModel                 = "doubao-seedance-2-0-260128"
+	tokenStackDoubaoFastModel             = "doubao-seedance-2-0-fast-260128"
+	tokenStackMultiResolution720FastModel = "seedance-2.0-720p-fast-15s"
 )
 
 var tokenStackSora15sModels = map[string]struct{}{
@@ -98,6 +122,34 @@ var tokenStackSora15sModels = map[string]struct{}{
 
 var tokenStackSora15sProfile = soraModelProfile{
 	JSONFinalTransform: requestTransformTokenStackSora15s,
+	DefaultDuration:    15,
+	FixedDuration:      15,
+}
+
+var tokenStackDoubaoModels = map[string]struct{}{
+	tokenStackDoubaoModel:     {},
+	tokenStackDoubaoFastModel: {},
+}
+
+var tokenStackMultiResolutionModels = map[string]struct{}{
+	"seedance-2.0-480p-mini-15s":          {},
+	"seedance-2.0-480p-fast-15s":          {},
+	"seedance-2.0-480p-15s":               {},
+	"seedance-2.0-720p-mini-15s":          {},
+	tokenStackMultiResolution720FastModel: {},
+	"seedance-2.0-720p-pro-15s":           {},
+	"seedance-2.0-1080p-15s":              {},
+	"seedance-2.0-4k-15s":                 {},
+}
+
+var tokenStackDoubaoProfile = soraModelProfile{
+	JSONFinalTransform: requestTransformTokenStackDoubao,
+	DefaultDuration:    5,
+}
+
+var tokenStackMultiResolutionProfile = soraModelProfile{
+	DefaultDuration: 15,
+	FixedDuration:   15,
 }
 
 func findSoraModelProfile(modelName string) (soraModelProfile, bool) {
@@ -124,6 +176,9 @@ func soraModelProfileForRequest(requestModel string, info *relaycommon.RelayInfo
 	if tokenStackProfile.JSONFinalTransform != requestTransformNone {
 		profile.JSONFinalTransform = tokenStackProfile.JSONFinalTransform
 	}
+	profile.SkipGenericDurationMapping = tokenStackProfile.SkipGenericDurationMapping
+	profile.DefaultDuration = tokenStackProfile.DefaultDuration
+	profile.FixedDuration = tokenStackProfile.FixedDuration
 	return profile, true
 }
 
@@ -154,6 +209,12 @@ func tokenStackProfileForInfo(info *relaycommon.RelayInfo) (soraModelProfile, bo
 	}
 	if _, ok := tokenStackSora15sModels[strings.TrimSpace(info.ChannelMeta.UpstreamModelName)]; ok {
 		return tokenStackSora15sProfile, true
+	}
+	if _, ok := tokenStackDoubaoModels[strings.TrimSpace(info.ChannelMeta.UpstreamModelName)]; ok {
+		return tokenStackDoubaoProfile, true
+	}
+	if _, ok := tokenStackMultiResolutionModels[strings.TrimSpace(info.ChannelMeta.UpstreamModelName)]; ok {
+		return tokenStackMultiResolutionProfile, true
 	}
 	return soraModelProfile{}, false
 }

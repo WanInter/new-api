@@ -234,7 +234,9 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	}
 
 	seconds := float64(estimateVideoSeconds(req, info))
-	if tokenStackSeconds, ok := tokenStackBillingSeconds(c, info); ok {
+	if profile, ok := soraModelProfileForInfo(info); ok && profile.FixedDuration > 0 {
+		seconds = float64(profile.FixedDuration)
+	} else if tokenStackSeconds, ok := tokenStackBillingSeconds(c, info); ok {
 		seconds = float64(tokenStackSeconds)
 	} else if requestSeconds, selected, billable := genericSoraRequestBillingSeconds(c, info); selected {
 		if billable {
@@ -289,19 +291,8 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if strings.HasPrefix(contentType, "application/json") {
 		var bodyMap map[string]interface{}
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
-			applyNormalizedSoraJSONVideoOutput(c, bodyMap)
-			bodyMap["model"] = info.UpstreamModelName
-			profile, hasProfile := soraModelProfileForInfo(info)
-			if hasProfile {
-				if err := applySoraModelJSONProfile(bodyMap, profile); err != nil {
-					return nil, err
-				}
-			}
-			if !hasProfile || !profile.SkipGenericDurationMapping {
-				mapDurationToSoraSeconds(bodyMap)
-			}
-			if hasProfile {
-				applySoraModelJSONFinalProfile(bodyMap, profile)
+			if err := applySoraJSONWireTransforms(c, info, bodyMap); err != nil {
+				return nil, err
 			}
 			if newBody, err := common.Marshal(bodyMap); err == nil {
 				return bytes.NewReader(newBody), nil
@@ -554,6 +545,9 @@ func soraDurationValuesFromForm(values map[string][]string) ([]string, bool) {
 }
 
 func estimateVideoSeconds(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) int {
+	if profile, ok := soraModelProfileForInfo(info); ok && profile.FixedDuration > 0 {
+		return profile.FixedDuration
+	}
 	seconds := 0
 	if req.Duration > 0 {
 		seconds = req.Duration

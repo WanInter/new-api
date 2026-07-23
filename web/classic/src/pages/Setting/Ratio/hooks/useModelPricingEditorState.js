@@ -16,12 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { API, showError, showSuccess } from '../../../../helpers';
 import {
   combineBillingExpr,
   splitBillingExprAndRequestRules,
 } from '../components/requestRuleExpr';
+import {
+  getCanonicalPricingBlockReason,
+  hasCanonicalSchemaVersionConflict,
+  normalizeCanonicalBillingCapability,
+} from '../components/canonicalVideoBilling';
 
 export const PAGE_SIZE = 10;
 export const PRICE_SUFFIX = '$/1M tokens';
@@ -636,6 +641,9 @@ export function useModelPricingEditorState({
   const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [conflictOnly, setConflictOnly] = useState(false);
+  const [canonicalPricingValidation, setCanonicalPricingValidation] = useState(
+    {},
+  );
   const [optionalFieldToggles, setOptionalFieldToggles] = useState({});
 
   useEffect(() => {
@@ -923,6 +931,28 @@ export function useModelPricingEditorState({
     }));
   };
 
+  const handleCanonicalValidationChange = useCallback((validation) => {
+    if (!validation?.modelName) return;
+    setCanonicalPricingValidation((previous) => {
+      const current = previous[validation.modelName];
+      if (
+        current?.active === validation.active &&
+        current?.valid === validation.valid &&
+        current?.reason === validation.reason
+      ) {
+        return previous;
+      }
+      return {
+        ...previous,
+        [validation.modelName]: {
+          active: Boolean(validation.active),
+          valid: Boolean(validation.valid),
+          reason: validation.reason || '',
+        },
+      };
+    });
+  }, []);
+
   const addModel = (modelName) => {
     const trimmedName = modelName.trim();
     if (!trimmedName) {
@@ -1051,6 +1081,82 @@ export function useModelPricingEditorState({
   const handleSubmit = async () => {
     setLoading(true);
     try {
+      const canonicalModels = models.filter(
+        (model) =>
+          model.billingMode === 'tiered_expr' && Boolean(model.billingSchema),
+      );
+      const selectedValidation = selectedModel
+        ? canonicalPricingValidation[selectedModel.name]
+        : null;
+      if (
+        selectedModel?.billingMode === 'tiered_expr' &&
+        selectedValidation?.active &&
+        !selectedValidation.valid
+      ) {
+        throw new Error(
+          t('Canonical pricing cannot be saved for {{model}}: {{reason}}', {
+            model: selectedModel.name,
+            reason: selectedValidation.reason,
+          }),
+        );
+      }
+      const capabilityResponses = await Promise.all(
+        canonicalModels.map((model) =>
+          API.get('/api/option/billing-capabilities', {
+            params: { model: model.name },
+            skipErrorHandler: true,
+          }),
+        ),
+      );
+      capabilityResponses.forEach((response, index) => {
+        const model = canonicalModels[index];
+        if (!response?.data?.success || !response?.data?.data) {
+          throw new Error(
+            t('Canonical pricing cannot be saved for {{model}}: {{reason}}', {
+              model: model.name,
+              reason: response?.data?.message || t('Request failed'),
+            }),
+          );
+        }
+        const capability = normalizeCanonicalBillingCapability(
+          response.data.data,
+          model.name,
+        );
+        const blockReason = getCanonicalPricingBlockReason(capability);
+        if (blockReason) {
+          const reason =
+            blockReason === 'canonical_unavailable'
+              ? t(
+                  'Every routed channel must use the same canonical schema before dynamic video pricing can be enabled.',
+                )
+              : blockReason === 'canonical_schema_incomplete'
+                ? t(
+                    'The canonical billing schema is not supported by this editor.',
+                  )
+                : blockReason;
+          throw new Error(
+            t('Canonical pricing cannot be saved for {{model}}: {{reason}}', {
+              model: model.name,
+              reason,
+            }),
+          );
+        }
+        if (
+          hasCanonicalSchemaVersionConflict(model.billingSchema, capability)
+        ) {
+          throw new Error(
+            t(
+              'The canonical schema for {{model}} changed from {{configured}} to {{current}}.',
+              {
+                model: model.name,
+                configured: model.billingSchema,
+                current: capability.schema_version || '-',
+              },
+            ),
+          );
+        }
+      });
+
       const output = {
         ModelPrice: {},
         ModelRatio: {},
@@ -1139,6 +1245,11 @@ export function useModelPricingEditorState({
     }
   };
 
+  const selectedCanonicalDraftActive = Boolean(
+    selectedModel?.billingMode === 'tiered_expr' &&
+    canonicalPricingValidation[selectedModel.name]?.active,
+  );
+
   return {
     models,
     selectedModel,
@@ -1156,6 +1267,7 @@ export function useModelPricingEditorState({
     filteredModels,
     pagedData,
     selectedWarnings,
+    selectedCanonicalDraftActive,
     previewRows,
     isOptionalFieldEnabled,
     handleOptionalFieldToggle,
@@ -1164,6 +1276,7 @@ export function useModelPricingEditorState({
     handleBillingExprChange,
     handleRequestRuleExprChange,
     handleCanonicalBillingChange,
+    handleCanonicalValidationChange,
     handleSubmit,
     addModel,
     deleteModel,

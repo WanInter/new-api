@@ -20,7 +20,6 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/gin-gonic/gin"
-	"github.com/pkg/errors"
 )
 
 // ============================
@@ -59,7 +58,7 @@ func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, info *relaycommon.Re
 	if image != nil && info != nil && info.TaskRelayInfo != nil {
 		info.Action = constant.TaskActionGenerate
 	}
-	if _, err := ResolveVeoRequestOutput(&req, veoModelName(info)); err != nil {
+	if _, err := resolveGeminiVeoParameters(&req, veoModelName(info)); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_video_output", http.StatusBadRequest)
 	}
 	return nil
@@ -109,25 +108,10 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		}
 	}
 
-	params := &VeoParameters{}
-	if err := taskcommon.UnmarshalMetadata(req.Metadata, params); err != nil {
-		return nil, errors.Wrap(err, "unmarshal metadata failed")
-	}
-	if params.DurationSeconds == 0 && req.Duration > 0 {
-		params.DurationSeconds = req.Duration
-	}
-	output, err := ResolveVeoRequestOutput(&req, veoModelName(info))
+	params, err := resolveGeminiVeoParameters(&req, veoModelName(info))
 	if err != nil {
 		return nil, err
 	}
-	if output.Resolution != "" {
-		params.Resolution = output.Resolution
-	}
-	if output.AspectRatio != "" {
-		params.AspectRatio = output.AspectRatio
-	}
-	params.Resolution = strings.ToLower(params.Resolution)
-	params.SampleCount = 1
 
 	body := VeoRequestPayload{
 		Instances:  []VeoInstance{instance},

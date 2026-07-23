@@ -95,7 +95,7 @@ func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, info *relaycommon.Re
 	if image != nil && info != nil && info.TaskRelayInfo != nil {
 		info.Action = constant.TaskActionGenerate
 	}
-	if _, err := geminitask.ResolveVeoRequestOutput(&req, vertexVeoModelName(info)); err != nil {
+	if _, err := resolveVertexVeoParameters(&req, vertexVeoModelName(info)); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_video_output", http.StatusBadRequest)
 	}
 	return nil
@@ -180,25 +180,10 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		}
 	}
 
-	params := &geminitask.VeoParameters{}
-	if err := taskcommon.UnmarshalMetadata(req.Metadata, params); err != nil {
-		return nil, fmt.Errorf("unmarshal metadata failed: %w", err)
-	}
-	if params.DurationSeconds == 0 && req.Duration > 0 {
-		params.DurationSeconds = req.Duration
-	}
-	output, err := geminitask.ResolveVeoRequestOutput(&req, vertexVeoModelName(info))
+	params, err := resolveVertexVeoParameters(&req, vertexVeoModelName(info))
 	if err != nil {
 		return nil, err
 	}
-	if output.Resolution != "" {
-		params.Resolution = output.Resolution
-	}
-	if output.AspectRatio != "" {
-		params.AspectRatio = output.AspectRatio
-	}
-	params.Resolution = strings.ToLower(params.Resolution)
-	params.SampleCount = 1
 
 	body := geminitask.VeoRequestPayload{
 		Instances:  []geminitask.VeoInstance{instance},

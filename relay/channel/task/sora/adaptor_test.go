@@ -165,7 +165,7 @@ func TestMapDurationToSoraSecondsPreservesValues(t *testing.T) {
 	}
 }
 
-func TestBuildRequestBodyPreservesCanvasStandardDuration(t *testing.T) {
+func TestBuildRequestBodyMaterializesCanvasFixedDuration(t *testing.T) {
 	tests := []struct {
 		name            string
 		upstreamModel   string
@@ -173,22 +173,22 @@ func TestBuildRequestBodyPreservesCanvasStandardDuration(t *testing.T) {
 		expectedSeconds any
 	}{
 		{
-			name:            "target model maps canonical duration",
+			name:            "target model replaces conflicting aliases",
 			upstreamModel:   canvasStandardSeedanceModel,
 			body:            `{"model":"alias","prompt":"test","duration":20,"seconds":"18s"}`,
-			expectedSeconds: "20",
+			expectedSeconds: "15",
 		},
 		{
-			name:            "target model preserves duration",
+			name:            "target model replaces submitted duration",
 			upstreamModel:   canvasStandardSeedanceModel,
 			body:            `{"model":"alias","prompt":"test","duration":14}`,
-			expectedSeconds: "14",
+			expectedSeconds: "15",
 		},
 		{
-			name:            "target model does not clamp fractional duration",
+			name:            "target model replaces fractional duration",
 			upstreamModel:   canvasStandardSeedanceModel,
 			body:            `{"model":"alias","prompt":"test","duration":14.5}`,
-			expectedSeconds: "14.5",
+			expectedSeconds: "15",
 		},
 		{
 			name:            "other models are not clamped",
@@ -197,10 +197,10 @@ func TestBuildRequestBodyPreservesCanvasStandardDuration(t *testing.T) {
 			expectedSeconds: "20",
 		},
 		{
-			name:            "target model preserves explicit zero duration",
+			name:            "target model replaces explicit zero duration",
 			upstreamModel:   canvasStandardSeedanceModel,
 			body:            `{"model":"alias","prompt":"test","duration":0}`,
-			expectedSeconds: "0",
+			expectedSeconds: "15",
 		},
 	}
 
@@ -343,7 +343,7 @@ func TestBuildRequestBodyNormalizesMultipartVideoOutputAndMetadata(t *testing.T)
 	assert.Equal(t, map[string]any{"keep": true}, metadata["provider_option"])
 }
 
-func TestEstimateBillingPreservesCanvasStandardDuration(t *testing.T) {
+func TestEstimateBillingUsesCanvasFixedDuration(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Set("task_request", relaycommon.TaskSubmitReq{Duration: 20, Seconds: "4"})
 	info := &relaycommon.RelayInfo{
@@ -353,7 +353,7 @@ func TestEstimateBillingPreservesCanvasStandardDuration(t *testing.T) {
 
 	ratios := (&TaskAdaptor{}).EstimateBilling(c, info)
 
-	require.Equal(t, float64(20), ratios["seconds"])
+	require.Equal(t, float64(15), ratios["seconds"])
 }
 
 func TestEstimateBillingPreservesGenericFractionalWireDuration(t *testing.T) {

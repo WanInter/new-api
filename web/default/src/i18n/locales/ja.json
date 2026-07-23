@@ -4989,12 +4989,26 @@
     "No compatible channels": "互換チャネルはありません",
     "Per-second credits": "秒あたりのクレジット",
     "Preview duration": "プレビュー時間",
-    "Required canonical fields": "必須の正規化フィールド",
+    "Canonical billing fields": "正規化課金フィールド",
+    "Optional": "任意",
+    "Provider default": "プロバイダーのデフォルト",
+    "The canonical schema for {{model}} changed from {{configured}} to {{current}}.": "{{model}} の正規化スキーマが {{configured}} から {{current}} に変更されました。",
+    "Use current canonical schema": "現在の正規化スキーマを使用",
     "Set a per-second credit price for every supported resolution.": "対応する各解像度に秒あたりのクレジット料金を設定してください。",
     "Unable to load billing capability. Generic expressions remain available.": "課金機能を読み込めません。汎用式は引き続き利用できます。",
     "Use canonical video pricing": "正規化動画料金を使用",
     "Use general expression pricing": "汎用式料金を使用",
     "{{resolution}}, {{duration}} seconds = {{credits}} credits": "{{resolution}}、{{duration}} 秒 = {{credits}} クレジット",
-    "Failed to update billing models": "課金モデルの更新に失敗しました"
+    "Failed to update billing models": "課金モデルの更新に失敗しました",
+    "All supported durations": "対応するすべての時間",
+    "Credits / request": "クレジット/リクエスト",
+    "Fixed credits by specification": "仕様別の固定クレジット",
+    "Per second": "秒単位",
+    "Per specification": "仕様単位",
+    "Pricing method": "料金方式",
+    "Set a credit price for every supported specification.": "対応する各仕様にクレジット料金を設定してください。",
+    "The canonical billing schema is not supported by this editor.": "このエディターは現在の正規化課金スキーマに対応していません。",
+    "{{specification}}, {{duration}} seconds = {{credits}} credits": "{{specification}}、{{duration}} 秒 = {{credits}} クレジット",
+    "{{specification}} = {{credits}} credits": "{{specification}} = {{credits}} クレジット"
   }
 }

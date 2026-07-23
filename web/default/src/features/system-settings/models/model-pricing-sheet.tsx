@@ -63,12 +63,16 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { sideDrawerContentClassName } from '@/components/drawer-layout'
 import {
+  CANONICAL_DURATION_PATH,
   areCanonicalRatesComplete,
-  buildCanonicalVideoExpr,
-  extractCanonicalVideoRates,
-  getCanonicalVideoDimensions,
-  isCanonicalVideoAvailable,
-  type CanonicalVideoRates,
+  buildCanonicalPricingExpr,
+  detectCanonicalPricingMode,
+  extractCanonicalPricingRates,
+  getCanonicalPricingSchema,
+  hasCanonicalSchemaVersionConflict,
+  isCanonicalPricingAvailable,
+  type CanonicalPricingMode,
+  type CanonicalPricingRates,
 } from './canonical-video-billing'
 import { CanonicalVideoBillingEditor } from './canonical-video-billing-editor'
 import {
@@ -173,7 +177,12 @@ export const ModelPricingEditorPanel = forwardRef<
   const [billingCapabilityLoading, setBillingCapabilityLoading] =
     useState(false)
   const [canonicalVideoBilling, setCanonicalVideoBilling] = useState(false)
-  const [canonicalRates, setCanonicalRates] = useState<CanonicalVideoRates>({})
+  const [canonicalPricingMode, setCanonicalPricingMode] =
+    useState<CanonicalPricingMode>('per-second')
+  const [canonicalRates, setCanonicalRates] = useState<CanonicalPricingRates>(
+    {}
+  )
+  const [canonicalSchemaVersion, setCanonicalSchemaVersion] = useState('')
   const billingCapabilityRequestRef = useRef(0)
   const isEditMode = !!editData
 
@@ -217,6 +226,8 @@ export const ModelPricingEditorPanel = forwardRef<
       setBillingExpr(editData.billingExpr || '')
       setRequestRuleExpr(editData.requestRuleExpr || '')
       setCanonicalVideoBilling(Boolean(editData.billingSchema))
+      setCanonicalSchemaVersion(editData.billingSchema || '')
+      setCanonicalPricingMode('per-second')
       setCanonicalRates({})
     } else {
       form.reset({
@@ -234,6 +245,8 @@ export const ModelPricingEditorPanel = forwardRef<
       setBillingExpr('')
       setRequestRuleExpr('')
       setCanonicalVideoBilling(false)
+      setCanonicalSchemaVersion('')
+      setCanonicalPricingMode('per-second')
       setCanonicalRates({})
     }
 
@@ -281,9 +294,26 @@ export const ModelPricingEditorPanel = forwardRef<
   }, [modelName, t])
 
   useEffect(() => {
-    if (!billingCapability || !editData?.billingSchema) return
+    if (!billingCapability) return
+    const nextMode = editData?.billingSchema
+      ? detectCanonicalPricingMode(
+          editData.billingExpr || '',
+          billingCapability
+        )
+      : billingCapability.fields.some(
+            (field) => field.path === CANONICAL_DURATION_PATH && field.required
+          )
+        ? 'per-second'
+        : 'fixed'
+    setCanonicalPricingMode(nextMode)
     setCanonicalRates(
-      extractCanonicalVideoRates(editData.billingExpr || '', billingCapability)
+      editData?.billingSchema
+        ? extractCanonicalPricingRates(
+            editData.billingExpr || '',
+            billingCapability,
+            nextMode
+          )
+        : {}
     )
   }, [billingCapability, editData?.billingExpr, editData?.billingSchema])
 
@@ -413,9 +443,18 @@ export const ModelPricingEditorPanel = forwardRef<
   const effectiveCanonicalExpr = useMemo(
     () =>
       canonicalVideoBilling && billingCapability
-        ? buildCanonicalVideoExpr(billingCapability, canonicalRates)
+        ? buildCanonicalPricingExpr(
+            billingCapability,
+            canonicalRates,
+            canonicalPricingMode
+          )
         : '',
-    [billingCapability, canonicalRates, canonicalVideoBilling]
+    [
+      billingCapability,
+      canonicalPricingMode,
+      canonicalRates,
+      canonicalVideoBilling,
+    ]
   )
   const effectiveBillingExpr =
     canonicalVideoBilling && effectiveCanonicalExpr
@@ -492,74 +531,140 @@ export const ModelPricingEditorPanel = forwardRef<
     return nextWarnings
   }, [editData, laneEnabled, lanePrices, pricingMode, promptPrice, t])
 
-  const validatePricingValues = useCallback(() => {
-    if (pricingMode === 'tiered_expr' && canonicalVideoBilling) {
-      const { resolutions } = getCanonicalVideoDimensions(billingCapability)
-      if (!billingCapability || !isCanonicalVideoAvailable(billingCapability)) {
+  const validatePricingValues = useCallback(
+    (
+      capability: BillingCapability | null = billingCapability,
+      capabilityLoading = billingCapabilityLoading
+    ) => {
+      if (pricingMode === 'tiered_expr' && canonicalVideoBilling) {
+        if (
+          capabilityLoading ||
+          !capability ||
+          capability.model !== modelName ||
+          !isCanonicalPricingAvailable(capability)
+        ) {
+          form.setError('ratio', {
+            message: t(
+              'Canonical video billing is unavailable for this model.'
+            ),
+          })
+          return false
+        }
+        if (
+          hasCanonicalSchemaVersionConflict(canonicalSchemaVersion, capability)
+        ) {
+          form.setError('ratio', {
+            message: t(
+              'The canonical schema for {{model}} changed from {{configured}} to {{current}}.',
+              {
+                model: modelName,
+                configured: canonicalSchemaVersion || '-',
+                current: capability.schema_version || '-',
+              }
+            ),
+          })
+          return false
+        }
+        const { rateKeys } = getCanonicalPricingSchema(
+          capability,
+          canonicalPricingMode
+        )
+        if (!areCanonicalRatesComplete(canonicalRates, rateKeys)) {
+          form.setError('ratio', {
+            message: t('Set a credit price for every supported specification.'),
+          })
+          return false
+        }
+      }
+
+      if (
+        pricingMode === 'per-token' &&
+        toNumberOrNull(promptPrice) === null &&
+        laneConfigs.some(
+          ({ key }) => laneEnabled[key] && hasValue(lanePrices[key])
+        )
+      ) {
         form.setError('ratio', {
-          message: t('Canonical video billing is unavailable for this model.'),
+          message: t('Input price is required before saving dependent prices.'),
         })
         return false
       }
-      if (!areCanonicalRatesComplete(canonicalRates, resolutions)) {
-        form.setError('ratio', {
-          message: t(
-            'Set a per-second credit price for every supported resolution.'
-          ),
+
+      if (
+        pricingMode === 'per-token' &&
+        laneEnabled.audioOutput &&
+        !hasValue(lanePrices.audioInput)
+      ) {
+        form.setError('audioRatio', {
+          message: t('Audio output price requires an audio input price.'),
         })
         return false
       }
-    }
 
-    if (
-      pricingMode === 'per-token' &&
-      toNumberOrNull(promptPrice) === null &&
-      laneConfigs.some(
-        ({ key }) => laneEnabled[key] && hasValue(lanePrices[key])
-      )
-    ) {
-      form.setError('ratio', {
-        message: t('Input price is required before saving dependent prices.'),
-      })
-      return false
-    }
-
-    if (
-      pricingMode === 'per-token' &&
-      laneEnabled.audioOutput &&
-      !hasValue(lanePrices.audioInput)
-    ) {
-      form.setError('audioRatio', {
-        message: t('Audio output price requires an audio input price.'),
-      })
-      return false
-    }
-
-    return true
-  }, [
-    billingCapability,
-    canonicalRates,
-    canonicalVideoBilling,
-    form,
-    laneEnabled,
-    lanePrices,
-    pricingMode,
-    promptPrice,
-    t,
-  ])
+      return true
+    },
+    [
+      billingCapability,
+      billingCapabilityLoading,
+      canonicalPricingMode,
+      canonicalRates,
+      canonicalSchemaVersion,
+      canonicalVideoBilling,
+      form,
+      laneEnabled,
+      lanePrices,
+      modelName,
+      pricingMode,
+      promptPrice,
+      t,
+    ]
+  )
 
   const handleCanonicalVideoBillingChange = (enabled: boolean) => {
     if (enabled && billingCapability) {
-      const { resolutions } = getCanonicalVideoDimensions(billingCapability)
+      const { rateKeys } = getCanonicalPricingSchema(
+        billingCapability,
+        canonicalPricingMode
+      )
       setCanonicalRates((previous) =>
-        resolutions.reduce<CanonicalVideoRates>((next, resolution) => {
-          next[resolution] = previous[resolution] || ''
+        rateKeys.reduce<CanonicalPricingRates>((next, key) => {
+          next[key] = previous[key] || ''
           return next
         }, {})
       )
+      setCanonicalSchemaVersion(billingCapability.schema_version)
       setRequestRuleExpr('')
+    } else if (!enabled) {
+      setCanonicalSchemaVersion('')
     }
     setCanonicalVideoBilling(enabled)
+  }
+
+  const handleCanonicalPricingModeChange = (mode: CanonicalPricingMode) => {
+    setCanonicalPricingMode(mode)
+    if (!billingCapability) return
+    const { rateKeys } = getCanonicalPricingSchema(billingCapability, mode)
+    setCanonicalRates((previous) =>
+      rateKeys.reduce<CanonicalPricingRates>((next, key) => {
+        next[key] = previous[key] || ''
+        return next
+      }, {})
+    )
+    if (canonicalVideoBilling) {
+      setCanonicalSchemaVersion(billingCapability.schema_version)
+    }
+  }
+
+  const handleCanonicalRatesChange = (nextRates: CanonicalPricingRates) => {
+    setCanonicalRates(nextRates)
+    if (!canonicalVideoBilling || !billingCapability) return
+    const { rateKeys } = getCanonicalPricingSchema(
+      billingCapability,
+      canonicalPricingMode
+    )
+    if (areCanonicalRatesComplete(nextRates, rateKeys)) {
+      setCanonicalSchemaVersion(billingCapability.schema_version)
+    }
   }
 
   const buildSubmitData = useCallback(
@@ -580,15 +685,13 @@ export const ModelPricingEditorPanel = forwardRef<
       if (pricingMode === 'tiered_expr') {
         data.billingExpr = effectiveBillingExpr
         data.requestRuleExpr = effectiveRequestRuleExpr
-        data.billingSchema = canonicalVideoBilling
-          ? billingCapability?.schema_version || ''
-          : ''
+        data.billingSchema = canonicalVideoBilling ? canonicalSchemaVersion : ''
       }
 
       return data
     },
     [
-      billingCapability?.schema_version,
+      canonicalSchemaVersion,
       canonicalVideoBilling,
       effectiveBillingExpr,
       effectiveRequestRuleExpr,
@@ -602,10 +705,44 @@ export const ModelPricingEditorPanel = forwardRef<
       commitDraft: async () => {
         const isValid = await form.trigger()
         if (!isValid || !validatePricingValues()) return null
+        if (pricingMode === 'tiered_expr' && canonicalVideoBilling) {
+          try {
+            const response = await getBillingCapability(modelName)
+            if (!response.success || !response.data) {
+              const message = response.message || t('Request failed')
+              setBillingCapability(null)
+              setBillingCapabilityError(message)
+              form.setError('ratio', {
+                message,
+              })
+              return null
+            }
+            setBillingCapability(response.data)
+            setBillingCapabilityError('')
+            if (!validatePricingValues(response.data, false)) return null
+          } catch (error: unknown) {
+            const message =
+              error instanceof Error ? error.message : t('Request failed')
+            setBillingCapability(null)
+            setBillingCapabilityError(message)
+            form.setError('ratio', {
+              message,
+            })
+            return null
+          }
+        }
         return buildSubmitData(form.getValues())
       },
     }),
-    [form, validatePricingValues, buildSubmitData]
+    [
+      buildSubmitData,
+      canonicalVideoBilling,
+      form,
+      modelName,
+      pricingMode,
+      t,
+      validatePricingValues,
+    ]
   )
 
   const showActions = Boolean(onSave)
@@ -779,9 +916,17 @@ export const ModelPricingEditorPanel = forwardRef<
                         capabilityError={billingCapabilityError}
                         isLoading={billingCapabilityLoading}
                         enabled={canonicalVideoBilling}
+                        configuredSchemaVersion={canonicalSchemaVersion}
+                        pricingMode={canonicalPricingMode}
                         rates={canonicalRates}
                         onEnabledChange={handleCanonicalVideoBillingChange}
-                        onRatesChange={setCanonicalRates}
+                        onSchemaVersionAccept={() =>
+                          setCanonicalSchemaVersion(
+                            billingCapability?.schema_version || ''
+                          )
+                        }
+                        onPricingModeChange={handleCanonicalPricingModeChange}
+                        onRatesChange={handleCanonicalRatesChange}
                       />
                       {!canonicalVideoBilling && (
                         <TieredPricingEditor

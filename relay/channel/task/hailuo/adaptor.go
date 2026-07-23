@@ -197,6 +197,9 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 	if len(subjectReference) > 0 {
 		videoRequest.SubjectReference = subjectReference
 	}
+	if videoRequest.Duration == nil || !containsInt(modelConfig.SupportedDurations, *videoRequest.Duration) {
+		return nil, fmt.Errorf("duration is not supported by Hailuo model %q; supported durations: %v", modelConfig.Name, modelConfig.SupportedDurations)
+	}
 
 	return videoRequest, nil
 }
