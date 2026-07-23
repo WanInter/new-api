@@ -3,6 +3,8 @@ import {
   capabilityRuleFormSchema,
   capabilityToFormValues,
   formValuesToCapability,
+  normalizeVideoDurationList,
+  normalizeVideoDurationListValue,
   normalizeVideoOutputListValue,
   normalizeVideoSimulationOutput,
 } from './capability-form'
@@ -63,6 +65,7 @@ describe('routing capability override form', () => {
       duration_min: '5',
       duration_max: '15',
       fixed_duration: '10',
+      durations: [],
       aspect_ratios: [],
       resolutions: [],
       sizes: [],
@@ -98,6 +101,7 @@ describe('routing capability override form', () => {
       duration_min: '',
       duration_max: '',
       fixed_duration: '',
+      durations: [],
       aspect_ratios: [],
       resolutions: [],
       sizes: [],
@@ -107,6 +111,41 @@ describe('routing capability override form', () => {
     })
 
     expect(result.success).toBe(false)
+  })
+
+  test('round-trips supported discrete durations as numbers', () => {
+    const values = capabilityToFormValues({ durations: [6, 10, 15] })
+
+    expect(JSON.stringify(values.durations)).toBe(
+      JSON.stringify(['6', '10', '15'])
+    )
+    expect(JSON.stringify(formValuesToCapability(values))).toBe(
+      JSON.stringify({ durations: [6, 10, 15] })
+    )
+    expect(JSON.stringify(normalizeVideoDurationList(['06', ' 10 ']))).toBe(
+      JSON.stringify(['6', '10'])
+    )
+    expect(normalizeVideoDurationListValue('0')).toBe(undefined)
+  })
+
+  test('rejects invalid, duplicate, and mixed duration constraints', () => {
+    const invalidList = capabilityRuleFormSchema.safeParse({
+      ...capabilityToFormValues(),
+      durations: ['6', '06', '0', '1.5'],
+    })
+    expect(invalidList.success).toBe(false)
+
+    const mixedModes = capabilityRuleFormSchema.safeParse({
+      ...capabilityToFormValues(),
+      duration_max: '20',
+      durations: ['6', '10', '15'],
+    })
+    expect(mixedModes.success).toBe(false)
+    if (!mixedModes.success) {
+      expect(
+        mixedModes.error.issues.some((issue) => issue.path[0] === 'durations')
+      ).toBe(true)
+    }
   })
 
   test('serializes selected resolution capabilities', () => {
@@ -197,9 +236,9 @@ describe('routing capability override form', () => {
     ]
 
     for (const testCase of cases) {
-      expect(JSON.stringify(normalizeVideoSimulationOutput(testCase.input))).toBe(
-        JSON.stringify(testCase.expected)
-      )
+      expect(
+        JSON.stringify(normalizeVideoSimulationOutput(testCase.input))
+      ).toBe(JSON.stringify(testCase.expected))
     }
   })
 })

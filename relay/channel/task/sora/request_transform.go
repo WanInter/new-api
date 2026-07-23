@@ -175,7 +175,11 @@ func applyGrokImageVideoRequest(body map[string]interface{}) error {
 
 	applyGrokImageURLs(body, input.Images)
 	body["mode"] = mode
-	body["duration"] = input.Duration
+	if input.HasDuration {
+		body["duration"] = input.Duration
+	} else {
+		delete(body, "duration")
+	}
 	body["aspect_ratio"] = input.AspectRatio
 	body["resolution"] = input.Resolution
 	delete(body, "seconds")
@@ -606,12 +610,6 @@ func validateGrokImageVideoRequest(input grokRequestInput) (string, error) {
 	if input.Size != "" {
 		return "", fmt.Errorf("grok-image-video does not support size; use resolution")
 	}
-	if !input.HasDuration {
-		return "", fmt.Errorf("grok-image-video duration is required and must be one of: 6, 10, 15")
-	}
-	if !isGrokImageVideoDuration(input.Duration) {
-		return "", fmt.Errorf("grok-image-video duration must be one of: 6, 10, 15")
-	}
 	if !isGrokImageVideoAspectRatio(input.AspectRatio) {
 		return "", fmt.Errorf("grok-image-video aspect_ratio is required and must be one of: 16:9, 9:16, 1:1")
 	}
@@ -630,9 +628,6 @@ func validateGrokVideo15Request(input grokRequestInput) (string, error) {
 	}
 	if input.Mode != "" {
 		return "", fmt.Errorf("grok-video-1.5 does not support mode")
-	}
-	if input.HasDuration && (input.Duration < 1 || input.Duration > 15) {
-		return "", fmt.Errorf("grok-video-1.5 duration must be an integer from 1 to 15")
 	}
 	if input.AspectRatio != "" && !isGrokVideo15AspectRatio(input.AspectRatio) {
 		return "", fmt.Errorf("grok-video-1.5 does not support aspect_ratio %q", input.AspectRatio)
@@ -654,15 +649,6 @@ func grokVideo15OutputSize(input grokRequestInput) (string, error) {
 		return "", fmt.Errorf("grok-video-1.5 supports size 480p or 720p, got %q", output)
 	}
 	return output, nil
-}
-
-func isGrokImageVideoDuration(value int) bool {
-	switch value {
-	case 6, 10, 15:
-		return true
-	default:
-		return false
-	}
 }
 
 func isGrokImageVideoAspectRatio(value string) bool {
@@ -929,7 +915,9 @@ func writeGrokMultipartFields(writer *multipart.Writer, values map[string][]stri
 
 	if imageVideo {
 		_ = writer.WriteField("mode", mode)
-		_ = writer.WriteField("duration", strconv.Itoa(input.Duration))
+		if input.HasDuration {
+			_ = writer.WriteField("duration", strconv.Itoa(input.Duration))
+		}
 		_ = writer.WriteField("aspect_ratio", input.AspectRatio)
 		_ = writer.WriteField("resolution", input.Resolution)
 	} else {

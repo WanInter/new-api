@@ -4966,6 +4966,12 @@
     "Use WxH pixel sizes": "Use WxH pixel sizes",
     "Use a quality label such as 720p or 4k": "Use a quality label such as 720p or 4k",
     "Do not repeat output values": "Do not repeat output values",
-    "Pixel size conflicts with aspect ratio": "Pixel size conflicts with aspect ratio"
+    "Pixel size conflicts with aspect ratio": "Pixel size conflicts with aspect ratio",
+    "Use positive integer seconds separated by commas": "Use positive integer seconds separated by commas",
+    "Do not repeat duration values": "Do not repeat duration values",
+    "Supported durations cannot be combined with a duration range or fixed duration": "Supported durations cannot be combined with a duration range or fixed duration",
+    "Supported durations (seconds)": "Supported durations (seconds)",
+    "Duration {{actual}} seconds is not supported. Supported: {{supported_durations}}": "Duration {{actual}} seconds is not supported. Supported: {{supported_durations}}",
+    "The supplied duration fields must be positive integers and agree": "The supplied duration fields must be positive integers and agree"
   }
 }

@@ -4966,6 +4966,12 @@
     "Use WxH pixel sizes": "Используйте размер в пикселях WxH",
     "Use a quality label such as 720p or 4k": "Используйте обозначение качества, например 720p или 4k",
     "Do not repeat output values": "Не повторяйте выходные значения",
-    "Pixel size conflicts with aspect ratio": "Размер в пикселях не соответствует соотношению сторон"
+    "Pixel size conflicts with aspect ratio": "Размер в пикселях не соответствует соотношению сторон",
+    "Use positive integer seconds separated by commas": "Укажите положительные целые значения секунд через запятую",
+    "Do not repeat duration values": "Не повторяйте значения длительности",
+    "Supported durations cannot be combined with a duration range or fixed duration": "Поддерживаемые длительности нельзя сочетать с диапазоном или фиксированной длительностью",
+    "Supported durations (seconds)": "Поддерживаемые длительности (секунды)",
+    "Duration {{actual}} seconds is not supported. Supported: {{supported_durations}}": "Длительность {{actual}} секунд не поддерживается. Поддерживаются: {{supported_durations}}",
+    "The supplied duration fields must be positive integers and agree": "Указанные поля длительности должны быть положительными целыми числами и совпадать"
   }
 }

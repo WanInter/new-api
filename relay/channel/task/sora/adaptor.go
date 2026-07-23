@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -232,9 +233,18 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		return nil
 	}
 
-	seconds := estimateVideoSeconds(req, info)
+	seconds := float64(estimateVideoSeconds(req, info))
 	if tokenStackSeconds, ok := tokenStackBillingSeconds(c, info); ok {
-		seconds = tokenStackSeconds
+		seconds = float64(tokenStackSeconds)
+	} else if requestSeconds, selected, billable := genericSoraRequestBillingSeconds(c, info); selected {
+		if billable {
+			seconds = requestSeconds
+		} else {
+			// The selected top-level alias is forwarded verbatim. Do not price a
+			// lower-priority seconds or metadata value when that wire value is
+			// malformed; the upstream remains responsible for rejecting it.
+			seconds = float64(defaultSoraVideoSeconds(info))
+		}
 	}
 	size := req.Size
 	if size == "" {
@@ -242,7 +252,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	}
 
 	ratios := map[string]float64{
-		"seconds": float64(seconds),
+		"seconds": seconds,
 		"size":    1,
 	}
 	if size == "1792x1024" || size == "1024x1792" {
@@ -458,10 +468,7 @@ func mapDurationToSoraSeconds(body map[string]interface{}) {
 		return
 	}
 
-	value, exists := body["duration"]
-	if !exists {
-		value, exists = body["seconds"]
-	}
+	value, exists := soraDurationValueFromMap(body)
 	if !exists {
 		return
 	}
@@ -471,6 +478,19 @@ func mapDurationToSoraSeconds(body map[string]interface{}) {
 		body["seconds"] = value
 	}
 	delete(body, "duration")
+}
+
+// soraDurationValueFromMap mirrors the public duration alias precedence used
+// by the generic Sora wire conversion. The presence of duration is
+// significant even when its value is malformed: it is still the value that
+// will be forwarded to the upstream instead of seconds.
+func soraDurationValueFromMap(body map[string]interface{}) (interface{}, bool) {
+	value, exists := body["duration"]
+	if exists {
+		return value, true
+	}
+	value, exists = body["seconds"]
+	return value, exists
 }
 
 func soraSecondsString(value interface{}) (string, bool) {
@@ -518,13 +538,19 @@ func writeSoraMultipartFields(writer *multipart.Writer, values map[string][]stri
 		}
 	}
 
-	seconds, hasDuration := values["duration"]
-	if !hasDuration {
-		seconds = values["seconds"]
-	}
+	seconds, _ := soraDurationValuesFromForm(values)
 	for _, value := range seconds {
 		_ = writer.WriteField("seconds", value)
 	}
+}
+
+func soraDurationValuesFromForm(values map[string][]string) ([]string, bool) {
+	duration, exists := values["duration"]
+	if exists {
+		return duration, true
+	}
+	seconds, exists := values["seconds"]
+	return seconds, exists
 }
 
 func estimateVideoSeconds(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) int {
@@ -535,12 +561,121 @@ func estimateVideoSeconds(req relaycommon.TaskSubmitReq, info *relaycommon.Relay
 		seconds = mustParsePositiveInt(normalized)
 	} else if normalized, ok := normalizeVideoSeconds(req.Metadata["duration"]); ok {
 		seconds = mustParsePositiveInt(normalized)
-	} else if profile, ok := soraModelProfileForInfo(info); ok && profile.DefaultDuration > 0 {
-		seconds = profile.DefaultDuration
 	} else {
-		seconds = defaultUnprofiledVideoSeconds
+		seconds = defaultSoraVideoSeconds(info)
 	}
 	return seconds
+}
+
+func defaultSoraVideoSeconds(info *relaycommon.RelayInfo) int {
+	if profile, ok := soraModelProfileForInfo(info); ok && profile.DefaultDuration > 0 {
+		return profile.DefaultDuration
+	}
+	return defaultUnprofiledVideoSeconds
+}
+
+// genericSoraRequestBillingSeconds reads the same top-level duration alias
+// that mapDurationToSoraSeconds will send upstream. TaskSubmitReq stores
+// duration as an int for legacy adaptors, so using it here would silently
+// truncate a valid fractional duration before pricing. The final bool reports
+// whether the selected raw wire value can be priced.
+func genericSoraRequestBillingSeconds(c *gin.Context, info *relaycommon.RelayInfo) (seconds float64, selected bool, billable bool) {
+	if profile, hasProfile := soraModelProfileForInfo(info); hasProfile && profile.SkipGenericDurationMapping {
+		return 0, false, false
+	}
+
+	value, selected := genericSoraRequestDurationValue(c)
+	if !selected {
+		return 0, false, false
+	}
+	seconds, billable = parsePositiveSoraBillingSeconds(value)
+	return seconds, true, billable
+}
+
+func genericSoraRequestDurationValue(c *gin.Context) (interface{}, bool) {
+	if c == nil || c.Request == nil {
+		return nil, false
+	}
+	contentType := strings.ToLower(c.GetHeader("Content-Type"))
+	if strings.HasPrefix(contentType, "application/json") {
+		body := make(map[string]interface{})
+		if err := common.UnmarshalBodyReusable(c, &body); err != nil {
+			return nil, false
+		}
+		return soraDurationValueFromMap(body)
+	}
+	if !strings.Contains(contentType, "multipart/form-data") {
+		return nil, false
+	}
+
+	form, err := common.ParseMultipartFormReusable(c)
+	if err != nil {
+		return nil, false
+	}
+	defer form.RemoveAll()
+	values, selected := soraDurationValuesFromForm(form.Value)
+	if !selected {
+		return nil, false
+	}
+	if len(values) != 1 {
+		return nil, true
+	}
+	return values[0], true
+}
+
+func parsePositiveSoraBillingSeconds(value interface{}) (float64, bool) {
+	var seconds float64
+	switch typed := value.(type) {
+	case string:
+		value := strings.TrimSpace(strings.ToLower(typed))
+		for _, suffix := range []string{"seconds", "second", "secs", "sec", "s"} {
+			if strings.HasSuffix(value, suffix) {
+				value = strings.TrimSpace(strings.TrimSuffix(value, suffix))
+				break
+			}
+		}
+		parsed, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return 0, false
+		}
+		seconds = parsed
+	case json.Number:
+		parsed, err := typed.Float64()
+		if err != nil {
+			return 0, false
+		}
+		seconds = parsed
+	case int:
+		seconds = float64(typed)
+	case int8:
+		seconds = float64(typed)
+	case int16:
+		seconds = float64(typed)
+	case int32:
+		seconds = float64(typed)
+	case int64:
+		seconds = float64(typed)
+	case uint:
+		seconds = float64(typed)
+	case uint8:
+		seconds = float64(typed)
+	case uint16:
+		seconds = float64(typed)
+	case uint32:
+		seconds = float64(typed)
+	case uint64:
+		seconds = float64(typed)
+	case float32:
+		seconds = float64(typed)
+	case float64:
+		seconds = typed
+	default:
+		return 0, false
+	}
+	if seconds <= 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
+		return 0, false
+	}
+	return seconds, true
 }
 
 func tokenStackBillingSeconds(c *gin.Context, info *relaycommon.RelayInfo) (int, bool) {

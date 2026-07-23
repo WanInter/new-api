@@ -4377,6 +4377,11 @@
     "支持的像素尺寸": "Kích thước điểm ảnh được hỗ trợ",
     "画面比例 {{aspect_ratio}} 不受支持，支持：{{supported_aspect_ratios}}": "Tỷ lệ khung hình {{aspect_ratio}} không được hỗ trợ. Hỗ trợ: {{supported_aspect_ratios}}",
     "像素尺寸 {{size}} 不受支持，支持：{{supported_sizes}}": "Kích thước điểm ảnh {{size}} không được hỗ trợ. Hỗ trợ: {{supported_sizes}}",
-    "像素尺寸与画面比例冲突": "Kích thước điểm ảnh không khớp với tỷ lệ khung hình"
+    "像素尺寸与画面比例冲突": "Kích thước điểm ảnh không khớp với tỷ lệ khung hình",
+    "支持的时长（秒）": "Thời lượng được hỗ trợ (giây)",
+    "支持的时长必须是以逗号分隔且不重复的正整数": "Thời lượng được hỗ trợ phải là các số nguyên dương không trùng lặp, phân tách bằng dấu phẩy",
+    "支持的时长不能与范围时长或固定时长同时设置": "Không thể kết hợp các thời lượng được hỗ trợ với khoảng thời lượng hoặc thời lượng cố định",
+    "不支持 {{actual}} 秒时长，支持：{{supported_durations}}": "Không hỗ trợ thời lượng {{actual}} giây. Hỗ trợ: {{supported_durations}}",
+    "提供的时长字段必须为正整数且数值一致": "Các trường thời lượng được cung cấp phải là số nguyên dương và có cùng giá trị"
   }
 }

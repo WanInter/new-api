@@ -54,6 +54,20 @@ func TestMatchVideoCapabilityResolutions(t *testing.T) {
 	})
 }
 
+func TestMatchVideoCapabilityDurations(t *testing.T) {
+	capability := dto.VideoModelCapability{Durations: []int{6, 10, 12, 16, 20}}
+
+	assert.Empty(t, MatchVideoCapability(VideoRequestFeatures{Duration: common.GetPointer(20)}, capability))
+	assert.Empty(t, MatchVideoCapability(VideoRequestFeatures{}, capability))
+	assert.Empty(t, MatchVideoCapability(VideoRequestFeatures{Duration: common.GetPointer(99)}, dto.VideoModelCapability{}))
+	assert.Contains(t, MatchVideoCapability(VideoRequestFeatures{Duration: common.GetPointer(15)}, capability), VideoConstraintViolation{
+		Code:               "duration_not_supported",
+		Field:              "duration",
+		Actual:             common.GetPointer(15),
+		SupportedDurations: []int{6, 10, 12, 16, 20},
+	})
+}
+
 func TestExactChannelModelCapabilityDoesNotLeakAcrossChannels(t *testing.T) {
 	truncate(t)
 	publicModel := "seedance-public"
@@ -241,6 +255,154 @@ func TestGetVideoRequestFeaturesCountsEveryReferenceEntry(t *testing.T) {
 	assert.Equal(t, 2, features.Audios)
 	require.NotNil(t, features.Duration)
 	assert.Equal(t, 15, *features.Duration)
+}
+
+func TestGetVideoRequestFeaturesNormalizesDurationAliases(t *testing.T) {
+	testCases := []struct {
+		name     string
+		body     string
+		expected *int
+	}{
+		{name: "seconds string", body: `{"model":"video-model","seconds":"20"}`, expected: common.GetPointer(20)},
+		{name: "metadata object", body: `{"model":"video-model","metadata":{"duration":"12s"}}`, expected: common.GetPointer(12)},
+		{name: "encoded metadata object", body: `{"model":"video-model","metadata":"{\"duration\":\"12s\"}"}`, expected: common.GetPointer(12)},
+		{
+			name:     "equal aliases",
+			body:     `{"model":"video-model","duration":12,"seconds":"12","metadata":{"duration":"12s"}}`,
+			expected: common.GetPointer(12),
+		},
+		{name: "null aliases", body: `{"model":"video-model","duration":null,"seconds":null,"metadata":{"duration":null}}`},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			c := newChannelConstraintTestContext(t, "/v1/videos", testCase.body)
+
+			features, err := GetVideoRequestFeatures(c)
+
+			require.NoError(t, err)
+			assert.Equal(t, testCase.expected, features.Duration)
+		})
+	}
+}
+
+func TestGetVideoRequestFeaturesMarksInvalidOrConflictingDurationAliasesForRouting(t *testing.T) {
+	testCases := []struct {
+		name     string
+		body     string
+		expected *int
+	}{
+		{
+			name:     "duration conflicts with seconds",
+			body:     `{"model":"video-model","duration":10,"seconds":"20"}`,
+			expected: common.GetPointer(10),
+		},
+		{
+			name:     "seconds conflicts with metadata duration",
+			body:     `{"model":"video-model","seconds":"20","metadata":{"duration":12}}`,
+			expected: common.GetPointer(20),
+		},
+		{
+			name:     "duration conflicts with metadata duration",
+			body:     `{"model":"video-model","duration":10,"metadata":{"duration":"12s"}}`,
+			expected: common.GetPointer(10),
+		},
+		{
+			name:     "invalid seconds is not ignored",
+			body:     `{"model":"video-model","duration":10,"seconds":"10.5"}`,
+			expected: common.GetPointer(10),
+		},
+		{
+			name: "invalid metadata duration",
+			body: `{"model":"video-model","metadata":{"duration":0}}`,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			c := newChannelConstraintTestContext(t, "/v1/videos", testCase.body)
+
+			features, err := GetVideoRequestFeatures(c)
+
+			require.NoError(t, err)
+			assert.Equal(t, testCase.expected, features.Duration)
+			assert.True(t, features.durationUnnormalized)
+		})
+	}
+}
+
+func TestInvalidDurationAliasesOnlyExcludeChannelsWithDurationRules(t *testing.T) {
+	truncate(t)
+	publicModel := "unnormalized-duration-public"
+	noDurationRule := channelWithVideoModelMapping(t, 922, constant.ChannelTypeSora, publicModel, "no-duration-rule-upstream")
+	mediaOnlyRule := channelWithVideoModelMapping(t, 923, constant.ChannelTypeSora, publicModel, "media-only-rule-upstream")
+	durationRule := channelWithVideoModelMapping(t, 924, constant.ChannelTypeSora, publicModel, "duration-rule-upstream")
+	createChannelVideoCapability(t, mediaOnlyRule, "media-only-rule-upstream", dto.VideoModelCapability{
+		Images: &dto.VideoMediaRange{Max: common.GetPointer(1)},
+	})
+	createChannelVideoCapability(t, durationRule, "duration-rule-upstream", dto.VideoModelCapability{
+		Durations: []int{6, 10, 15},
+	})
+
+	testCases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "invalid alias",
+			body: `{
+				"model":"unnormalized-duration-public",
+				"images":["https://example.com/reference.png"],
+				"duration":10,
+				"seconds":"10.5"
+			}`,
+		},
+		{
+			name: "conflicting aliases",
+			body: `{
+				"model":"unnormalized-duration-public",
+				"images":["https://example.com/reference.png"],
+				"duration":10,
+				"seconds":"15"
+			}`,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			c := newChannelConstraintTestContext(t, "/v1/videos", testCase.body)
+
+			features, err := GetVideoRequestFeatures(c)
+
+			require.NoError(t, err)
+			assert.True(t, features.durationUnnormalized)
+			assert.True(t, ChannelSupportsRequestConstraints(c, noDurationRule, publicModel))
+			assert.True(t, ChannelSupportsRequestConstraints(c, mediaOnlyRule, publicModel))
+			assert.False(t, ChannelSupportsRequestConstraints(c, durationRule, publicModel))
+
+			evaluation := EvaluateChannelVideoRouting(durationRule, publicModel, features)
+			assert.Contains(t, evaluation.Violations, VideoConstraintViolation{
+				Code: "duration_unparseable", Field: "duration",
+			})
+		})
+	}
+}
+
+func TestMetadataDurationConstrainsChannelRouting(t *testing.T) {
+	truncate(t)
+	publicModel := "metadata-duration-public"
+	upstreamModel := "metadata-duration-upstream"
+	channel := channelWithVideoModelMapping(t, 921, constant.ChannelTypeSora, publicModel, upstreamModel)
+	createChannelVideoCapability(t, channel, upstreamModel, dto.VideoModelCapability{
+		Durations: []int{6, 10, 15},
+	})
+
+	c := newChannelConstraintTestContext(t, "/v1/videos", `{
+		"model":"metadata-duration-public",
+		"metadata":{"duration":"20s"}
+	}`)
+
+	assert.False(t, ChannelSupportsRequestConstraints(c, channel, publicModel))
 }
 
 func TestGetVideoRequestFeaturesNormalizesResolution(t *testing.T) {
@@ -522,7 +684,7 @@ func TestGetVideoRequestFeaturesReadsMetadataOutputFromFormBodies(t *testing.T) 
 			request: func(t *testing.T) *http.Request {
 				var body bytes.Buffer
 				writer := multipart.NewWriter(&body)
-				require.NoError(t, writer.WriteField("metadata", `{"size":"720x1280","aspectRatio":"9:16","resolution":"1080P"}`))
+				require.NoError(t, writer.WriteField("metadata", `{"size":"720x1280","aspectRatio":"9:16","resolution":"1080P","duration":"12s"}`))
 				require.NoError(t, writer.Close())
 				request := httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(body.Bytes()))
 				request.Header.Set("Content-Type", writer.FormDataContentType())
@@ -533,7 +695,7 @@ func TestGetVideoRequestFeaturesReadsMetadataOutputFromFormBodies(t *testing.T) 
 			name: "url encoded",
 			request: func(t *testing.T) *http.Request {
 				values := url.Values{}
-				values.Set("metadata", `{"size":"720x1280","aspectRatio":"9:16","resolution":"1080P"}`)
+				values.Set("metadata", `{"size":"720x1280","aspectRatio":"9:16","resolution":"1080P","duration":"12s"}`)
 				request := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(values.Encode()))
 				request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 				return request
@@ -553,6 +715,53 @@ func TestGetVideoRequestFeaturesReadsMetadataOutputFromFormBodies(t *testing.T) 
 			assert.Equal(t, "9:16", features.AspectRatio)
 			assert.Equal(t, "720x1280", features.Size)
 			assert.Equal(t, "1080p", features.Resolution)
+			assert.Equal(t, common.GetPointer(12), features.Duration)
+		})
+	}
+}
+
+func TestGetVideoRequestFeaturesMarksConflictingFormDurationAliasesForRouting(t *testing.T) {
+	testCases := []struct {
+		name    string
+		request func(t *testing.T) *http.Request
+	}{
+		{
+			name: "multipart",
+			request: func(t *testing.T) *http.Request {
+				var body bytes.Buffer
+				writer := multipart.NewWriter(&body)
+				require.NoError(t, writer.WriteField("seconds", "20"))
+				require.NoError(t, writer.WriteField("metadata", `{"duration":"12s"}`))
+				require.NoError(t, writer.Close())
+				request := httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(body.Bytes()))
+				request.Header.Set("Content-Type", writer.FormDataContentType())
+				return request
+			},
+		},
+		{
+			name: "url encoded",
+			request: func(t *testing.T) *http.Request {
+				values := url.Values{}
+				values.Set("seconds", "20")
+				values.Set("metadata", `{"duration":"12s"}`)
+				request := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(values.Encode()))
+				request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				return request
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = testCase.request(t)
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+			features, err := GetVideoRequestFeatures(c)
+
+			require.NoError(t, err)
+			assert.Equal(t, common.GetPointer(20), features.Duration)
+			assert.True(t, features.durationUnnormalized)
 		})
 	}
 }
@@ -692,6 +901,61 @@ func TestSimulateVideoRoutingUsesExactCapabilityByMappedModel(t *testing.T) {
 				Code: "video_audio_total_above_max", Field: "video_audio_total", Actual: common.GetPointer(4), Expected: common.GetPointer(3),
 			})
 		}
+	}
+}
+
+func TestSimulateVideoRoutingSelectsChannelByDiscreteDurations(t *testing.T) {
+	truncate(t)
+	group := "creative-video"
+	publicModel := "grok-image-video"
+	mappedPriority := int64(10)
+	directPriority := int64(1)
+	weight := uint(100)
+
+	mapped := channelWithVideoModelMapping(t, 184, constant.ChannelTypeSora, publicModel, "grok-video-3")
+	mapped.Priority = &mappedPriority
+	mapped.Weight = &weight
+	direct := &model.Channel{
+		Id: 185, Name: "direct-grok", Type: constant.ChannelTypeSora, Key: "key",
+		Status: common.ChannelStatusEnabled, Priority: &directPriority, Weight: &weight,
+	}
+	createChannelVideoCapability(t, mapped, "grok-video-3", dto.VideoModelCapability{Durations: []int{6, 10, 12, 16, 20}})
+	createChannelVideoCapability(t, direct, publicModel, dto.VideoModelCapability{Durations: []int{6, 10, 15}})
+	require.NoError(t, model.DB.Create(&[]model.Ability{
+		{Group: group, Model: publicModel, ChannelId: mapped.Id, Enabled: true, Priority: &mappedPriority, Weight: weight},
+		{Group: group, Model: publicModel, ChannelId: direct.Id, Enabled: true, Priority: &directPriority, Weight: weight},
+	}).Error)
+
+	tests := []struct {
+		name             string
+		duration         int
+		selectedPriority int64
+		excludedChannel  int
+		supported        []int
+	}{
+		{name: "twenty seconds uses mapped channel", duration: 20, selectedPriority: mappedPriority, excludedChannel: direct.Id, supported: []int{6, 10, 15}},
+		{name: "fifteen seconds uses direct channel", duration: 15, selectedPriority: directPriority, excludedChannel: mapped.Id, supported: []int{6, 10, 12, 16, 20}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := SimulateVideoRouting(VideoRoutingSimulationRequest{
+				Model: publicModel, Group: group, Duration: common.GetPointer(tt.duration), ContentType: "application/json",
+			})
+
+			require.NoError(t, err)
+			require.NotNil(t, result.TargetPriority)
+			assert.Equal(t, tt.selectedPriority, *result.TargetPriority)
+			for _, candidate := range result.Candidates {
+				if candidate.ChannelID != tt.excludedChannel {
+					continue
+				}
+				require.NotNil(t, candidate.Eligible)
+				assert.False(t, *candidate.Eligible)
+				assert.Contains(t, candidate.Violations, VideoConstraintViolation{
+					Code: "duration_not_supported", Field: "duration", Actual: common.GetPointer(tt.duration), SupportedDurations: tt.supported,
+				})
+			}
+		})
 	}
 }
 

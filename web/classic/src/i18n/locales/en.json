@@ -3997,6 +3997,11 @@
     "支持的像素尺寸": "Supported pixel sizes",
     "画面比例 {{aspect_ratio}} 不受支持，支持：{{supported_aspect_ratios}}": "Aspect ratio {{aspect_ratio}} is not supported. Supported: {{supported_aspect_ratios}}",
     "像素尺寸 {{size}} 不受支持，支持：{{supported_sizes}}": "Pixel size {{size}} is not supported. Supported: {{supported_sizes}}",
-    "像素尺寸与画面比例冲突": "Pixel size conflicts with aspect ratio"
+    "像素尺寸与画面比例冲突": "Pixel size conflicts with aspect ratio",
+    "支持的时长（秒）": "Supported durations (seconds)",
+    "支持的时长必须是以逗号分隔且不重复的正整数": "Supported durations must be unique positive integers separated by commas",
+    "支持的时长不能与范围时长或固定时长同时设置": "Supported durations cannot be combined with a duration range or fixed duration",
+    "不支持 {{actual}} 秒时长，支持：{{supported_durations}}": "Duration {{actual}} seconds is not supported. Supported: {{supported_durations}}",
+    "提供的时长字段必须为正整数且数值一致": "Supplied duration fields must be positive integers and agree"
   }
 }

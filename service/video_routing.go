@@ -26,6 +26,10 @@ type VideoRequestFeatures struct {
 	Resolution  string `json:"resolution,omitempty"`
 	ContentType string `json:"content_type,omitempty"`
 
+	// durationUnnormalized means one or more supplied duration aliases could
+	// not be represented as one canonical positive integer. Channels with an
+	// explicit duration capability must not be selected for that request.
+	durationUnnormalized   bool
 	profiledContent         *videoMediaCounts
 	providerResolutionHints videoProviderResolutionHints
 }
@@ -53,6 +57,7 @@ type VideoConstraintViolation struct {
 	Expected              *int     `json:"expected,omitempty"`
 	AspectRatio           string   `json:"aspect_ratio,omitempty"`
 	SupportedAspectRatios []string `json:"supported_aspect_ratios,omitempty"`
+	SupportedDurations    []int    `json:"supported_durations,omitempty"`
 	Size                  string   `json:"size,omitempty"`
 	SupportedSizes        []string `json:"supported_sizes,omitempty"`
 	Resolution            string   `json:"resolution,omitempty"`
@@ -106,7 +111,20 @@ func MatchVideoCapability(features VideoRequestFeatures, capability dto.VideoMod
 	violations = append(violations, matchVideoMediaRange("videos", features.Videos, capability.Videos)...)
 	violations = append(violations, matchVideoMediaRange("audios", features.Audios, capability.Audios)...)
 	violations = append(violations, matchVideoMediaRange("video_audio_total", features.Videos+features.Audios, capability.VideoAudioTotal)...)
-	if features.Duration != nil {
+	if features.durationUnnormalized && hasVideoDurationCapability(capability) {
+		violations = append(violations, VideoConstraintViolation{
+			Code:  "duration_unparseable",
+			Field: "duration",
+		})
+	} else if features.Duration != nil {
+		if len(capability.Durations) > 0 && !containsVideoDuration(capability.Durations, *features.Duration) {
+			violations = append(violations, VideoConstraintViolation{
+				Code:               "duration_not_supported",
+				Field:              "duration",
+				Actual:             common.GetPointer(*features.Duration),
+				SupportedDurations: append([]int(nil), capability.Durations...),
+			})
+		}
 		if capability.FixedDuration != nil && *features.Duration != *capability.FixedDuration {
 			violations = append(violations, VideoConstraintViolation{
 				Code:     "duration_mismatch",
@@ -157,6 +175,19 @@ func MatchVideoCapability(features VideoRequestFeatures, capability dto.VideoMod
 		}
 	}
 	return violations
+}
+
+func hasVideoDurationCapability(capability dto.VideoModelCapability) bool {
+	return len(capability.Durations) > 0 || capability.FixedDuration != nil || capability.Duration != nil
+}
+
+func containsVideoDuration(durations []int, duration int) bool {
+	for _, supported := range durations {
+		if supported == duration {
+			return true
+		}
+	}
+	return false
 }
 
 func containsVideoAspectRatio(aspectRatios []string, aspectRatio string) bool {

@@ -4966,6 +4966,12 @@
     "Use WxH pixel sizes": "Utilisez des dimensions en pixels WxH",
     "Use a quality label such as 720p or 4k": "Utilisez une qualite telle que 720p ou 4k",
     "Do not repeat output values": "Les valeurs de sortie ne doivent pas etre repetees",
-    "Pixel size conflicts with aspect ratio": "La taille en pixels ne correspond pas au format d'image"
+    "Pixel size conflicts with aspect ratio": "La taille en pixels ne correspond pas au format d'image",
+    "Use positive integer seconds separated by commas": "Utilisez des durées entières positives séparées par des virgules",
+    "Do not repeat duration values": "Ne répétez pas les valeurs de durée",
+    "Supported durations cannot be combined with a duration range or fixed duration": "Les durées prises en charge ne peuvent pas être combinées avec une plage ou une durée fixe",
+    "Supported durations (seconds)": "Durées prises en charge (secondes)",
+    "Duration {{actual}} seconds is not supported. Supported: {{supported_durations}}": "La durée de {{actual}} secondes n'est pas prise en charge. Valeurs prises en charge : {{supported_durations}}",
+    "The supplied duration fields must be positive integers and agree": "Les champs de durée fournis doivent être des entiers positifs et avoir la même valeur"
   }
 }

@@ -28,6 +28,7 @@ export type VideoModelCapability = {
   video_audio_total?: VideoMediaRange
   duration?: VideoMediaRange
   fixed_duration?: number
+  durations?: number[]
   aspect_ratios?: VideoAspectRatio[]
   resolutions?: VideoResolution[]
   sizes?: VideoPixelSize[]
@@ -77,6 +78,7 @@ export type VideoConstraintViolation = {
   field?: string
   actual?: number
   expected?: number
+  supported_durations?: number[]
   aspect_ratio?: VideoAspectRatio
   supported_aspect_ratios?: VideoAspectRatio[]
   size?: VideoPixelSize

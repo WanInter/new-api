@@ -65,6 +65,7 @@ type VideoModelCapability struct {
 	Audios          *VideoMediaRange `json:"audios,omitempty"`
 	VideoAudioTotal *VideoMediaRange `json:"video_audio_total,omitempty"`
 	Duration        *VideoMediaRange `json:"duration,omitempty"`
+	Durations       []int            `json:"durations,omitempty"`
 	FixedDuration   *int             `json:"fixed_duration,omitempty"`
 	AspectRatios    []string         `json:"aspect_ratios,omitempty"`
 	Resolutions     []string         `json:"resolutions,omitempty"`
@@ -159,6 +160,19 @@ func (c VideoModelCapability) Validate() error {
 	}
 	if c.FixedDuration != nil && *c.FixedDuration <= 0 {
 		return fmt.Errorf("fixed_duration must be positive")
+	}
+	seenDurations := make(map[int]struct{}, len(c.Durations))
+	for _, duration := range c.Durations {
+		if duration <= 0 {
+			return fmt.Errorf("durations must contain only positive integers")
+		}
+		if _, duplicated := seenDurations[duration]; duplicated {
+			return fmt.Errorf("duration %d must not be duplicated", duration)
+		}
+		seenDurations[duration] = struct{}{}
+	}
+	if len(c.Durations) > 0 && (c.Duration != nil || c.FixedDuration != nil) {
+		return fmt.Errorf("durations must not be combined with duration or fixed_duration")
 	}
 	if c.Duration != nil {
 		if c.FixedDuration != nil {

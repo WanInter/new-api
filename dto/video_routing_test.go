@@ -24,6 +24,28 @@ func TestVideoModelCapabilityValidateDurationConstraints(t *testing.T) {
 			capability: VideoModelCapability{Duration: &VideoMediaRange{Min: &positiveFive, Max: &positiveFifteen}},
 		},
 		{
+			name:       "valid duration set",
+			capability: VideoModelCapability{Durations: []int{6, 10, 15}},
+		},
+		{
+			name:       "non-positive duration set value",
+			capability: VideoModelCapability{Durations: []int{6, 0, 15}},
+			wantError:  "durations must contain only positive integers",
+		},
+		{
+			name:       "duplicate duration set value",
+			capability: VideoModelCapability{Durations: []int{6, 10, 6}},
+			wantError:  "duration 6 must not be duplicated",
+		},
+		{
+			name: "duration set conflicts with range",
+			capability: VideoModelCapability{
+				Durations: []int{6, 10, 15},
+				Duration:  &VideoMediaRange{Min: &positiveFive, Max: &positiveFifteen},
+			},
+			wantError: "durations must not be combined with duration or fixed_duration",
+		},
+		{
 			name:       "non-positive minimum",
 			capability: VideoModelCapability{Duration: &VideoMediaRange{Min: &zero}},
 			wantError:  "duration.min must be positive",

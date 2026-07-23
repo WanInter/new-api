@@ -141,10 +141,24 @@ X-New-Api-Other-Ratios: {"seconds":4,"size":1}
 
 | 公开模型 | 上游模型 | 图片映射 | 输出字段与约束 |
 | --- | --- | --- | --- |
-| `grok-image-video` | `grok-video-3` | 标准 `images` 归一为 `images_url`。未指定 `mode` 时，无图为 `text`，普通图片引用为 `ref`；仅显式 `input.start_frames`、`metadata.start_frames` 或带首帧 role 的 content 才推导为 `frame`。 | 必须给出 `duration`/`seconds`，且仅支持 `6`、`10`、`15`；必须给出 `aspect_ratio`（`16:9`、`9:16`、`1:1`）和 `resolution`（`480p`、`720p`）。 |
-| `grok-video-1.5` | `grok-imagine-video-1.5-preview` | 标准 `images` 归一为恰好一条 `images_url`。 | `duration`/`seconds` 可为 `1` 至 `15` 的整数，省略时上游默认 `6` 秒；`resolution` 会映射为上游 `size`，仅 `480p`、`720p`，省略时上游默认 `720p`；比例支持 `16:9`、`9:16`、`1:1`、`4:3`、`3:4`、`3:2`、`2:3`。 |
+| `grok-image-video` | `grok-video-3` | 标准 `images` 归一为 `images_url`。未指定 `mode` 时，无图为 `text`，普通图片引用为 `ref`；仅显式 `input.start_frames`、`metadata.start_frames` 或带首帧 role 的 content 才推导为 `frame`。 | `duration`/`seconds` 会归一为上游 `duration`；可选值由渠道分流能力维护，未配置时由上游校验。必须给出 `aspect_ratio`（`16:9`、`9:16`、`1:1`）和 `resolution`（`480p`、`720p`）。 |
+| `grok-video-1.5` | `grok-imagine-video-1.5-preview` | 标准 `images` 归一为恰好一条 `images_url`。 | `duration`/`seconds` 必须为正整数，可选值由渠道分流能力维护，未配置时由上游校验；省略时上游默认 `6` 秒。`resolution` 会映射为上游 `size`，仅 `480p`、`720p`，省略时上游默认 `720p`；比例支持 `16:9`、`9:16`、`1:1`、`4:3`、`3:4`、`3:2`、`2:3`。 |
 
-这两个模型仅支持 JSON 或 multipart 请求，且目前只验证了 URL 形式的图片输入。提交 `videos`、`audios` 或二进制 multipart 文件会返回 `400`，不会被静默丢弃。`metadata.duration` 是兼容别名，会归一为顶层 `duration`；与顶层 `duration` 或 `seconds` 冲突时返回 `400`。`size: "960x540"` 不能被推断为 `720p`；对 `grok-video-1.5` 应使用明确的 `resolution: "720p"`，或其等价的渠道原生 `size: "720p"`。
+这两个模型仅支持 JSON 或 multipart 请求，且目前只验证了 URL 形式的图片输入。提交 `videos`、`audios` 或二进制 multipart 文件会返回 `400`，不会被静默丢弃。`metadata.duration` 是兼容别名；选择 Grok 渠道后，适配器会将它归一为顶层 `duration`。Grok 请求中的多个时长别名冲突时，适配器会以请求错误返回。`size: "960x540"` 不能被推断为 `720p`；对 `grok-video-1.5` 应使用明确的 `resolution: "720p"`，或其等价的渠道原生 `size: "720p"`。
+
+### 渠道时长分流规则
+
+管理员可在渠道-上游模型的精确能力规则中配置离散时长集合：
+
+```json
+{
+  "durations": [6, 10, 15]
+}
+```
+
+`durations` 只接受不重复的正整数，表示该渠道只参与这些时长的分流；它不能与 `duration.min` / `duration.max` 范围或 `fixed_duration` 同时设置。请求未提供时长时不会因该字段被拦截。规则没有配置 `durations`、范围或固定时长时，网关不会做模型级时长白名单校验，也不会因时长别名格式或冲突将该渠道排除；原始请求继续由渠道适配器和上游校验。
+
+分流特征会按 `duration`、`seconds`、`metadata.duration` 的顺序尝试归一化。多个字段同时给出时，只有它们都是相同的正整数才是可归一化时长；否则，配置了离散时长、时长范围或固定时长的候选渠道会显示 `duration_unparseable` 并被排除。没有时长规则的候选渠道仍会继续分流，由其适配器和上游决定是否接受请求。
 
 ---
 

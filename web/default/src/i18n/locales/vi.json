@@ -4966,6 +4966,12 @@
     "Use WxH pixel sizes": "Dung kich thuoc diem anh WxH",
     "Use a quality label such as 720p or 4k": "Dung nhan chat luong nhu 720p hoac 4k",
     "Do not repeat output values": "Khong lap lai gia tri dau ra",
-    "Pixel size conflicts with aspect ratio": "Kich thuoc diem anh khong khop voi ty le khung hinh"
+    "Pixel size conflicts with aspect ratio": "Kich thuoc diem anh khong khop voi ty le khung hinh",
+    "Use positive integer seconds separated by commas": "Nhập số giây nguyên dương, phân tách bằng dấu phẩy",
+    "Do not repeat duration values": "Không lặp lại giá trị thời lượng",
+    "Supported durations cannot be combined with a duration range or fixed duration": "Không thể kết hợp các thời lượng được hỗ trợ với khoảng thời lượng hoặc thời lượng cố định",
+    "Supported durations (seconds)": "Thời lượng được hỗ trợ (giây)",
+    "Duration {{actual}} seconds is not supported. Supported: {{supported_durations}}": "Không hỗ trợ thời lượng {{actual}} giây. Hỗ trợ: {{supported_durations}}",
+    "The supplied duration fields must be positive integers and agree": "Các trường thời lượng được cung cấp phải là số nguyên dương và có cùng giá trị"
   }
 }

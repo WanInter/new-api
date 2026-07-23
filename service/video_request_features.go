@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -165,7 +166,9 @@ func extractJSONVideoRequestFeatures(body []byte, features VideoRequestFeatures)
 		features.Audios += genericContent.Audios
 		features.profiledContent = &profiledContent
 	}
-	features.Duration = parseJSONDuration(body)
+	duration := parseJSONDuration(body)
+	features.Duration = duration.Value
+	features.durationUnnormalized = duration.Unnormalized
 	features.AspectRatio = output.AspectRatio
 	if output.HasPixelSize() {
 		features.Size = output.Size
@@ -239,12 +242,9 @@ func extractFormVideoRequestFeatures(values url.Values, files map[string][]*mult
 	features.Images += countNumberedFormFiles(files, "image_file_", 9)
 	features.Videos += countNumberedFormFiles(files, "video_file_", 3)
 	features.Audios += countNumberedFormFiles(files, "audio_file_", 3)
-	for _, field := range []string{"duration", "seconds"} {
-		if parsed, ok := parseDurationString(values.Get(field)); ok {
-			features.Duration = common.GetPointer(parsed)
-			break
-		}
-	}
+	duration := parseFormDuration(values)
+	features.Duration = duration.Value
+	features.durationUnnormalized = duration.Unnormalized
 	request, err := taskSubmitReqFromFormValues(values)
 	if err != nil {
 		return features, &videoRequestFeatureDTOError{err: err}
@@ -319,17 +319,108 @@ func countNonEmptyFeatureStrings(values []string) int {
 	return count
 }
 
-func parseJSONDuration(body []byte) *int {
-	for _, field := range []string{"duration", "seconds"} {
-		result := gjson.GetBytes(body, field)
-		if !result.Exists() || result.Type == gjson.Null {
+type videoRequestDurationParseResult struct {
+	Value        *int
+	Unnormalized bool
+}
+
+func parseJSONDuration(body []byte) videoRequestDurationParseResult {
+	fields := make(map[string]interface{})
+	if err := common.Unmarshal(body, &fields); err != nil {
+		return videoRequestDurationParseResult{Unnormalized: true}
+	}
+	return resolveVideoRequestDuration(fields)
+}
+
+func parseFormDuration(values url.Values) videoRequestDurationParseResult {
+	fields := make(map[string]interface{}, 3)
+	for _, field := range []string{"duration", "seconds", "metadata"} {
+		entries, exists := values[field]
+		if !exists {
 			continue
 		}
-		if parsed, ok := parseDurationString(result.String()); ok {
-			return common.GetPointer(parsed)
+		switch len(entries) {
+		case 0:
+			fields[field] = ""
+		case 1:
+			fields[field] = entries[0]
+		default:
+			fields[field] = append([]string(nil), entries...)
 		}
 	}
-	return nil
+	return resolveVideoRequestDuration(fields)
+}
+
+func resolveVideoRequestDuration(fields map[string]interface{}) videoRequestDurationParseResult {
+	duration, durationProvided, durationValid := videoRequestDurationField(fields, "duration")
+	seconds, secondsProvided, secondsValid := videoRequestDurationField(fields, "seconds")
+	metadataDuration, metadataProvided, metadataValid := videoRequestMetadataDuration(fields)
+
+	result := videoRequestDurationParseResult{
+		Unnormalized: (durationProvided && !durationValid) ||
+			(secondsProvided && !secondsValid) ||
+			(metadataProvided && !metadataValid),
+	}
+	canonicalDuration := 0
+	canonicalField := ""
+	if durationValid {
+		canonicalDuration = duration
+		canonicalField = "duration"
+	} else if secondsValid {
+		canonicalDuration = seconds
+		canonicalField = "seconds"
+	} else if metadataValid {
+		canonicalDuration = metadataDuration
+		canonicalField = "metadata.duration"
+	}
+	if canonicalField == "" {
+		return result
+	}
+	for _, alias := range []struct {
+		field string
+		value int
+		valid bool
+	}{
+		{field: "duration", value: duration, valid: durationValid},
+		{field: "seconds", value: seconds, valid: secondsValid},
+		{field: "metadata.duration", value: metadataDuration, valid: metadataValid},
+	} {
+		if alias.valid && alias.value != canonicalDuration {
+			result.Unnormalized = true
+			break
+		}
+	}
+	result.Value = common.GetPointer(canonicalDuration)
+	return result
+}
+
+func videoRequestMetadataDuration(fields map[string]interface{}) (int, bool, bool) {
+	value, exists := fields["metadata"]
+	if !exists || value == nil {
+		return 0, false, false
+	}
+
+	var metadata map[string]interface{}
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		metadata = typed
+	case string:
+		if err := common.UnmarshalJsonStr(typed, &metadata); err != nil {
+			return 0, false, false
+		}
+	default:
+		return 0, false, false
+	}
+	return videoRequestDurationField(metadata, "duration")
+}
+
+func videoRequestDurationField(fields map[string]interface{}, field string) (int, bool, bool) {
+	value, exists := fields[field]
+	if !exists || value == nil {
+		return 0, false, false
+	}
+	duration, ok := parseVideoRequestDurationValue(value)
+	return duration, true, ok
 }
 
 func parseJSONVideoProviderResolutionHints(body []byte) videoProviderResolutionHints {
@@ -355,18 +446,43 @@ func parseVideoResolution(value string) string {
 	return resolution
 }
 
+func parseVideoRequestDurationValue(value interface{}) (int, bool) {
+	switch typed := value.(type) {
+	case string:
+		return parseDurationString(typed)
+	case int:
+		return typed, typed > 0
+	case int64:
+		if typed > 0 && typed <= math.MaxInt32 {
+			return int(typed), true
+		}
+	case float64:
+		if typed > 0 && typed <= math.MaxInt32 && typed == math.Trunc(typed) {
+			return int(typed), true
+		}
+	case float32:
+		numeric := float64(typed)
+		if numeric > 0 && numeric <= math.MaxInt32 && numeric == math.Trunc(numeric) {
+			return int(numeric), true
+		}
+	}
+	return 0, false
+}
+
 func parseDurationString(value string) (int, bool) {
 	value = strings.TrimSpace(strings.ToLower(value))
 	for _, suffix := range []string{"seconds", "second", "secs", "sec", "s"} {
-		value = strings.TrimSuffix(value, suffix)
+		if strings.HasSuffix(value, suffix) {
+			value = strings.TrimSpace(strings.TrimSuffix(value, suffix))
+			break
+		}
 	}
-	value = strings.TrimSpace(value)
 	if value == "" {
 		return 0, false
 	}
-	parsed, err := strconv.ParseFloat(value, 64)
-	if err != nil {
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
 		return 0, false
 	}
-	return int(parsed), true
+	return parsed, true
 }

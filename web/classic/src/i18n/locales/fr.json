@@ -3848,6 +3848,11 @@
     "支持的像素尺寸": "Tailles en pixels prises en charge",
     "画面比例 {{aspect_ratio}} 不受支持，支持：{{supported_aspect_ratios}}": "Le format d'image {{aspect_ratio}} n'est pas pris en charge. Formats pris en charge : {{supported_aspect_ratios}}",
     "像素尺寸 {{size}} 不受支持，支持：{{supported_sizes}}": "La taille en pixels {{size}} n’est pas prise en charge. Tailles prises en charge : {{supported_sizes}}",
-    "像素尺寸与画面比例冲突": "La taille en pixels ne correspond pas au format d'image"
+    "像素尺寸与画面比例冲突": "La taille en pixels ne correspond pas au format d'image",
+    "支持的时长（秒）": "Durées prises en charge (secondes)",
+    "支持的时长必须是以逗号分隔且不重复的正整数": "Les durées prises en charge doivent être des entiers positifs uniques séparés par des virgules",
+    "支持的时长不能与范围时长或固定时长同时设置": "Les durées prises en charge ne peuvent pas être combinées avec une plage ou une durée fixe",
+    "不支持 {{actual}} 秒时长，支持：{{supported_durations}}": "La durée de {{actual}} secondes n'est pas prise en charge. Valeurs prises en charge : {{supported_durations}}",
+    "提供的时长字段必须为正整数且数值一致": "Les champs de durée fournis doivent être des entiers positifs et avoir la même valeur"
   }
 }

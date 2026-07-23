@@ -4966,6 +4966,12 @@
     "Use WxH pixel sizes": "请使用 WxH 像素尺寸",
     "Use a quality label such as 720p or 4k": "请使用如 720p 或 4k 的清晰度标识",
     "Do not repeat output values": "输出值不能重复",
-    "Pixel size conflicts with aspect ratio": "像素尺寸与画面比例冲突"
+    "Pixel size conflicts with aspect ratio": "像素尺寸与画面比例冲突",
+    "Use positive integer seconds separated by commas": "请使用以逗号分隔的正整数秒数",
+    "Do not repeat duration values": "时长值不能重复",
+    "Supported durations cannot be combined with a duration range or fixed duration": "支持的时长不能与时长范围或固定时长同时设置",
+    "Supported durations (seconds)": "支持的时长（秒）",
+    "Duration {{actual}} seconds is not supported. Supported: {{supported_durations}}": "不支持 {{actual}} 秒时长。支持：{{supported_durations}}",
+    "The supplied duration fields must be positive integers and agree": "提供的时长字段必须为正整数且数值一致"
   }
 }

@@ -356,6 +356,148 @@ func TestEstimateBillingPreservesCanvasStandardDuration(t *testing.T) {
 	require.Equal(t, float64(20), ratios["seconds"])
 }
 
+func TestEstimateBillingPreservesGenericFractionalWireDuration(t *testing.T) {
+	tests := []struct {
+		name        string
+		newRequest  func(t *testing.T) *http.Request
+		wantSeconds float64
+		assertWire  func(t *testing.T, data []byte, contentType string)
+	}{
+		{
+			name: "json duration takes precedence",
+			newRequest: func(t *testing.T) *http.Request {
+				request := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"generic-video","prompt":"animate","duration":5.5,"seconds":"9"}`))
+				request.Header.Set("Content-Type", "application/json")
+				return request
+			},
+			wantSeconds: 5.5,
+			assertWire: func(t *testing.T, data []byte, _ string) {
+				var body map[string]interface{}
+				require.NoError(t, common.Unmarshal(data, &body))
+				assert.Equal(t, "5.5", body["seconds"])
+				assert.NotContains(t, body, "duration")
+			},
+		},
+		{
+			name: "multipart seconds alias",
+			newRequest: func(t *testing.T) *http.Request {
+				var body bytes.Buffer
+				writer := multipart.NewWriter(&body)
+				require.NoError(t, writer.WriteField("model", "generic-video"))
+				require.NoError(t, writer.WriteField("prompt", "animate"))
+				require.NoError(t, writer.WriteField("seconds", "5.5"))
+				require.NoError(t, writer.Close())
+				request := httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(body.Bytes()))
+				request.Header.Set("Content-Type", writer.FormDataContentType())
+				return request
+			},
+			wantSeconds: 5.5,
+			assertWire: func(t *testing.T, data []byte, contentType string) {
+				_, params, err := mime.ParseMediaType(contentType)
+				require.NoError(t, err)
+				form, err := multipart.NewReader(bytes.NewReader(data), params["boundary"]).ReadForm(1 << 20)
+				require.NoError(t, err)
+				defer form.RemoveAll()
+				assert.Equal(t, []string{"5.5"}, form.Value["seconds"])
+			},
+		},
+		{
+			name: "json invalid duration does not fall back to seconds",
+			newRequest: func(t *testing.T) *http.Request {
+				request := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"generic-video","prompt":"animate","duration":0,"seconds":"15"}`))
+				request.Header.Set("Content-Type", "application/json")
+				return request
+			},
+			wantSeconds: float64(defaultUnprofiledVideoSeconds),
+			assertWire: func(t *testing.T, data []byte, _ string) {
+				var body map[string]interface{}
+				require.NoError(t, common.Unmarshal(data, &body))
+				assert.Equal(t, "0", body["seconds"])
+				assert.NotContains(t, body, "duration")
+			},
+		},
+		{
+			name: "multipart repeated duration does not fall back to seconds",
+			newRequest: func(t *testing.T) *http.Request {
+				var body bytes.Buffer
+				writer := multipart.NewWriter(&body)
+				require.NoError(t, writer.WriteField("model", "generic-video"))
+				require.NoError(t, writer.WriteField("prompt", "animate"))
+				require.NoError(t, writer.WriteField("duration", "0"))
+				require.NoError(t, writer.WriteField("duration", "invalid"))
+				require.NoError(t, writer.WriteField("seconds", "15"))
+				require.NoError(t, writer.Close())
+				request := httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(body.Bytes()))
+				request.Header.Set("Content-Type", writer.FormDataContentType())
+				return request
+			},
+			wantSeconds: float64(defaultUnprofiledVideoSeconds),
+			assertWire: func(t *testing.T, data []byte, contentType string) {
+				_, params, err := mime.ParseMediaType(contentType)
+				require.NoError(t, err)
+				form, err := multipart.NewReader(bytes.NewReader(data), params["boundary"]).ReadForm(1 << 20)
+				require.NoError(t, err)
+				defer form.RemoveAll()
+				assert.Equal(t, []string{"0", "invalid"}, form.Value["seconds"])
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = tt.newRequest(t)
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+			info := &relaycommon.RelayInfo{
+				ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: "generic-video"},
+				TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+			}
+			adaptor := &TaskAdaptor{}
+
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+			ratio := adaptor.EstimateBilling(c, info)
+			assert.Equal(t, tt.wantSeconds, ratio["seconds"])
+
+			body, err := adaptor.BuildRequestBody(c, info)
+			require.NoError(t, err)
+			data, err := io.ReadAll(body)
+			require.NoError(t, err)
+			tt.assertWire(t, data, c.GetHeader("Content-Type"))
+		})
+	}
+}
+
+func TestSeedanceGatewayMetadataDurationRemainsProviderWireInput(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"seedance-gateway",
+		"prompt":"animate",
+		"metadata":{"duration":"15","resolution":"720p"}
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:   &relaycommon.ChannelMeta{UpstreamModelName: seedanceGatewayModel},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+	adaptor := &TaskAdaptor{}
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	assert.Equal(t, float64(15), adaptor.EstimateBilling(c, info)["seconds"])
+
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	var upstream map[string]interface{}
+	require.NoError(t, common.Unmarshal(data, &upstream))
+	assert.NotContains(t, upstream, "seconds")
+	metadata, ok := upstream["metadata"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "15", metadata["duration"])
+}
+
 func TestApplyVeoReferenceImagesUsesIngredientsForMoreThanTwoImages(t *testing.T) {
 	body := map[string]any{
 		"images": []any{

@@ -106,6 +106,9 @@ function formatRange(range?: VideoMediaRange) {
 function formatDurationCapability(
   capability?: VideoRoutingCandidate['capability']
 ) {
+  if (capability?.durations?.length) {
+    return capability.durations.map((duration) => `${duration}s`).join(', ')
+  }
   if (capability?.fixed_duration !== undefined) {
     return `${capability.fixed_duration}s`
   }
@@ -133,7 +136,11 @@ function violationText(
   violation: NonNullable<VideoRoutingCandidate['violations']>[number],
   t: (key: string, options?: Record<string, unknown>) => string
 ) {
-  const values = { actual: violation.actual, expected: violation.expected }
+  const values = {
+    actual: violation.actual,
+    expected: violation.expected,
+    supported_durations: violation.supported_durations?.join(', '),
+  }
   const messages: Record<string, string> = {
     images_below_min: t('Requires at least {{expected}} images', values),
     images_above_max: t('Supports at most {{expected}} images', values),
@@ -155,6 +162,13 @@ function violationText(
     duration_above_max: t(
       'Supports a duration of at most {{expected}} seconds',
       values
+    ),
+    duration_not_supported: t(
+      'Duration {{actual}} seconds is not supported. Supported: {{supported_durations}}',
+      values
+    ),
+    duration_unparseable: t(
+      'The supplied duration fields must be positive integers and agree'
     ),
     resolution_not_supported: t(
       'Resolution {{resolution}} is not supported. Supported: {{supported_resolutions}}',
@@ -256,7 +270,7 @@ function CandidateTable({
   }
   return (
     <div className='overflow-x-auto rounded-md border'>
-      <Table className='min-w-[1756px] table-fixed'>
+      <Table className='min-w-[1832px] table-fixed'>
         <TableHeader>
           <TableRow>
             <TableHead className='w-[520px]'>{t('Channel')}</TableHead>
@@ -273,7 +287,7 @@ function CandidateTable({
             <TableHead className='w-[128px] text-center leading-tight whitespace-normal'>
               {t('Video + audio total')}
             </TableHead>
-            <TableHead className='w-[84px] text-center'>
+            <TableHead className='w-[160px] text-center'>
               {t('Duration')}
             </TableHead>
             <TableHead className='w-[120px] text-center'>
@@ -508,9 +522,7 @@ function CandidateDetails({
                 <dd>{formatRange(candidate.capability?.video_audio_total)}</dd>
                 <dt className='text-muted-foreground'>{t('Duration')}</dt>
                 <dd>{formatDurationCapability(candidate.capability)}</dd>
-                <dt className='text-muted-foreground'>
-                  {t('Aspect ratio')}
-                </dt>
+                <dt className='text-muted-foreground'>{t('Aspect ratio')}</dt>
                 <dd>
                   {candidate.capability?.aspect_ratios?.length
                     ? candidate.capability.aspect_ratios.join(', ')
@@ -601,7 +613,7 @@ export function RoutingRules() {
     images: 4,
     videos: 0,
     audios: 0,
-    duration: 15,
+    duration: undefined,
     content_type: 'application/json',
     retry: 0,
   })

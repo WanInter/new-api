@@ -27,6 +27,58 @@ const outputFieldMessages: Record<VideoOutputListField, string> = {
   sizes: 'Use WxH pixel sizes',
 }
 
+const durationListErrorMessages = {
+  invalid: 'Use positive integer seconds separated by commas',
+  duplicate: 'Do not repeat duration values',
+}
+
+export function normalizeVideoDurationListValue(
+  value: string
+): string | undefined {
+  const trimmed = value.trim()
+  if (!/^\d+$/.test(trimmed)) return undefined
+  const parsed = Number(trimmed)
+  return Number.isSafeInteger(parsed) && parsed > 0 ? String(parsed) : undefined
+}
+
+export function normalizeVideoDurationList(values: string[]): string[] {
+  return values.map(
+    (value) => normalizeVideoDurationListValue(value) || value.trim()
+  )
+}
+
+function durationListSchema() {
+  return z.array(z.string()).superRefine((values, context) => {
+    const seen = new Set<string>()
+    let invalid = false
+    let duplicate = false
+    values.forEach((value) => {
+      const normalized = normalizeVideoDurationListValue(value)
+      if (!normalized) {
+        invalid = true
+        return
+      }
+      if (seen.has(normalized)) {
+        duplicate = true
+        return
+      }
+      seen.add(normalized)
+    })
+    if (invalid) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: durationListErrorMessages.invalid,
+      })
+    }
+    if (duplicate) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: durationListErrorMessages.duplicate,
+      })
+    }
+  })
+}
+
 export function normalizeVideoOutputListValue(
   field: VideoOutputListField,
   value: string
@@ -191,6 +243,7 @@ export const capabilityRuleFormSchema = z
     duration_min: optionalPositiveInteger,
     duration_max: optionalPositiveInteger,
     fixed_duration: optionalPositiveInteger,
+    durations: durationListSchema(),
     aspect_ratios: outputListSchema('aspect_ratios'),
     resolutions: outputListSchema('resolutions'),
     sizes: outputListSchema('sizes'),
@@ -224,6 +277,19 @@ export const capabilityRuleFormSchema = z
         message: 'Fixed duration cannot be combined with a duration range',
       })
     }
+    if (
+      values.durations.length > 0 &&
+      (values.fixed_duration !== '' ||
+        values.duration_min !== '' ||
+        values.duration_max !== '')
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['durations'],
+        message:
+          'Supported durations cannot be combined with a duration range or fixed duration',
+      })
+    }
     if (!hasAnyOverride(values)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -247,6 +313,7 @@ export const emptyCapabilityRuleFormValues: CapabilityRuleFormValues = {
   duration_min: '',
   duration_max: '',
   fixed_duration: '',
+  durations: [],
   aspect_ratios: [],
   resolutions: [],
   sizes: [],
@@ -270,6 +337,7 @@ export function capabilityToFormValues(
     duration_min: numberToDraft(capability?.duration?.min),
     duration_max: numberToDraft(capability?.duration?.max),
     fixed_duration: numberToDraft(capability?.fixed_duration),
+    durations: capability?.durations?.map(String) || [],
     aspect_ratios: capability?.aspect_ratios || [],
     resolutions: capability?.resolutions || [],
     sizes: capability?.sizes || [],
@@ -292,6 +360,10 @@ export function formValuesToCapability(
     ),
     duration: rangeFromDraft(values.duration_min, values.duration_max),
     fixed_duration: draftToNumber(values.fixed_duration),
+    durations:
+      values.durations.length > 0
+        ? normalizeVideoDurationList(values.durations).map(Number)
+        : undefined,
     aspect_ratios:
       values.aspect_ratios.length > 0
         ? normalizeVideoOutputList('aspect_ratios', values.aspect_ratios)
@@ -327,11 +399,13 @@ function validateRange(
 
 function hasAnyOverride(values: CapabilityRuleFormValues) {
   return (
+    values.durations.length > 0 ||
     values.aspect_ratios.length > 0 ||
     values.resolutions.length > 0 ||
     values.sizes.length > 0 ||
     Object.entries(values).some(
       ([field, value]) =>
+        field !== 'durations' &&
         field !== 'aspect_ratios' &&
         field !== 'resolutions' &&
         field !== 'sizes' &&

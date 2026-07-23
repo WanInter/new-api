@@ -69,6 +69,7 @@ const EMPTY_CAPABILITY_FORM = {
   duration_min: '',
   duration_max: '',
   fixed_duration: '',
+  durations: [],
   aspect_ratios: [],
   resolutions: [],
   sizes: [],
@@ -185,6 +186,28 @@ const validateVideoOutputList = (field, values) => {
   return true;
 };
 
+const normalizeVideoDurationListValue = (value) => {
+  const trimmed = String(value).trim();
+  if (!/^\d+$/.test(trimmed)) return undefined;
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) && parsed > 0
+    ? String(parsed)
+    : undefined;
+};
+
+const normalizeVideoDurationList = (values) =>
+  values.map(
+    (value) => normalizeVideoDurationListValue(value) || String(value).trim(),
+  );
+
+const validateVideoDurationList = (values) => {
+  const normalized = values.map(normalizeVideoDurationListValue);
+  return (
+    normalized.every((value) => value !== undefined) &&
+    new Set(normalized).size === normalized.length
+  );
+};
+
 const channelTypeNames = Object.fromEntries(
   CHANNEL_OPTIONS.map((option) => [option.value, option.label]),
 );
@@ -202,6 +225,9 @@ const formatRange = (range) => {
 };
 
 const formatDurationCapability = (capability) => {
+  if (capability?.durations?.length) {
+    return capability.durations.map((duration) => `${duration}s`).join(', ');
+  }
   if (capability?.fixed_duration !== undefined) {
     return `${capability.fixed_duration}s`;
   }
@@ -213,9 +239,7 @@ const formatResolutionCapability = (capability) =>
   capability?.resolutions?.length ? capability.resolutions.join(', ') : '—';
 
 const formatAspectRatioCapability = (capability) =>
-  capability?.aspect_ratios?.length
-    ? capability.aspect_ratios.join(', ')
-    : '—';
+  capability?.aspect_ratios?.length ? capability.aspect_ratios.join(', ') : '—';
 
 const formatSizeCapability = (capability) =>
   capability?.sizes?.length ? capability.sizes.join(', ') : '—';
@@ -240,6 +264,7 @@ const capabilityToForm = (capability) => ({
   duration_min: numberToDraft(capability?.duration?.min),
   duration_max: numberToDraft(capability?.duration?.max),
   fixed_duration: numberToDraft(capability?.fixed_duration),
+  durations: capability?.durations?.map(String) || [],
   aspect_ratios: capability?.aspect_ratios || [],
   resolutions: capability?.resolutions || [],
   sizes: capability?.sizes || [],
@@ -275,8 +300,11 @@ const formToCapability = (form) => ({
   ),
   duration: rangeFromDraft(form.duration_min, form.duration_max),
   fixed_duration: draftToNumber(form.fixed_duration),
-  aspect_ratios:
-    form.aspect_ratios.length > 0 ? form.aspect_ratios : undefined,
+  durations:
+    form.durations.length > 0
+      ? normalizeVideoDurationList(form.durations).map(Number)
+      : undefined,
+  aspect_ratios: form.aspect_ratios.length > 0 ? form.aspect_ratios : undefined,
   resolutions: form.resolutions.length > 0 ? form.resolutions : undefined,
   sizes: form.sizes.length > 0 ? form.sizes : undefined,
   require_json: draftToBoolean(form.require_json),
@@ -310,6 +338,9 @@ const validateCapabilityForm = (form, t) => {
   ) {
     return t('请输入正整数');
   }
+  if (!validateVideoDurationList(form.durations)) {
+    return t('支持的时长必须是以逗号分隔且不重复的正整数');
+  }
   const ranges = [
     ['images_min', 'images_max'],
     ['videos_min', 'videos_max'],
@@ -333,8 +364,19 @@ const validateCapabilityForm = (form, t) => {
   ) {
     return t('固定时长不能与范围时长同时设置');
   }
+  if (
+    form.durations.length > 0 &&
+    (form.fixed_duration !== '' ||
+      form.duration_min !== '' ||
+      form.duration_max !== '')
+  ) {
+    return t('支持的时长不能与范围时长或固定时长同时设置');
+  }
   const hasOverride = Object.entries(form).some(([field, value]) =>
-    field === 'aspect_ratios' || field === 'resolutions' || field === 'sizes'
+    field === 'durations' ||
+    field === 'aspect_ratios' ||
+    field === 'resolutions' ||
+    field === 'sizes'
       ? value.length > 0
       : value !== '' && value !== 'inherit',
   );
@@ -351,7 +393,11 @@ const strictSourceLabel = (source, t) => {
 };
 
 const violationText = (violation, t) => {
-  const options = { actual: violation.actual, expected: violation.expected };
+  const options = {
+    actual: violation.actual,
+    expected: violation.expected,
+    supported_durations: violation.supported_durations?.join(', '),
+  };
   const messages = {
     images_below_min: t('至少需要 {{expected}} 张图片', options),
     images_above_max: t('最多支持 {{expected}} 张图片', options),
@@ -368,6 +414,11 @@ const violationText = (violation, t) => {
     duration_mismatch: t('仅支持 {{expected}} 秒时长', options),
     duration_below_min: t('时长至少为 {{expected}} 秒', options),
     duration_above_max: t('时长最多为 {{expected}} 秒', options),
+    duration_not_supported: t(
+      '不支持 {{actual}} 秒时长，支持：{{supported_durations}}',
+      options,
+    ),
+    duration_unparseable: t('提供的时长字段必须为正整数且数值一致'),
     resolution_not_supported: t(
       '清晰度 {{resolution}} 不受支持，支持：{{supported_resolutions}}',
       {
@@ -628,8 +679,26 @@ const CapabilityRuleEditor = ({ candidate, onClose, onSaved, t }) => {
     }
   };
 
+  const normalizeDurationField = (values) => {
+    const valid = validateVideoDurationList(values);
+    setOutputErrors((current) => ({
+      ...current,
+      durations: valid ? '' : t('支持的时长必须是以逗号分隔且不重复的正整数'),
+    }));
+    if (valid) {
+      updateField('durations', normalizeVideoDurationList(values));
+    }
+  };
+
   const saveOverride = async () => {
     if (!candidate) return;
+    if (!validateVideoDurationList(form.durations)) {
+      setOutputErrors((current) => ({
+        ...current,
+        durations: t('支持的时长必须是以逗号分隔且不重复的正整数'),
+      }));
+      return;
+    }
     const outputFields = ['aspect_ratios', 'resolutions', 'sizes'];
     const invalidOutputField = outputFields.find(
       (field) => !validateVideoOutputList(field, form[field]),
@@ -643,6 +712,7 @@ const CapabilityRuleEditor = ({ candidate, onClose, onSaved, t }) => {
     }
     const normalizedForm = {
       ...form,
+      durations: normalizeVideoDurationList(form.durations),
       aspect_ratios: normalizeVideoOutputList(
         'aspect_ratios',
         form.aspect_ratios,
@@ -899,6 +969,43 @@ const CapabilityRuleEditor = ({ candidate, onClose, onSaved, t }) => {
 
           <section>
             <Text strong>{t('时长')}</Text>
+            <div className='mt-2'>
+              <Text type='tertiary' size='small'>
+                {t('支持的时长（秒）')}
+              </Text>
+              <Input
+                className='mt-1'
+                value={form.durations.join(', ')}
+                placeholder={candidate.capability?.durations?.join(', ') || '—'}
+                validateStatus={outputErrors.durations ? 'error' : 'default'}
+                onChange={(value) => {
+                  setOutputErrors((current) => ({
+                    ...current,
+                    durations: '',
+                  }));
+                  updateField(
+                    'durations',
+                    value
+                      .split(',')
+                      .map((item) => item.trim())
+                      .filter(Boolean),
+                  );
+                }}
+                onBlur={() => normalizeDurationField(form.durations)}
+              />
+              {outputErrors.durations && (
+                <Text type='danger' size='small'>
+                  {outputErrors.durations}
+                </Text>
+              )}
+              {candidate.capability?.durations?.length > 0 && (
+                <div className='mt-2'>
+                  <Text type='tertiary' size='small'>
+                    {t('生效')}: {candidate.capability.durations.join(', ')}
+                  </Text>
+                </div>
+              )}
+            </div>
             <div className='mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3'>
               {[
                 [
@@ -986,7 +1093,7 @@ const ChannelRouting = () => {
     images: 4,
     videos: 0,
     audios: 0,
-    duration: 15,
+    duration: undefined,
     aspect_ratio: '',
     size: '',
     resolution: '',
@@ -1243,7 +1350,7 @@ const ChannelRouting = () => {
       },
       {
         title: t('时长'),
-        width: 84,
+        width: 160,
         align: 'center',
         render: (_, record) => formatDurationCapability(record.capability),
       },
@@ -1361,7 +1468,7 @@ const ChannelRouting = () => {
         rowKey={(record) => `${record.group}-${record.channel_id}`}
         pagination={false}
         tableLayout='fixed'
-        scroll={{ x: 2016 }}
+        scroll={{ x: 2092 }}
         empty={t('未找到分流候选渠道')}
       />
     </Spin>
@@ -1503,7 +1610,12 @@ const ChannelRouting = () => {
                         onChange={(value) =>
                           setSimulation((current) => ({
                             ...current,
-                            [field]: Number(value),
+                            [field]:
+                              value === null ||
+                              value === undefined ||
+                              value === ''
+                                ? undefined
+                                : Number(value),
                           }))
                         }
                       />

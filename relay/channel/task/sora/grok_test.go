@@ -22,7 +22,7 @@ func TestGrokImageVideoMapsPublicImageRequest(t *testing.T) {
 	c := newGrokJSONContext(t, `{
 		"model":"grok-image-video",
 		"prompt":"animate the reference",
-		"seconds":"15",
+		"seconds":"20",
 		"aspect_ratio":"9:16",
 		"resolution":"720p",
 		"images":["https://example.com/reference.png"]
@@ -42,7 +42,7 @@ func TestGrokImageVideoMapsPublicImageRequest(t *testing.T) {
 	require.NoError(t, common.Unmarshal(data, &got))
 	assert.Equal(t, grokImageVideoModel, got["model"])
 	assert.Equal(t, "ref", got["mode"])
-	assert.Equal(t, float64(15), got["duration"])
+	assert.Equal(t, float64(20), got["duration"])
 	assert.Equal(t, "9:16", got["aspect_ratio"])
 	assert.Equal(t, "720p", got["resolution"])
 	assert.Equal(t, []any{"https://example.com/reference.png"}, got["images_url"])
@@ -54,7 +54,7 @@ func TestGrokVideo15MapsPublicImageAndResolution(t *testing.T) {
 	c := newGrokJSONContext(t, `{
 		"model":"grok-video-1.5",
 		"prompt":"animate the reference",
-		"seconds":"15",
+		"seconds":"20",
 		"aspect_ratio":"9:16",
 		"resolution":"720p",
 		"images":["https://example.com/first-frame.png"]
@@ -73,7 +73,7 @@ func TestGrokVideo15MapsPublicImageAndResolution(t *testing.T) {
 	var got map[string]any
 	require.NoError(t, common.Unmarshal(data, &got))
 	assert.Equal(t, grokVideo15PreviewModel, got["model"])
-	assert.Equal(t, float64(15), got["duration"])
+	assert.Equal(t, float64(20), got["duration"])
 	assert.Equal(t, "9:16", got["aspect_ratio"])
 	assert.Equal(t, "720p", got["size"])
 	assert.Equal(t, []any{"https://example.com/first-frame.png"}, got["images_url"])
@@ -308,6 +308,30 @@ func TestGrokProfileDoesNotApplyAfterMappingToAnotherUpstreamModel(t *testing.T)
 	assert.NotContains(t, got, "size")
 }
 
+func TestGrokImageVideoLeavesMissingDurationForUpstreamValidation(t *testing.T) {
+	c := newGrokJSONContext(t, `{
+		"model":"grok-image-video",
+		"prompt":"generate a video",
+		"aspect_ratio":"16:9",
+		"resolution":"720p"
+	}`)
+	info := grokRelayInfo("grok-image-video", grokImageVideoModel)
+	adaptor := &TaskAdaptor{}
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	require.Nil(t, adaptor.ValidateMappedRequest(c, info))
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	var got map[string]any
+	require.NoError(t, common.Unmarshal(data, &got))
+	assert.Equal(t, "text", got["mode"])
+	assert.NotContains(t, got, "duration")
+	assert.NotContains(t, got, "seconds")
+}
+
 func TestGrokMappedValidationRejectsUnsupportedRequestsBeforeBilling(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -315,12 +339,6 @@ func TestGrokMappedValidationRejectsUnsupportedRequestsBeforeBilling(t *testing.
 		wire  string
 		want  string
 	}{
-		{
-			name:  "image video invalid duration",
-			model: grokImageVideoModel,
-			wire:  `{"model":"grok-image-video","prompt":"animate","seconds":"20","aspect_ratio":"16:9","resolution":"720p","images":["image.png"]}`,
-			want:  "duration must be one of",
-		},
 		{
 			name:  "image video rejects video and audio references",
 			model: grokImageVideoModel,
@@ -470,7 +488,7 @@ func TestGrokImageVideoMapsMultipartMetadataDuration(t *testing.T) {
 	require.NoError(t, writer.WriteField("aspect_ratio", "16:9"))
 	require.NoError(t, writer.WriteField("resolution", "720p"))
 	require.NoError(t, writer.WriteField("images", "https://example.com/reference.png"))
-	require.NoError(t, writer.WriteField("metadata", `{"duration":"15s","request_id":"keep"}`))
+	require.NoError(t, writer.WriteField("metadata", `{"duration":"12s","request_id":"keep"}`))
 	require.NoError(t, writer.Close())
 
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -482,7 +500,7 @@ func TestGrokImageVideoMapsMultipartMetadataDuration(t *testing.T) {
 
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
 	require.Nil(t, adaptor.ValidateMappedRequest(c, info))
-	assert.Equal(t, float64(15), adaptor.EstimateBilling(c, info)["seconds"])
+	assert.Equal(t, float64(12), adaptor.EstimateBilling(c, info)["seconds"])
 
 	body, err := adaptor.BuildRequestBody(c, info)
 	require.NoError(t, err)
@@ -494,7 +512,7 @@ func TestGrokImageVideoMapsMultipartMetadataDuration(t *testing.T) {
 	form, err := multipart.NewReader(bytes.NewReader(data), params["boundary"]).ReadForm(1 << 20)
 	require.NoError(t, err)
 	defer form.RemoveAll()
-	assert.Equal(t, []string{"15"}, form.Value["duration"])
+	assert.Equal(t, []string{"12"}, form.Value["duration"])
 	assert.NotContains(t, form.Value, "seconds")
 
 	var metadata map[string]any
@@ -502,6 +520,39 @@ func TestGrokImageVideoMapsMultipartMetadataDuration(t *testing.T) {
 	require.NoError(t, common.UnmarshalJsonStr(form.Value["metadata"][0], &metadata))
 	assert.NotContains(t, metadata, "duration")
 	assert.Equal(t, "keep", metadata["request_id"])
+}
+
+func TestGrokImageVideoMultipartLeavesMissingDurationForUpstreamValidation(t *testing.T) {
+	var input bytes.Buffer
+	writer := multipart.NewWriter(&input)
+	require.NoError(t, writer.WriteField("model", "grok-image-video"))
+	require.NoError(t, writer.WriteField("prompt", "animate the reference"))
+	require.NoError(t, writer.WriteField("aspect_ratio", "16:9"))
+	require.NoError(t, writer.WriteField("resolution", "720p"))
+	require.NoError(t, writer.WriteField("images", "https://example.com/reference.png"))
+	require.NoError(t, writer.Close())
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(input.Bytes()))
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := grokRelayInfo("grok-image-video", grokImageVideoModel)
+	adaptor := &TaskAdaptor{}
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	require.Nil(t, adaptor.ValidateMappedRequest(c, info))
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	_, params, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
+	require.NoError(t, err)
+	form, err := multipart.NewReader(bytes.NewReader(data), params["boundary"]).ReadForm(1 << 20)
+	require.NoError(t, err)
+	defer form.RemoveAll()
+	assert.NotContains(t, form.Value, "duration")
+	assert.NotContains(t, form.Value, "seconds")
 }
 
 func TestGrokImageVideoMapsMultipartJSONTextNestedMedia(t *testing.T) {

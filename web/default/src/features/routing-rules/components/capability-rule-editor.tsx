@@ -70,6 +70,7 @@ import {
   capabilityToFormValues,
   emptyCapabilityRuleFormValues,
   formValuesToCapability,
+  normalizeVideoDurationList,
   normalizeVideoOutputList,
   type CapabilityRuleFormValues,
 } from '../lib/capability-form'
@@ -241,6 +242,10 @@ export function CapabilityRuleEditor(props: CapabilityRuleEditorProps) {
                 <FieldSet>
                   <FieldLegend variant='label'>{t('Duration')}</FieldLegend>
                   <FieldGroup className='grid grid-cols-1 gap-3 sm:grid-cols-3'>
+                    <DurationListOverrideField
+                      form={form}
+                      effective={candidate.capability?.durations}
+                    />
                     <NumberOverrideField
                       form={form}
                       name='duration_min'
@@ -353,6 +358,52 @@ export function CapabilityRuleEditor(props: CapabilityRuleEditorProps) {
         </AlertDialogContent>
       </AlertDialog>
     </>
+  )
+}
+
+function DurationListOverrideField(props: {
+  form: UseFormReturn<CapabilityRuleFormValues>
+  effective?: number[]
+}) {
+  const { t } = useTranslation()
+  const error = props.form.formState.errors.durations
+  return (
+    <Controller
+      control={props.form.control}
+      name='durations'
+      render={({ field }) => (
+        <Field className='sm:col-span-3' data-invalid={Boolean(error)}>
+          <FieldLabel htmlFor='routing-durations'>
+            {t('Supported durations (seconds)')}
+          </FieldLabel>
+          <Input
+            id='routing-durations'
+            value={field.value.join(', ')}
+            placeholder={props.effective?.join(', ') || '—'}
+            aria-invalid={Boolean(error)}
+            onChange={(event) =>
+              field.onChange(
+                event.target.value
+                  .split(',')
+                  .map((value) => value.trim())
+                  .filter(Boolean)
+              )
+            }
+            onBlur={() => {
+              field.onChange(normalizeVideoDurationList(field.value))
+              field.onBlur()
+              void props.form.trigger('durations')
+            }}
+          />
+          <FieldError>{error?.message ? t(error.message) : null}</FieldError>
+          {props.effective?.length ? (
+            <p className='text-muted-foreground text-xs'>
+              {t('Effective')}: {props.effective.join(', ')}
+            </p>
+          ) : null}
+        </Field>
+      )}
+    />
   )
 }
 

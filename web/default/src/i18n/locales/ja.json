@@ -4966,6 +4966,12 @@
     "Use WxH pixel sizes": "WxH のピクセルサイズを使用してください",
     "Use a quality label such as 720p or 4k": "720p または 4k などの品質ラベルを使用してください",
     "Do not repeat output values": "出力値を重複させないでください",
-    "Pixel size conflicts with aspect ratio": "ピクセルサイズがアスペクト比と一致しません"
+    "Pixel size conflicts with aspect ratio": "ピクセルサイズがアスペクト比と一致しません",
+    "Use positive integer seconds separated by commas": "正の整数の秒数をカンマ区切りで入力してください",
+    "Do not repeat duration values": "時間の値を重複させないでください",
+    "Supported durations cannot be combined with a duration range or fixed duration": "対応時間は、時間範囲または固定時間と同時に設定できません",
+    "Supported durations (seconds)": "対応時間（秒）",
+    "Duration {{actual}} seconds is not supported. Supported: {{supported_durations}}": "{{actual}} 秒の時間はサポートされていません。対応：{{supported_durations}}",
+    "The supplied duration fields must be positive integers and agree": "指定した時間フィールドは正の整数で、同じ値である必要があります"
   }
 }
