@@ -15,6 +15,8 @@ const (
 	otoySeedanceMiniReferenceModel = "otoy-image-to-video-seedance-2-0-mini-reference-to-video"
 	veoOmniFlashModel              = "veo-omni-flash"
 	veoOmniFlashVideoEditModel     = "veo-omni-flash-video-edit"
+	grokImageVideoModel            = "grok-video-3"
+	grokVideo15PreviewModel        = "grok-imagine-video-1.5-preview"
 	seedanceGatewayModel           = "seedance-gateway"
 	canvasStandardSeedanceModel    = "navos-local-seedance-154-36-180-7"
 	defaultUnprofiledVideoSeconds  = 4
@@ -28,17 +30,21 @@ const (
 	requestTransformOtoySeedanceReference
 	requestTransformVeoReferenceImages
 	requestTransformTokenStackSora15s
+	requestTransformGrokImageVideo
+	requestTransformGrokVideo15
 )
 
-// soraModelProfile only describes how this channel's wire format differs from
-// the public task request. Model capabilities are validated by routing or the
-// upstream service, not by this adaptor.
+// soraModelProfile describes how this channel's wire format differs from the
+// public task request. Profiles with strict provider contracts are validated
+// after model mapping and before billing by the adaptor.
 type soraModelProfile struct {
 	JSONTransform              requestTransform
 	JSONFinalTransform         requestTransform
 	MultipartTransform         requestTransform
 	DropSecondsField           bool
 	SkipGenericDurationMapping bool
+	RequireFinalUpstreamModel  bool
+	DefaultDuration            int
 }
 
 var soraModelProfiles = map[string]soraModelProfile{
@@ -63,6 +69,19 @@ var soraModelProfiles = map[string]soraModelProfile{
 	},
 	veoOmniFlashVideoEditModel: {
 		JSONTransform: requestTransformVeoReferenceImages,
+	},
+	grokImageVideoModel: {
+		JSONTransform:              requestTransformGrokImageVideo,
+		MultipartTransform:         requestTransformGrokImageVideo,
+		SkipGenericDurationMapping: true,
+		RequireFinalUpstreamModel:  true,
+	},
+	grokVideo15PreviewModel: {
+		JSONTransform:              requestTransformGrokVideo15,
+		MultipartTransform:         requestTransformGrokVideo15,
+		SkipGenericDurationMapping: true,
+		RequireFinalUpstreamModel:  true,
+		DefaultDuration:            6,
 	},
 }
 
@@ -110,12 +129,19 @@ func soraModelProfileForRequest(requestModel string, info *relaycommon.RelayInfo
 
 func baseSoraModelProfileForRequest(requestModel string, info *relaycommon.RelayInfo) (soraModelProfile, bool) {
 	if info != nil && info.ChannelMeta != nil {
+		// ModelMappedHelper updates ChannelMeta.UpstreamModelName in place, so this
+		// is the final provider model after channel mapping.
 		if profile, ok := findSoraModelProfile(info.ChannelMeta.UpstreamModelName); ok {
 			return profile, true
 		}
 	}
 	if info != nil {
 		if profile, ok := findSoraModelProfile(info.OriginModelName); ok {
+			if profile.RequireFinalUpstreamModel && info.ChannelMeta != nil &&
+				strings.TrimSpace(info.ChannelMeta.UpstreamModelName) != "" &&
+				strings.TrimSpace(info.ChannelMeta.UpstreamModelName) != strings.TrimSpace(info.OriginModelName) {
+				return soraModelProfile{}, false
+			}
 			return profile, true
 		}
 	}

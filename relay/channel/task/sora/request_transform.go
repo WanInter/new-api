@@ -1,7 +1,11 @@
 package sora
 
 import (
+	"encoding/json"
+	"fmt"
+	"math"
 	"mime/multipart"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -96,8 +100,8 @@ func appendNonEmptyTokenStackURLs(target []string, values ...string) []string {
 	return target
 }
 
-func applySoraModelJSONProfile(body map[string]interface{}, profile soraModelProfile) {
-	if profile.DropSecondsField {
+func applySoraModelJSONProfile(body map[string]interface{}, profile soraModelProfile) error {
+	if profile.DropSecondsField && profile.JSONTransform != requestTransformGrokImageVideo && profile.JSONTransform != requestTransformGrokVideo15 {
 		moveSecondsFieldToDuration(body)
 	}
 
@@ -108,7 +112,12 @@ func applySoraModelJSONProfile(body map[string]interface{}, profile soraModelPro
 		applyOtoySeedanceMiniReferenceRequest(body)
 	case requestTransformVeoReferenceImages:
 		applyVeoReferenceImages(body)
+	case requestTransformGrokImageVideo:
+		return applyGrokImageVideoRequest(body)
+	case requestTransformGrokVideo15:
+		return applyGrokVideo15Request(body)
 	}
+	return nil
 }
 
 func applySoraModelJSONFinalProfile(body map[string]interface{}, profile soraModelProfile) {
@@ -117,10 +126,16 @@ func applySoraModelJSONFinalProfile(body map[string]interface{}, profile soraMod
 	}
 }
 
-func applySoraModelMultipartProfile(writer *multipart.Writer, values map[string][]string, profile soraModelProfile) {
-	if profile.MultipartTransform == requestTransformOtoySeedanceReference {
+func applySoraModelMultipartProfile(writer *multipart.Writer, values map[string][]string, profile soraModelProfile) error {
+	switch profile.MultipartTransform {
+	case requestTransformOtoySeedanceReference:
 		writeOtoySeedanceMiniReferenceMultipartFields(writer, values)
+	case requestTransformGrokImageVideo:
+		return writeGrokMultipartFields(writer, values, true)
+	case requestTransformGrokVideo15:
+		return writeGrokMultipartFields(writer, values, false)
 	}
+	return nil
 }
 
 func moveSecondsFieldToDuration(body map[string]interface{}) {
@@ -133,6 +148,469 @@ func moveSecondsFieldToDuration(body map[string]interface{}) {
 		}
 	}
 	delete(body, "seconds")
+}
+
+type grokRequestInput struct {
+	Images                []string
+	Videos                []string
+	Audios                []string
+	Mode                  string
+	HasExplicitFirstFrame bool
+	Duration              int
+	HasDuration           bool
+	AspectRatio           string
+	Resolution            string
+	Size                  string
+}
+
+func applyGrokImageVideoRequest(body map[string]interface{}) error {
+	input, err := grokRequestInputFromBody(body)
+	if err != nil {
+		return err
+	}
+	mode, err := validateGrokImageVideoRequest(input)
+	if err != nil {
+		return err
+	}
+
+	applyGrokImageURLs(body, input.Images)
+	body["mode"] = mode
+	body["duration"] = input.Duration
+	body["aspect_ratio"] = input.AspectRatio
+	body["resolution"] = input.Resolution
+	delete(body, "seconds")
+	delete(body, "ratio")
+	delete(body, "aspectRatio")
+	delete(body, "size")
+	return nil
+}
+
+func applyGrokVideo15Request(body map[string]interface{}) error {
+	input, err := grokRequestInputFromBody(body)
+	if err != nil {
+		return err
+	}
+	size, err := validateGrokVideo15Request(input)
+	if err != nil {
+		return err
+	}
+
+	applyGrokImageURLs(body, input.Images)
+	delete(body, "mode")
+	delete(body, "seconds")
+	delete(body, "resolution")
+	delete(body, "ratio")
+	delete(body, "aspectRatio")
+	if input.HasDuration {
+		body["duration"] = input.Duration
+	} else {
+		delete(body, "duration")
+	}
+	if input.AspectRatio != "" {
+		body["aspect_ratio"] = input.AspectRatio
+	} else {
+		delete(body, "aspect_ratio")
+	}
+	if size != "" {
+		body["size"] = size
+	} else {
+		delete(body, "size")
+	}
+	return nil
+}
+
+func grokRequestInputFromBody(body map[string]interface{}) (grokRequestInput, error) {
+	if body == nil {
+		return grokRequestInput{}, fmt.Errorf("grok request body is required")
+	}
+
+	data, err := common.Marshal(body)
+	if err != nil {
+		return grokRequestInput{}, err
+	}
+	var req relaycommon.TaskSubmitReq
+	if err := common.Unmarshal(data, &req); err != nil {
+		return grokRequestInput{}, err
+	}
+	if _, err := relaycommon.NormalizeTaskSubmitVideoOutput(&req); err != nil {
+		return grokRequestInput{}, err
+	}
+
+	upstreamImages, err := grokStringSliceField(body, "images_url")
+	if err != nil {
+		return grokRequestInput{}, err
+	}
+	hasRawVideo, err := grokHasRawMediaInput(body, "video", "videos", "video_url", "video_urls")
+	if err != nil {
+		return grokRequestInput{}, err
+	}
+	hasRawAudio, err := grokHasRawMediaInput(body, "audio", "audios", "audio_url", "audio_urls")
+	if err != nil {
+		return grokRequestInput{}, err
+	}
+	duration, hasDuration, err := grokRequestDuration(body)
+	if err != nil {
+		return grokRequestInput{}, err
+	}
+	videos := grokVideoURLs(&req)
+	if hasRawVideo && len(videos) == 0 {
+		videos = []string{"provided"}
+	}
+	audios := grokAudioURLs(&req)
+	if hasRawAudio && len(audios) == 0 {
+		audios = []string{"provided"}
+	}
+
+	input := grokRequestInput{
+		Images:                appendNonEmptySoraURLs(grokImageURLs(&req), upstreamImages...),
+		Videos:                videos,
+		Audios:                audios,
+		Mode:                  strings.TrimSpace(req.Mode),
+		HasExplicitFirstFrame: grokHasExplicitFirstFrame(&req),
+		Duration:              duration,
+		HasDuration:           hasDuration,
+		AspectRatio:           strings.TrimSpace(req.AspectRatio),
+		Resolution:            strings.TrimSpace(req.Resolution),
+		Size:                  strings.TrimSpace(req.Size),
+	}
+	return input, nil
+}
+
+func grokStringSliceField(body map[string]interface{}, field string) ([]string, error) {
+	value, exists := body[field]
+	if !exists || value == nil {
+		return nil, nil
+	}
+
+	values := make([]string, 0)
+	appendValue := func(value string) {
+		if value = strings.TrimSpace(value); value != "" {
+			values = append(values, value)
+		}
+	}
+	switch typed := value.(type) {
+	case string:
+		appendValue(typed)
+	case []string:
+		for _, item := range typed {
+			appendValue(item)
+		}
+	case []interface{}:
+		for _, item := range typed {
+			itemValue, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("%s must be a string or an array of strings", field)
+			}
+			appendValue(itemValue)
+		}
+	default:
+		return nil, fmt.Errorf("%s must be a string or an array of strings", field)
+	}
+	return values, nil
+}
+
+func grokHasRawMediaInput(body map[string]interface{}, fields ...string) (bool, error) {
+	for _, field := range fields {
+		values, err := grokStringSliceField(body, field)
+		if err != nil {
+			return false, err
+		}
+		if len(values) > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func grokRequestDuration(body map[string]interface{}) (int, bool, error) {
+	duration, hasDuration, err := grokDurationField(body, "duration")
+	if err != nil {
+		return 0, false, err
+	}
+	seconds, hasSeconds, err := grokDurationField(body, "seconds")
+	if err != nil {
+		return 0, false, err
+	}
+	if hasDuration && hasSeconds && duration != seconds {
+		return 0, false, fmt.Errorf("duration %d conflicts with seconds %d", duration, seconds)
+	}
+	if hasDuration {
+		return duration, true, nil
+	}
+	if hasSeconds {
+		return seconds, true, nil
+	}
+	return 0, false, nil
+}
+
+func grokDurationField(body map[string]interface{}, field string) (int, bool, error) {
+	value, exists := body[field]
+	if !exists || value == nil {
+		return 0, false, nil
+	}
+	duration, err := grokDurationValue(value)
+	if err != nil {
+		return 0, false, fmt.Errorf("%s must be a positive integer", field)
+	}
+	return duration, true, nil
+}
+
+func grokDurationValue(value interface{}) (int, error) {
+	parse := func(value string) (int, error) {
+		value = strings.TrimSpace(strings.ToLower(value))
+		for _, suffix := range []string{"seconds", "second", "secs", "sec", "s"} {
+			if strings.HasSuffix(value, suffix) {
+				value = strings.TrimSpace(strings.TrimSuffix(value, suffix))
+				break
+			}
+		}
+		duration, err := strconv.Atoi(value)
+		if err != nil || duration <= 0 {
+			return 0, fmt.Errorf("invalid duration")
+		}
+		return duration, nil
+	}
+
+	switch typed := value.(type) {
+	case string:
+		return parse(typed)
+	case json.Number:
+		return parse(string(typed))
+	case int:
+		if typed > 0 {
+			return typed, nil
+		}
+	case int64:
+		if typed > 0 && typed <= math.MaxInt32 {
+			return int(typed), nil
+		}
+	case float64:
+		if typed > 0 && typed <= math.MaxInt32 && typed == math.Trunc(typed) {
+			return int(typed), nil
+		}
+	case float32:
+		value := float64(typed)
+		if value > 0 && value <= math.MaxInt32 && value == math.Trunc(value) {
+			return int(value), nil
+		}
+	}
+	return 0, fmt.Errorf("invalid duration")
+}
+
+func grokImageURLs(req *relaycommon.TaskSubmitReq) []string {
+	if req == nil {
+		return nil
+	}
+	urls := appendNonEmptySoraURLs(nil, req.Images...)
+	urls = appendNonEmptySoraURLs(urls, req.Image)
+	urls = appendNonEmptySoraURLs(urls, req.ImageURLs...)
+	urls = appendNonEmptySoraURLs(urls, req.InputReference)
+	urls = appendNonEmptySoraURLs(urls, req.InputStartFrames...)
+	urls = appendNonEmptySoraURLs(urls, req.InputImageReferences...)
+	urls = appendNonEmptySoraURLs(urls, req.MetadataStartFrames...)
+	for _, item := range req.Content {
+		if item.ImageURL != nil {
+			urls = appendNonEmptySoraURLs(urls, item.ImageURL.URL)
+		}
+	}
+	return urls
+}
+
+func grokHasExplicitFirstFrame(req *relaycommon.TaskSubmitReq) bool {
+	if req == nil {
+		return false
+	}
+	if len(req.InputStartFrames) > 0 || len(req.MetadataStartFrames) > 0 {
+		return true
+	}
+	for _, item := range req.Content {
+		role := strings.ToLower(strings.TrimSpace(item.Role))
+		if item.ImageURL != nil && (role == "first_frame" || role == "first-frame" || role == "start_frame") {
+			return true
+		}
+	}
+	return false
+}
+
+func grokVideoURLs(req *relaycommon.TaskSubmitReq) []string {
+	if req == nil {
+		return nil
+	}
+	urls := appendNonEmptySoraURLs(nil, req.Videos...)
+	urls = appendNonEmptySoraURLs(urls, req.VideoURLs...)
+	for _, item := range req.Content {
+		if item.VideoURL != nil {
+			urls = appendNonEmptySoraURLs(urls, item.VideoURL.URL)
+		}
+	}
+	return urls
+}
+
+func grokAudioURLs(req *relaycommon.TaskSubmitReq) []string {
+	if req == nil {
+		return nil
+	}
+	urls := appendNonEmptySoraURLs(nil, req.Audios...)
+	urls = appendNonEmptySoraURLs(urls, req.AudioURLs...)
+	for _, item := range req.Content {
+		if item.AudioURL != nil {
+			urls = appendNonEmptySoraURLs(urls, item.AudioURL.URL)
+		}
+	}
+	return urls
+}
+
+func appendNonEmptySoraURLs(target []string, values ...string) []string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			target = append(target, value)
+		}
+	}
+	return target
+}
+
+func applyGrokImageURLs(body map[string]interface{}, images []string) {
+	if len(images) > 0 {
+		body["images_url"] = images
+	} else {
+		delete(body, "images_url")
+	}
+	for _, field := range []string{
+		"images", "image", "image_urls", "input_reference",
+		"video", "videos", "video_url", "video_urls",
+		"audio", "audios", "audio_url", "audio_urls",
+		"content",
+	} {
+		delete(body, field)
+	}
+	deleteNestedRequestFields(body, "input", "start_frames", "image_references")
+	deleteNestedRequestFields(body, "metadata", "start_frames")
+}
+
+func resolveGrokImageVideoMode(value string, imageCount int, hasExplicitFirstFrame bool) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(value))
+	if mode == "" {
+		switch {
+		case imageCount == 0:
+			return "text", nil
+		case hasExplicitFirstFrame:
+			if imageCount != 1 {
+				return "", fmt.Errorf("grok-image-video mode frame requires exactly 1 image input, got %d", imageCount)
+			}
+			return "frame", nil
+		case imageCount <= 7:
+			return "ref", nil
+		default:
+			return "", fmt.Errorf("grok-image-video supports at most 7 image inputs, got %d", imageCount)
+		}
+	}
+
+	switch mode {
+	case "text":
+		if imageCount != 0 {
+			return "", fmt.Errorf("grok-image-video mode text does not accept image inputs")
+		}
+	case "frame":
+		if imageCount != 1 {
+			return "", fmt.Errorf("grok-image-video mode frame requires exactly 1 image input, got %d", imageCount)
+		}
+	case "ref":
+		if imageCount < 1 || imageCount > 7 {
+			return "", fmt.Errorf("grok-image-video mode ref requires 1 to 7 image inputs, got %d", imageCount)
+		}
+	default:
+		return "", fmt.Errorf("grok-image-video mode must be one of: text, frame, ref")
+	}
+	return mode, nil
+}
+
+func validateGrokImageVideoRequest(input grokRequestInput) (string, error) {
+	if len(input.Videos) > 0 || len(input.Audios) > 0 {
+		return "", fmt.Errorf("grok-image-video supports image inputs only and does not support video or audio references")
+	}
+	if input.Size != "" {
+		return "", fmt.Errorf("grok-image-video does not support size; use resolution")
+	}
+	if !input.HasDuration {
+		return "", fmt.Errorf("grok-image-video duration is required and must be one of: 6, 10, 12, 16, 20")
+	}
+	if !isGrokImageVideoDuration(input.Duration) {
+		return "", fmt.Errorf("grok-image-video duration must be one of: 6, 10, 12, 16, 20")
+	}
+	if !isGrokImageVideoAspectRatio(input.AspectRatio) {
+		return "", fmt.Errorf("grok-image-video aspect_ratio is required and must be one of: 16:9, 9:16, 1:1")
+	}
+	if !isGrokResolution(input.Resolution) {
+		return "", fmt.Errorf("grok-image-video resolution is required and must be one of: 480p, 720p")
+	}
+	return resolveGrokImageVideoMode(input.Mode, len(input.Images), input.HasExplicitFirstFrame)
+}
+
+func validateGrokVideo15Request(input grokRequestInput) (string, error) {
+	if len(input.Videos) > 0 || len(input.Audios) > 0 {
+		return "", fmt.Errorf("grok-video-1.5 supports exactly one image input and does not support video or audio references")
+	}
+	if len(input.Images) != 1 {
+		return "", fmt.Errorf("grok-video-1.5 requires exactly 1 image input, got %d", len(input.Images))
+	}
+	if input.Mode != "" {
+		return "", fmt.Errorf("grok-video-1.5 does not support mode")
+	}
+	if input.HasDuration && (input.Duration < 1 || input.Duration > 15) {
+		return "", fmt.Errorf("grok-video-1.5 duration must be an integer from 1 to 15")
+	}
+	if input.AspectRatio != "" && !isGrokVideo15AspectRatio(input.AspectRatio) {
+		return "", fmt.Errorf("grok-video-1.5 does not support aspect_ratio %q", input.AspectRatio)
+	}
+	return grokVideo15OutputSize(input)
+}
+
+func grokVideo15OutputSize(input grokRequestInput) (string, error) {
+	size := strings.ToLower(strings.TrimSpace(input.Size))
+	resolution := strings.ToLower(strings.TrimSpace(input.Resolution))
+	if size != "" && resolution != "" && size != resolution {
+		return "", fmt.Errorf("grok-video-1.5 size %q conflicts with resolution %q", input.Size, input.Resolution)
+	}
+	output := firstNonEmpty(resolution, size)
+	if output == "" {
+		return "", nil
+	}
+	if output != "480p" && output != "720p" {
+		return "", fmt.Errorf("grok-video-1.5 supports size 480p or 720p, got %q", output)
+	}
+	return output, nil
+}
+
+func isGrokImageVideoDuration(value int) bool {
+	switch value {
+	case 6, 10, 12, 16, 20:
+		return true
+	default:
+		return false
+	}
+}
+
+func isGrokImageVideoAspectRatio(value string) bool {
+	switch value {
+	case "16:9", "9:16", "1:1":
+		return true
+	default:
+		return false
+	}
+}
+
+func isGrokResolution(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return value == "480p" || value == "720p"
+}
+
+func isGrokVideo15AspectRatio(value string) bool {
+	switch value {
+	case "16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3":
+		return true
+	default:
+		return false
+	}
 }
 
 func applyOpenAIContentRequest(body map[string]interface{}) {
@@ -307,6 +785,130 @@ func writeOtoySeedanceMiniReferenceMultipartFields(writer *multipart.Writer, val
 	writeValues("image_urls", appendOtoyImageValues(nil, values))
 	writeValues("video_urls", appendOtoyVideoValues(nil, values))
 	writeValues("audio_urls", appendOtoyAudioValues(nil, values))
+}
+
+func writeGrokMultipartFields(writer *multipart.Writer, values map[string][]string, imageVideo bool) error {
+	input, err := grokRequestInputFromMultipartValues(values)
+	if err != nil {
+		return err
+	}
+
+	mode := ""
+	size := ""
+	if imageVideo {
+		mode, err = validateGrokImageVideoRequest(input)
+	} else {
+		size, err = validateGrokVideo15Request(input)
+	}
+	if err != nil {
+		return err
+	}
+
+	writeValues := func(key string, vals []string) {
+		for _, value := range vals {
+			if value = strings.TrimSpace(value); value != "" {
+				_ = writer.WriteField(key, value)
+			}
+		}
+	}
+
+	transformedFields := map[string]bool{
+		"model":           true,
+		"duration":        true,
+		"seconds":         true,
+		"mode":            true,
+		"images_url":      true,
+		"images":          true,
+		"image":           true,
+		"image_urls":      true,
+		"input_reference": true,
+		"content":         true,
+		"video":           true,
+		"videos":          true,
+		"video_url":       true,
+		"video_urls":      true,
+		"audio":           true,
+		"audios":          true,
+		"audio_url":       true,
+		"audio_urls":      true,
+		"size":            true,
+		"resolution":      true,
+		"aspect_ratio":    true,
+		"ratio":           true,
+		"aspectRatio":     true,
+	}
+
+	for key, fieldValues := range values {
+		if transformedFields[key] {
+			continue
+		}
+		switch key {
+		case "input":
+			writeValues(key, grokMultipartNestedValuesWithoutFields(fieldValues, "start_frames", "image_references"))
+		case "metadata":
+			writeValues(key, grokMultipartNestedValuesWithoutFields(fieldValues, "start_frames"))
+		default:
+			writeValues(key, fieldValues)
+		}
+	}
+
+	if imageVideo {
+		_ = writer.WriteField("mode", mode)
+		_ = writer.WriteField("duration", strconv.Itoa(input.Duration))
+		_ = writer.WriteField("aspect_ratio", input.AspectRatio)
+		_ = writer.WriteField("resolution", input.Resolution)
+	} else {
+		if input.HasDuration {
+			_ = writer.WriteField("duration", strconv.Itoa(input.Duration))
+		}
+		if input.AspectRatio != "" {
+			_ = writer.WriteField("aspect_ratio", input.AspectRatio)
+		}
+		if size != "" {
+			_ = writer.WriteField("size", size)
+		}
+	}
+	writeValues("images_url", input.Images)
+	return nil
+}
+
+func grokRequestInputFromMultipartValues(values map[string][]string) (grokRequestInput, error) {
+	body := make(map[string]interface{}, len(values))
+	for key, fieldValues := range values {
+		switch len(fieldValues) {
+		case 0:
+			continue
+		case 1:
+			body[key] = fieldValues[0]
+		default:
+			body[key] = append([]string(nil), fieldValues...)
+		}
+	}
+	return grokRequestInputFromBody(body)
+}
+
+func grokMultipartNestedValuesWithoutFields(values []string, fields ...string) []string {
+	transformed := make([]string, 0, len(values))
+	for _, value := range values {
+		nested := make(map[string]interface{})
+		if err := common.UnmarshalJsonStr(value, &nested); err != nil {
+			transformed = append(transformed, value)
+			continue
+		}
+		for _, field := range fields {
+			delete(nested, field)
+		}
+		if len(nested) == 0 {
+			continue
+		}
+		encoded, err := common.Marshal(nested)
+		if err != nil {
+			transformed = append(transformed, value)
+			continue
+		}
+		transformed = append(transformed, string(encoded))
+	}
+	return transformed
 }
 
 func writeOtoyMultipartDuration(writer *multipart.Writer, values map[string][]string) {

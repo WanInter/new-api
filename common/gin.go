@@ -110,7 +110,7 @@ func UnmarshalBodyReusable(c *gin.Context, v any) error {
 	if err != nil {
 		return err
 	}
-	contentType := c.Request.Header.Get("Content-Type")
+	contentType := strings.ToLower(c.Request.Header.Get("Content-Type"))
 
 	// disk-backed JSON: stream-decode directly from the file to avoid
 	// materializing the entire payload back into a transient []byte

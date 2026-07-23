@@ -117,6 +117,71 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	return relaycommon.ValidateMultipartDirect(c, info)
 }
 
+// ValidateMappedRequest applies strict Grok wire-contract checks after model
+// mapping and before pricing. The two Grok models use images_url rather than
+// the public image aliases, so unsupported references must not be discarded.
+func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	if info == nil || info.Action == constant.TaskActionRemix {
+		return nil
+	}
+	profile, hasProfile := soraModelProfileForInfo(info)
+	if !hasProfile || (profile.JSONTransform != requestTransformGrokImageVideo && profile.JSONTransform != requestTransformGrokVideo15) {
+		return nil
+	}
+	contentType := strings.ToLower(c.GetHeader("Content-Type"))
+	if !strings.HasPrefix(contentType, "application/json") && !strings.Contains(contentType, "multipart/form-data") {
+		return service.TaskErrorWrapperLocal(
+			fmt.Errorf("Grok video models require application/json or multipart/form-data requests"),
+			"invalid_request",
+			http.StatusBadRequest,
+		)
+	}
+
+	if err := validateGrokMultipartFiles(c); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_media_input", http.StatusBadRequest)
+	}
+
+	var body map[string]interface{}
+	if err := common.UnmarshalBodyReusable(c, &body); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	input, err := grokRequestInputFromBody(body)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	if len(input.Images) > 0 && info.Action == constant.TaskActionTextGenerate {
+		info.Action = constant.TaskActionGenerate
+	}
+
+	switch profile.JSONTransform {
+	case requestTransformGrokImageVideo:
+		_, err = validateGrokImageVideoRequest(input)
+	case requestTransformGrokVideo15:
+		_, err = validateGrokVideo15Request(input)
+	}
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	return nil
+}
+
+func validateGrokMultipartFiles(c *gin.Context) error {
+	if c == nil || !strings.Contains(strings.ToLower(c.GetHeader("Content-Type")), "multipart/form-data") {
+		return nil
+	}
+	form, err := common.ParseMultipartFormReusable(c)
+	if err != nil {
+		return err
+	}
+	defer form.RemoveAll()
+	for _, files := range form.File {
+		if len(files) > 0 {
+			return fmt.Errorf("Grok video models do not support binary multipart files; use image URLs or data URIs")
+		}
+	}
+	return nil
+}
+
 // EstimateBilling 根据用户请求的 seconds 和 size 计算 OtherRatios。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	// remix 路径的 OtherRatios 已在 ResolveOriginTask 中设置
@@ -171,7 +236,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, errors.Wrap(err, "read_body_bytes_failed")
 	}
-	contentType := c.GetHeader("Content-Type")
+	contentType := strings.ToLower(c.GetHeader("Content-Type"))
 
 	if strings.HasPrefix(contentType, "application/json") {
 		var bodyMap map[string]interface{}
@@ -180,7 +245,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			bodyMap["model"] = info.UpstreamModelName
 			profile, hasProfile := soraModelProfileForInfo(info)
 			if hasProfile {
-				applySoraModelJSONProfile(bodyMap, profile)
+				if err := applySoraModelJSONProfile(bodyMap, profile); err != nil {
+					return nil, err
+				}
 			}
 			if !hasProfile || !profile.SkipGenericDurationMapping {
 				mapDurationToSoraSeconds(bodyMap)
@@ -208,7 +275,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		}
 		profile, hasProfile := soraModelProfileForInfo(info)
 		if hasProfile && profile.MultipartTransform != requestTransformNone {
-			applySoraModelMultipartProfile(writer, formData.Value, profile)
+			if err := applySoraModelMultipartProfile(writer, formData.Value, profile); err != nil {
+				return nil, err
+			}
 		} else {
 			writeSoraMultipartFields(writer, formData.Value)
 		}
@@ -428,6 +497,8 @@ func estimateVideoSeconds(req relaycommon.TaskSubmitReq, info *relaycommon.Relay
 		seconds = mustParsePositiveInt(normalized)
 	} else if normalized, ok := normalizeVideoSeconds(req.Metadata["duration"]); ok {
 		seconds = mustParsePositiveInt(normalized)
+	} else if profile, ok := soraModelProfileForInfo(info); ok && profile.DefaultDuration > 0 {
+		seconds = profile.DefaultDuration
 	} else {
 		seconds = defaultUnprofiledVideoSeconds
 	}
