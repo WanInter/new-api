@@ -84,16 +84,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		finalCaptureOutcome string
 	)
 	// This defer is registered before the relay error writer below so a final
-	// gateway error response is captured after it has been written.
+	// successful gateway response is captured after it has been written.
 	defer func() {
-		if finalCapture == nil || finalCaptureInfo == nil {
-			return
-		}
-		relaycapture.SaveAsync(finalCapture.Finalize(
-			c.Writer.Status(),
-			finalCaptureOutcome,
-			finalCaptureInfo.UpstreamModelName,
-		))
+		persistRelayCapture(finalCapture, finalCaptureInfo, c.Writer.Status(), finalCaptureOutcome)
 	}()
 
 	if relayFormat == types.RelayFormatOpenAIRealtime {
@@ -212,7 +205,6 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 	retryLimit := service.ImageRoutingRetryLimit(c, relayInfo.OriginModelName, common.RetryTimes)
-	var lastAttemptCapture *relaycapture.Session
 
 	for ; retryParam.GetRetry() <= retryLimit; retryParam.IncreaseRetry() {
 		relayInfo.RetryIndex = retryParam.GetRetry()
@@ -257,7 +249,6 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			return
 		}
 		captureWriter.SetSession(nil)
-		lastAttemptCapture = attemptCapture
 
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
@@ -278,16 +269,17 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		logger.LogInfo(c, retryLogStr)
 	}
 	if newAPIError != nil {
-		if lastAttemptCapture != nil {
-			finalCapture = lastAttemptCapture
-			finalCaptureInfo = relayInfo
-			finalCaptureOutcome = "error"
-			captureWriter.SetSession(lastAttemptCapture)
-		}
 		gopool.Go(func() {
 			perfmetrics.RecordRelaySample(relayInfo, false, 0)
 		})
 	}
+}
+
+func persistRelayCapture(session *relaycapture.Session, info *relaycommon.RelayInfo, statusCode int, outcome string) {
+	if session == nil || info == nil || outcome != "success" {
+		return
+	}
+	relaycapture.SaveAsync(session.Finalize(statusCode, outcome, info.UpstreamModelName))
 }
 
 var upgrader = websocket.Upgrader{
