@@ -105,6 +105,46 @@ func TestBuildRequestBodyMapsSecondsAliasToDurationWithoutChangingExplicitZero(t
 	}
 }
 
+func TestBuildRequestBodyUsesVeoIngredientsForMoreThanTwoImages(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"veo-omni-flash",
+		"prompt":"animate the references",
+		"duration":10,
+		"images":[
+			"https://example.com/1.png",
+			"https://example.com/2.png",
+			"https://example.com/3.png"
+		]
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "veo-omni-flash",
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "veo-omni-flash"},
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+	adaptor := &TaskAdaptor{}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	var got map[string]any
+	require.NoError(t, common.Unmarshal(data, &got))
+	assert.Equal(t, float64(10), got["duration"])
+	assert.NotContains(t, got, "seconds")
+	assert.NotContains(t, got, "images")
+	assert.Equal(t, []any{
+		"https://example.com/1.png",
+		"https://example.com/2.png",
+		"https://example.com/3.png",
+	}, got["Ingredients_images"])
+}
+
 func TestBuildRequestBodyNormalizesVideoOutputAliases(t *testing.T) {
 	testCases := []struct {
 		name            string

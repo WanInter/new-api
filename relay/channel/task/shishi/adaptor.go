@@ -124,6 +124,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if upstreamModelName := strings.TrimSpace(info.UpstreamModelName); upstreamModelName != "" {
 		payload["model"] = upstreamModelName
 	}
+	applyVeoReferenceImages(payload, info)
 	if _, ok := payload["aspect_ratio"]; !ok {
 		if ratio := firstNonEmpty(stringFromValue(payload["aspectRatio"]), stringFromValue(payload["ratio"])); ratio != "" {
 			payload["aspect_ratio"] = ratio
@@ -148,6 +149,38 @@ func mapSecondsToDuration(payload map[string]any) {
 		}
 	}
 	delete(payload, "seconds")
+}
+
+// Veo treats up to two images as first/last frames. More references are
+// ingredients and must use the provider's dedicated field.
+func applyVeoReferenceImages(payload map[string]any, info *relaycommon.RelayInfo) {
+	if !isVeoOmniFlashModel(info) {
+		return
+	}
+
+	images := collectURLs(payload, "Ingredients_images", "images", "image", "input_reference")
+	if len(images) > 2 {
+		payload["Ingredients_images"] = images
+		delete(payload, "images")
+	} else if len(images) > 0 {
+		payload["images"] = images
+		delete(payload, "Ingredients_images")
+	}
+	delete(payload, "image")
+	delete(payload, "input_reference")
+}
+
+func isVeoOmniFlashModel(info *relaycommon.RelayInfo) bool {
+	if info == nil {
+		return false
+	}
+	for _, modelName := range []string{info.UpstreamModelName, info.OriginModelName} {
+		switch strings.ToLower(strings.TrimSpace(modelName)) {
+		case "veo-omni-flash", "veo-omni-flash-video-edit":
+			return true
+		}
+	}
+	return false
 }
 
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
