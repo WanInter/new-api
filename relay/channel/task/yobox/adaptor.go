@@ -25,8 +25,9 @@ import (
 )
 
 const (
-	defaultYoboxBaseURL = "https://max.yoboxai.com"
-	yoboxTasksPath      = "/async/tasks"
+	defaultYoboxBaseURL              = "https://max.yoboxai.com"
+	defaultYoboxSeedance20Resolution = "720p"
+	yoboxTasksPath                   = "/async/tasks"
 )
 
 var modelList = []string{
@@ -171,21 +172,21 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	return map[string]float64{"seconds": float64(seconds)}
 }
 
-// BuildBillingInput exposes only values that are already present in the
-// Seedance 2.0 payload resolver. It never invents upstream defaults: missing
-// fields stay absent from billing.*, while legacy expressions can still read
-// their original request fields during the migration.
+// BuildBillingInput exposes the same effective fields as the Seedance 2.0
+// payload resolver. Required upstream defaults are resolved before billing so
+// pricing matches the outgoing request; fields with no known value stay absent.
 func (a *TaskAdaptor) BuildBillingInput(c *gin.Context, info *relaycommon.RelayInfo) (billingexpr.RequestInput, error) {
 	requestInput := billingexpr.RequestInput{Headers: yoboxBillingHeaders(c, info)}
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return requestInput, err
 	}
-	if !isYoboxSeedance20Model(yoboxRequestModelName(&req, info)) {
+	modelName := yoboxRequestModelName(&req, info)
+	if !isYoboxSeedance20Model(modelName) {
 		return requestInput, nil
 	}
 
-	payloadInput := resolveYoboxSeedance20Input(&req)
+	payloadInput := resolveYoboxSeedance20Input(&req, modelName)
 	billing := map[string]any{}
 	if seconds, ok := yoboxInputDurationSeconds(payloadInput); ok {
 		billing["duration_seconds"] = seconds
@@ -418,19 +419,19 @@ func convertSeedance2Payload(req *relaycommon.TaskSubmitReq, modelName string) m
 func convertSeedance20Payload(req *relaycommon.TaskSubmitReq, modelName string) map[string]any {
 	return map[string]any{
 		"model": modelName,
-		"input": resolveYoboxSeedance20Input(req),
+		"input": resolveYoboxSeedance20Input(req, modelName),
 	}
 }
 
 // resolveYoboxSeedance20Input is the single source of truth for Seedance 2.0
 // effective request fields. Both payload construction and canonical billing
 // input must use this resolver so aliases and nested input fields cannot drift.
-func resolveYoboxSeedance20Input(req *relaycommon.TaskSubmitReq) map[string]any {
+func resolveYoboxSeedance20Input(req *relaycommon.TaskSubmitReq, modelName string) map[string]any {
 	input := copyYoboxMetadata(req.Metadata, "model", "prompt", "input", "seconds", "size")
 	input["prompt"] = req.Prompt
 	setYoboxDuration(input, req)
 	setYoboxAspectRatio(input, req)
-	setYoboxResolution(input, req)
+	setYoboxResolution(input, req, modelName)
 
 	images := yoboxRequestImages(req, false)
 	_, contentVideos, contentAudios := yoboxContentMediaURLs(req.Content)
@@ -664,7 +665,7 @@ func setYoboxAspectRatio(input map[string]any, req *relaycommon.TaskSubmitReq) {
 	}
 }
 
-func setYoboxResolution(input map[string]any, req *relaycommon.TaskSubmitReq) {
+func setYoboxResolution(input map[string]any, req *relaycommon.TaskSubmitReq, modelName string) {
 	if req.Resolution != "" {
 		input["resolution"] = req.Resolution
 		return
@@ -674,6 +675,10 @@ func setYoboxResolution(input map[string]any, req *relaycommon.TaskSubmitReq) {
 	}
 	if resolution := yoboxResolutionFromSize(yoboxRequestSize(req)); resolution != "" {
 		input["resolution"] = resolution
+		return
+	}
+	if isYoboxSeedance20Model(modelName) {
+		input["resolution"] = defaultYoboxSeedance20Resolution
 	}
 }
 
@@ -683,7 +688,7 @@ func yoboxEffectiveDurationSeconds(req *relaycommon.TaskSubmitReq, info *relayco
 	}
 	modelName := yoboxRequestModelName(req, info)
 	if !isYoboxSeedance2Model(modelName) {
-		return yoboxInputDurationSeconds(resolveYoboxSeedance20Input(req))
+		return yoboxInputDurationSeconds(resolveYoboxSeedance20Input(req, modelName))
 	}
 	payload := convertSeedance2Payload(req, modelName)
 	return yoboxDurationSeconds(payload["seconds"])

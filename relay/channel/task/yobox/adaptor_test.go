@@ -258,7 +258,7 @@ func TestConvertToRequestPayloadNoFaceOmitsMediaStrength(t *testing.T) {
 	assert.Equal(t, []map[string]any{{"url": "https://example.com/reference.mp3"}}, input["audio_references"])
 }
 
-func TestConvertToRequestPayloadSeedance20DoesNotInventOptionalParameters(t *testing.T) {
+func TestConvertToRequestPayloadSeedance20DefaultsRequiredResolution(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	payload, err := adaptor.convertToRequestPayload(&relaycommon.TaskSubmitReq{
 		Model:    "seedance-2.0",
@@ -273,7 +273,7 @@ func TestConvertToRequestPayloadSeedance20DoesNotInventOptionalParameters(t *tes
 	require.True(t, ok)
 	require.Equal(t, "9:16", input["aspect_ratio"])
 	assert.NotContains(t, input, "duration")
-	assert.NotContains(t, input, "resolution")
+	assert.Equal(t, "720p", input["resolution"])
 	assert.NotContains(t, input, "audio")
 	assert.NotContains(t, input, "n")
 }
@@ -939,11 +939,20 @@ func TestBuildBillingInputMatchesSeedance20ResolvedPayload(t *testing.T) {
 	}
 }
 
-func TestBuildBillingInputDoesNotInventSeedance20Defaults(t *testing.T) {
-	c := newYoboxBillingTestContext(t, "application/json", strings.NewReader(`{"model":"seedance-2.0-noface","prompt":"animate"}`))
+func TestBuildBillingInputDefaultsRequiredResolutionForMappedSeedance20(t *testing.T) {
+	c := newYoboxBillingTestContext(t, "application/json", strings.NewReader(`{
+		"model":"seedance-2.0-fast-yo",
+		"prompt":"animate",
+		"duration":15,
+		"aspect_ratio":"9:16"
+	}`))
 	info := &relaycommon.RelayInfo{
-		OriginModelName: "seedance-2.0-noface",
+		OriginModelName: "seedance-2.0-fast-yo",
 		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "seedance-2.0-fast",
+			IsModelMapped:     true,
+		},
 	}
 	adaptor := &TaskAdaptor{}
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
@@ -956,11 +965,13 @@ func TestBuildBillingInputDoesNotInventSeedance20Defaults(t *testing.T) {
 	require.NoError(t, err)
 	upstreamInput := payload.(map[string]any)["input"].(map[string]any)
 
-	assert.NotContains(t, upstreamInput, "duration")
-	assert.NotContains(t, upstreamInput, "resolution")
-	assert.False(t, gjson.GetBytes(billingInput.Body, "billing.duration_seconds").Exists())
-	assert.False(t, gjson.GetBytes(billingInput.Body, "billing.resolution").Exists())
-	assert.Equal(t, map[string]float64{"seconds": 4}, adaptor.EstimateBilling(c, info))
+	assert.Equal(t, "seedance-2.0-fast", payload.(map[string]any)["model"])
+	assert.EqualValues(t, 15, upstreamInput["duration"])
+	assert.Equal(t, "9:16", upstreamInput["aspect_ratio"])
+	assert.Equal(t, "720p", upstreamInput["resolution"])
+	assert.EqualValues(t, 15, gjson.GetBytes(billingInput.Body, "billing.duration_seconds").Int())
+	assert.Equal(t, "720p", gjson.GetBytes(billingInput.Body, "billing.resolution").String())
+	assert.Equal(t, map[string]float64{"seconds": 15}, adaptor.EstimateBilling(c, info))
 }
 
 func TestBuildBillingInputTreatsZeroDurationAsInvalidForBilling(t *testing.T) {
