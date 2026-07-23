@@ -665,7 +665,14 @@ func yoboxStringValue(value any) string {
 }
 
 func setYoboxDuration(input map[string]any, req *relaycommon.TaskSubmitReq) {
-	if _, hasDuration := input["duration"]; hasDuration {
+	if duration, hasDuration := input["duration"]; hasDuration {
+		// The public API accepts aliases such as "15 seconds", but the
+		// upstream accepts its effective duration as a numeric value. Normalize
+		// every valid pre-populated value so the payload and canonical billing
+		// input describe the same parameter.
+		if seconds, ok := yoboxDurationSeconds(duration); ok {
+			input["duration"] = seconds
+		}
 		return
 	}
 	if req.Duration != 0 {

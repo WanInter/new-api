@@ -863,7 +863,7 @@ func TestBuildBillingInputMatchesSeedance20ResolvedPayload(t *testing.T) {
 				}`
 				return newYoboxBillingTestContext(t, "application/json", strings.NewReader(body))
 			},
-			upstreamDuration:   float64(15),
+			upstreamDuration:   15,
 			upstreamResolution: "1080p",
 			duration:           15,
 			resolution:         "1080p",
@@ -881,7 +881,7 @@ func TestBuildBillingInputMatchesSeedance20ResolvedPayload(t *testing.T) {
 				}`
 				return newYoboxBillingTestContext(t, "application/json", strings.NewReader(body))
 			},
-			upstreamDuration:   float64(15),
+			upstreamDuration:   15,
 			upstreamResolution: "720p",
 			duration:           15,
 			resolution:         "720p",
@@ -892,7 +892,7 @@ func TestBuildBillingInputMatchesSeedance20ResolvedPayload(t *testing.T) {
 				body := `{"model":"seedance-2.0-fast-noface","prompt":"animate","duration":" 15 seconds ","resolution":"720P"}`
 				return newYoboxBillingTestContext(t, "application/json", strings.NewReader(body))
 			},
-			upstreamDuration:   " 15 seconds ",
+			upstreamDuration:   15,
 			upstreamResolution: "720p",
 			duration:           15,
 			resolution:         "720p",
@@ -919,7 +919,7 @@ func TestBuildBillingInputMatchesSeedance20ResolvedPayload(t *testing.T) {
 				}
 				return newYoboxBillingTestContext(t, "application/x-www-form-urlencoded", strings.NewReader(values.Encode()))
 			},
-			upstreamDuration:   "15",
+			upstreamDuration:   15,
 			upstreamResolution: "720p",
 			duration:           15,
 			resolution:         "720p",
@@ -935,7 +935,7 @@ func TestBuildBillingInputMatchesSeedance20ResolvedPayload(t *testing.T) {
 				require.NoError(t, writer.Close())
 				return newYoboxBillingTestContext(t, writer.FormDataContentType(), bytes.NewReader(body.Bytes()))
 			},
-			upstreamDuration:   float64(15),
+			upstreamDuration:   15,
 			upstreamResolution: "480p",
 			duration:           15,
 			resolution:         "480p",
