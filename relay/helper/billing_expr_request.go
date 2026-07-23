@@ -1,6 +1,8 @@
 package helper
 
 import (
+	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -66,6 +68,9 @@ func readIncomingBillingExprBody(c *gin.Context) ([]byte, error) {
 	if isMultipartContentType(contentType) {
 		return marshalMultipartValues(c)
 	}
+	if isFormURLEncodedContentType(contentType) {
+		return marshalFormURLEncodedValues(c)
+	}
 	if !isJSONContentType(contentType) {
 		return nil, nil
 	}
@@ -91,18 +96,87 @@ func marshalMultipartValues(c *gin.Context) ([]byte, error) {
 		return nil, nil
 	}
 
-	values := make(map[string]interface{}, len(form.Value))
-	for key, formValues := range form.Value {
-		switch len(formValues) {
+	return marshalFormValues(form.Value)
+}
+
+func marshalFormURLEncodedValues(c *gin.Context) ([]byte, error) {
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return nil, err
+	}
+	body, err := storage.Bytes()
+	if err != nil {
+		return nil, err
+	}
+	values, err := url.ParseQuery(string(body))
+	if err != nil {
+		return nil, err
+	}
+	return marshalFormValues(values)
+}
+
+func marshalFormValues(formValues map[string][]string) ([]byte, error) {
+	values := make(map[string]interface{}, len(formValues))
+	for key, valuesForKey := range formValues {
+		switch len(valuesForKey) {
 		case 0:
 			continue
 		case 1:
-			values[key] = formValues[0]
+			values[key] = valuesForKey[0]
 		default:
-			values[key] = append([]string(nil), formValues...)
+			values[key] = append([]string(nil), valuesForKey...)
 		}
 	}
 	return common.Marshal(values)
+}
+
+// MergeCanonicalBillingExprRequestInput keeps the legacy request body intact
+// while replacing its billing object with the channel-derived value. This lets
+// existing expressions continue reading raw fields during the migration, while
+// expressions using billing.* cannot be influenced by client-supplied values.
+func MergeCanonicalBillingExprRequestInput(base, canonical billingexpr.RequestInput) (billingexpr.RequestInput, error) {
+	merged := cloneRequestInput(base)
+	if len(canonical.Headers) > 0 {
+		if merged.Headers == nil {
+			merged.Headers = map[string]string{}
+		}
+		for key, value := range canonical.Headers {
+			if strings.TrimSpace(key) == "" {
+				continue
+			}
+			merged.Headers[key] = value
+		}
+	}
+	if len(canonical.Body) == 0 {
+		return merged, nil
+	}
+
+	baseBody := map[string]interface{}{}
+	if len(merged.Body) > 0 {
+		if err := common.Unmarshal(merged.Body, &baseBody); err != nil {
+			return billingexpr.RequestInput{}, err
+		}
+	}
+
+	canonicalBody := map[string]interface{}{}
+	if err := common.Unmarshal(canonical.Body, &canonicalBody); err != nil {
+		return billingexpr.RequestInput{}, err
+	}
+	billing, exists := canonicalBody["billing"]
+	if !exists {
+		return billingexpr.RequestInput{}, fmt.Errorf("canonical billing input has no billing object")
+	}
+	if _, ok := billing.(map[string]interface{}); !ok {
+		return billingexpr.RequestInput{}, fmt.Errorf("canonical billing input has invalid billing object")
+	}
+	baseBody["billing"] = billing
+
+	body, err := common.Marshal(baseBody)
+	if err != nil {
+		return billingexpr.RequestInput{}, err
+	}
+	merged.Body = body
+	return merged, nil
 }
 
 func cloneRequestInput(src billingexpr.RequestInput) billingexpr.RequestInput {
@@ -123,6 +197,11 @@ func isJSONContentType(contentType string) bool {
 func isMultipartContentType(contentType string) bool {
 	contentType = strings.ToLower(strings.TrimSpace(contentType))
 	return strings.HasPrefix(contentType, "multipart/form-data")
+}
+
+func isFormURLEncodedContentType(contentType string) bool {
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	return strings.HasPrefix(contentType, "application/x-www-form-urlencoded")
 }
 
 func cloneStringMap(src map[string]string) map[string]string {

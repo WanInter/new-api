@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
 
@@ -95,6 +96,14 @@ type TaskMappedRequestPreValidator interface {
 // request-aware billing expressions should evaluate.
 type TaskBillingRequestBodyNormalizer interface {
 	NormalizeBillingRequestBody(info *relaycommon.RelayInfo, body []byte) ([]byte, error)
+}
+
+// TaskBillingInputProvider returns channel-normalized input for request-aware
+// billing. The returned body must be JSON produced with common.Marshal and may
+// contain only stable, non-sensitive pricing dimensions. An empty body declines
+// canonical input for the current model and keeps the legacy request body path.
+type TaskBillingInputProvider interface {
+	BuildBillingInput(c *gin.Context, info *relaycommon.RelayInfo) (billingexpr.RequestInput, error)
 }
 
 type OpenAIVideoConverter interface {

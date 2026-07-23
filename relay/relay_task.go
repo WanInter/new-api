@@ -206,16 +206,30 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// BillingRequestInput is frozen by tiered pricing. Rebuild it on every task
 	// attempt so a retry on a different adaptor/profile cannot reuse stale input.
 	info.BillingRequestInput = nil
-	if normalizer, ok := adaptor.(channel.TaskBillingRequestBodyNormalizer); ok {
+	normalizer, hasNormalizer := adaptor.(channel.TaskBillingRequestBodyNormalizer)
+	provider, hasBillingInputProvider := adaptor.(channel.TaskBillingInputProvider)
+	if hasNormalizer || hasBillingInputProvider {
 		requestInput, err := helper.BuildIncomingBillingExprRequestInput(c, info)
 		if err != nil {
 			return nil, service.TaskErrorWrapperLocal(err, "billing_request_input_failed", http.StatusBadRequest)
 		}
-		normalizedBody, err := normalizer.NormalizeBillingRequestBody(info, requestInput.Body)
-		if err != nil {
-			return nil, service.TaskErrorWrapperLocal(err, "billing_request_normalization_failed", http.StatusBadRequest)
+		if hasNormalizer {
+			normalizedBody, err := normalizer.NormalizeBillingRequestBody(info, requestInput.Body)
+			if err != nil {
+				return nil, service.TaskErrorWrapperLocal(err, "billing_request_normalization_failed", http.StatusBadRequest)
+			}
+			requestInput.Body = normalizedBody
 		}
-		requestInput.Body = normalizedBody
+		if hasBillingInputProvider {
+			canonicalInput, err := provider.BuildBillingInput(c, info)
+			if err != nil {
+				return nil, service.TaskErrorWrapperLocal(err, "billing_request_normalization_failed", http.StatusBadRequest)
+			}
+			requestInput, err = helper.MergeCanonicalBillingExprRequestInput(requestInput, canonicalInput)
+			if err != nil {
+				return nil, service.TaskErrorWrapperLocal(err, "billing_request_normalization_failed", http.StatusBadRequest)
+			}
+		}
 		info.BillingRequestInput = &requestInput
 	}
 
@@ -498,7 +512,11 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 				taskResp = service.TaskErrorWrapper(err, "convert_to_openai_video_failed", http.StatusInternalServerError)
 				return
 			}
-			respBody = openAIVideoData
+			respBody, err = normalizeOpenAIVideoResultURLs(openAIVideoData)
+			if err != nil {
+				taskResp = service.TaskErrorWrapper(err, "normalize_openai_video_response_failed", http.StatusInternalServerError)
+				return
+			}
 			return
 		}
 		taskResp = service.TaskErrorWrapperLocal(fmt.Errorf("not_implemented:%s", originTask.Platform), "not_implemented", http.StatusNotImplemented)

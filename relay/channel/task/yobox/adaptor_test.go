@@ -1,10 +1,13 @@
 package yobox
 
 import (
+	"bytes"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -15,6 +18,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestConvertToRequestPayloadSeedance2UsesInputReferenceAlias(t *testing.T) {
@@ -836,6 +840,183 @@ func TestConvertToRequestPayloadSeedance2PreservesExplicitContentAndExtensions(t
 	assert.Equal(t, content, body["content"])
 	assert.Equal(t, true, body["generate_audio"])
 	assert.Equal(t, map[string]any{"enabled": true}, body["custom_option"])
+}
+
+func TestBuildBillingInputMatchesSeedance20ResolvedPayload(t *testing.T) {
+	testCases := []struct {
+		name               string
+		newContext         func(t *testing.T) *gin.Context
+		upstreamDuration   any
+		upstreamResolution string
+		duration           int
+		resolution         string
+	}{
+		{
+			name: "json nested input overrides metadata duration",
+			newContext: func(t *testing.T) *gin.Context {
+				body := `{
+					"model":"seedance-2.0-noface",
+					"prompt":"animate",
+					"metadata":{"duration":5},
+					"input":{"duration":15,"resolution":"1080P"}
+				}`
+				return newYoboxBillingTestContext(t, "application/json", strings.NewReader(body))
+			},
+			upstreamDuration:   float64(15),
+			upstreamResolution: "1080p",
+			duration:           15,
+			resolution:         "1080p",
+		},
+		{
+			name: "json duration string with unit",
+			newContext: func(t *testing.T) *gin.Context {
+				body := `{"model":"seedance-2.0-fast-noface","prompt":"animate","duration":" 15 seconds ","resolution":"720P"}`
+				return newYoboxBillingTestContext(t, "application/json", strings.NewReader(body))
+			},
+			upstreamDuration:   " 15 seconds ",
+			upstreamResolution: "720p",
+			duration:           15,
+			resolution:         "720p",
+		},
+		{
+			name: "url encoded form",
+			newContext: func(t *testing.T) *gin.Context {
+				values := url.Values{
+					"model":      {"seedance-2.0-noface"},
+					"prompt":     {"animate"},
+					"duration":   {"15"},
+					"resolution": {"720P"},
+				}
+				return newYoboxBillingTestContext(t, "application/x-www-form-urlencoded", strings.NewReader(values.Encode()))
+			},
+			upstreamDuration:   "15",
+			upstreamResolution: "720p",
+			duration:           15,
+			resolution:         "720p",
+		},
+		{
+			name: "multipart encoded input object",
+			newContext: func(t *testing.T) *gin.Context {
+				var body bytes.Buffer
+				writer := multipart.NewWriter(&body)
+				require.NoError(t, writer.WriteField("model", "seedance-2.0-noface"))
+				require.NoError(t, writer.WriteField("prompt", "animate"))
+				require.NoError(t, writer.WriteField("input", `{"duration":15,"resolution":"480P"}`))
+				require.NoError(t, writer.Close())
+				return newYoboxBillingTestContext(t, writer.FormDataContentType(), bytes.NewReader(body.Bytes()))
+			},
+			upstreamDuration:   float64(15),
+			upstreamResolution: "480p",
+			duration:           15,
+			resolution:         "480p",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			c := testCase.newContext(t)
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "seedance-2.0-noface",
+				TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+			}
+			adaptor := &TaskAdaptor{}
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+
+			billingInput, err := adaptor.BuildBillingInput(c, info)
+			require.NoError(t, err)
+			req, err := relaycommon.GetTaskRequest(c)
+			require.NoError(t, err)
+			payload, err := adaptor.convertToRequestPayload(&req, info)
+			require.NoError(t, err)
+			upstreamInput := payload.(map[string]any)["input"].(map[string]any)
+
+			assert.Equal(t, testCase.upstreamDuration, upstreamInput["duration"])
+			assert.Equal(t, testCase.upstreamResolution, upstreamInput["resolution"])
+			assert.EqualValues(t, testCase.duration, gjson.GetBytes(billingInput.Body, "billing.duration_seconds").Int())
+			assert.Equal(t, testCase.resolution, gjson.GetBytes(billingInput.Body, "billing.resolution").String())
+			assert.Equal(t, map[string]float64{"seconds": float64(testCase.duration)}, adaptor.EstimateBilling(c, info))
+		})
+	}
+}
+
+func TestBuildBillingInputDoesNotInventSeedance20Defaults(t *testing.T) {
+	c := newYoboxBillingTestContext(t, "application/json", strings.NewReader(`{"model":"seedance-2.0-noface","prompt":"animate"}`))
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "seedance-2.0-noface",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+	adaptor := &TaskAdaptor{}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+
+	billingInput, err := adaptor.BuildBillingInput(c, info)
+	require.NoError(t, err)
+	req, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	payload, err := adaptor.convertToRequestPayload(&req, info)
+	require.NoError(t, err)
+	upstreamInput := payload.(map[string]any)["input"].(map[string]any)
+
+	assert.NotContains(t, upstreamInput, "duration")
+	assert.NotContains(t, upstreamInput, "resolution")
+	assert.False(t, gjson.GetBytes(billingInput.Body, "billing.duration_seconds").Exists())
+	assert.False(t, gjson.GetBytes(billingInput.Body, "billing.resolution").Exists())
+	assert.Equal(t, map[string]float64{"seconds": 4}, adaptor.EstimateBilling(c, info))
+}
+
+func TestBuildBillingInputTreatsZeroDurationAsInvalidForBilling(t *testing.T) {
+	testCases := []struct {
+		name             string
+		contentType      string
+		body             string
+		expectedDuration any
+	}{
+		{
+			name:             "numeric JSON zero",
+			contentType:      "application/json",
+			body:             `{"model":"seedance-2.0-noface","prompt":"animate","duration":0,"resolution":"720p"}`,
+			expectedDuration: float64(0),
+		},
+		{
+			name:             "url encoded string zero",
+			contentType:      "application/x-www-form-urlencoded",
+			body:             "model=seedance-2.0-noface&prompt=animate&duration=0&resolution=720p",
+			expectedDuration: "0",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			c := newYoboxBillingTestContext(t, testCase.contentType, strings.NewReader(testCase.body))
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "seedance-2.0-noface",
+				TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+			}
+			adaptor := &TaskAdaptor{}
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+
+			billingInput, err := adaptor.BuildBillingInput(c, info)
+			require.NoError(t, err)
+			req, err := relaycommon.GetTaskRequest(c)
+			require.NoError(t, err)
+			payload, err := adaptor.convertToRequestPayload(&req, info)
+			require.NoError(t, err)
+			upstreamInput := payload.(map[string]any)["input"].(map[string]any)
+
+			assert.Equal(t, testCase.expectedDuration, upstreamInput["duration"])
+			assert.False(t, gjson.GetBytes(billingInput.Body, "billing.duration_seconds").Exists())
+			assert.Equal(t, "720p", gjson.GetBytes(billingInput.Body, "billing.resolution").String())
+			assert.Equal(t, map[string]float64{"seconds": 4}, adaptor.EstimateBilling(c, info))
+		})
+	}
+}
+
+func newYoboxBillingTestContext(t *testing.T, contentType string, body io.Reader) *gin.Context {
+	t.Helper()
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", body)
+	c.Request.Header.Set("Content-Type", contentType)
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	return c
 }
 
 func TestModelListIncludesSupportedModels(t *testing.T) {

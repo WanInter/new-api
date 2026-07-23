@@ -93,6 +93,61 @@ func TestVideoFetchTaskAccessByRole(t *testing.T) {
 	}
 }
 
+func TestVideoFetchPromotesMetadataResultURL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	originalDB := model.DB
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Task{}))
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = originalDB
+		sqlDB, dbErr := db.DB()
+		if dbErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	user := &model.User{Id: 72, Username: "yobox-owner", Password: "password", Role: common.RoleCommonUser, AffCode: "yobox-owner-code"}
+	require.NoError(t, db.Create(user).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:   72,
+		Type: constant.ChannelTypeYobox,
+		Key:  "test-key",
+	}).Error)
+	require.NoError(t, db.Create(&model.Task{
+		TaskID:    "task_yobox_result",
+		Platform:  constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeYobox)),
+		UserId:    user.Id,
+		ChannelId: 72,
+		Status:    model.TaskStatusSuccess,
+		Progress:  "100%",
+		PrivateData: model.TaskPrivateData{
+			ResultURL: "https://example.com/yobox-result.mp4",
+		},
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/task_yobox_result", nil)
+	c.Params = gin.Params{{Key: "task_id", Value: "task_yobox_result"}}
+	c.Set("id", user.Id)
+
+	body, taskErr := videoFetchByIDRespBodyBuilder(c)
+
+	require.Nil(t, taskErr)
+	var response map[string]any
+	require.NoError(t, common.Unmarshal(body, &response))
+	assert.Equal(t, "https://example.com/yobox-result.mp4", response["result_url"])
+	assert.Equal(t, "https://example.com/yobox-result.mp4", response["url"])
+	assert.Equal(t, "https://example.com/yobox-result.mp4", response["video_url"])
+	metadata, ok := response["metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "https://example.com/yobox-result.mp4", metadata["result_url"])
+}
+
 func TestRealtimeFetchUsesCompleteTerminalBillingPath(t *testing.T) {
 	originalDB := model.DB
 	originalLogDB := model.LOG_DB

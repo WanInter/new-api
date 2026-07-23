@@ -674,6 +674,97 @@ func TestGetVideoRequestFeaturesCountsMultipartValuesAndFiles(t *testing.T) {
 	assert.Equal(t, 5, features.Images)
 }
 
+func TestGetVideoRequestFeaturesCountsDecodedFormMedia(t *testing.T) {
+	content := `[
+		{"type":"image_url","image_url":{"url":"https://example.com/content.png"}},
+		{"type":"video_url","video_url":{"url":"https://example.com/content.mp4"}},
+		{"type":"audio_url","audio_url":{"url":"https://example.com/content.mp3"}},
+		{"type":"text","text":"animate it"}
+	]`
+	input := `{"start_frames":["https://example.com/start.png"],"image_references":[{"url":"https://example.com/reference.png"}]}`
+	testCases := []struct {
+		name    string
+		request func(t *testing.T) *http.Request
+	}{
+		{
+			name: "url encoded",
+			request: func(t *testing.T) *http.Request {
+				values := url.Values{}
+				values.Set("content", content)
+				values.Set("input", input)
+				request := httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(values.Encode()))
+				request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				return request
+			},
+		},
+		{
+			name: "multipart",
+			request: func(t *testing.T) *http.Request {
+				var body bytes.Buffer
+				writer := multipart.NewWriter(&body)
+				require.NoError(t, writer.WriteField("content", content))
+				require.NoError(t, writer.WriteField("input", input))
+				require.NoError(t, writer.Close())
+				request := httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(body.Bytes()))
+				request.Header.Set("Content-Type", writer.FormDataContentType())
+				return request
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = testCase.request(t)
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+			features, err := GetVideoRequestFeatures(c)
+
+			require.NoError(t, err)
+			assert.Equal(t, 3, features.Images)
+			assert.Equal(t, 1, features.Videos)
+			assert.Equal(t, 1, features.Audios)
+			require.NotNil(t, features.profiledContent)
+			assert.Equal(t, videoMediaCounts{Images: 1, Videos: 1, Audios: 1, Text: 1}, *features.profiledContent)
+		})
+	}
+}
+
+func TestDecodedFormContentMediaConstrainsChannelRouting(t *testing.T) {
+	truncate(t)
+	publicModel := "form-content-media-public"
+	upstreamModel := "form-content-media-upstream"
+	channel := channelWithVideoModelMapping(t, 925, constant.ChannelTypeYobox, publicModel, upstreamModel)
+	createChannelVideoCapability(t, channel, upstreamModel, dto.VideoModelCapability{
+		Images: &dto.VideoMediaRange{Max: common.GetPointer(0)},
+	})
+
+	for _, contentType := range []string{"application/x-www-form-urlencoded", "multipart/form-data"} {
+		t.Run(contentType, func(t *testing.T) {
+			var request *http.Request
+			if contentType == "application/x-www-form-urlencoded" {
+				values := url.Values{}
+				values.Set("content", `[{"type":"image_url","image_url":{"url":"https://example.com/reference.png"}}]`)
+				request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(values.Encode()))
+				request.Header.Set("Content-Type", contentType)
+			} else {
+				var body bytes.Buffer
+				writer := multipart.NewWriter(&body)
+				require.NoError(t, writer.WriteField("content", `[{"type":"image_url","image_url":{"url":"https://example.com/reference.png"}}]`))
+				require.NoError(t, writer.Close())
+				request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(body.Bytes()))
+				request.Header.Set("Content-Type", writer.FormDataContentType())
+			}
+
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = request
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+			assert.False(t, ChannelSupportsRequestConstraints(c, channel, publicModel))
+		})
+	}
+}
+
 func TestGetVideoRequestFeaturesReadsMetadataOutputFromFormBodies(t *testing.T) {
 	testCases := []struct {
 		name    string

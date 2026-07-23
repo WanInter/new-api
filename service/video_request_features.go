@@ -151,21 +151,7 @@ func extractJSONVideoRequestFeatures(body []byte, features VideoRequestFeatures)
 		return features, &videoRequestOutputError{err: err}
 	}
 
-	features.Images = countNonEmptyFeatureStrings(request.Images) +
-		countNonEmptyFeatureStrings(request.ImageURLs) +
-		countNonEmptyFeatureStrings(request.InputStartFrames) +
-		countNonEmptyFeatureStrings(request.InputImageReferences) +
-		countNonEmptyFeatureStrings(request.MetadataStartFrames) +
-		countNonEmptyFeatureStrings([]string{request.Image, request.InputReference})
-	features.Videos = countNonEmptyFeatureStrings(request.Videos) + countNonEmptyFeatureStrings(request.VideoURLs)
-	features.Audios = countNonEmptyFeatureStrings(request.Audios) + countNonEmptyFeatureStrings(request.AudioURLs)
-	if len(request.Content) > 0 {
-		genericContent, profiledContent := countTaskContentMedia(request.Content)
-		features.Images += genericContent.Images
-		features.Videos += genericContent.Videos
-		features.Audios += genericContent.Audios
-		features.profiledContent = &profiledContent
-	}
+	applyTaskSubmitRequestMediaFeatures(&features, request)
 	duration := parseJSONDuration(body)
 	features.Duration = duration.Value
 	features.durationUnnormalized = duration.Unnormalized
@@ -223,6 +209,35 @@ func countTaskContentMedia(content []relaycommon.TaskContentItem) (videoMediaCou
 	return generic, profiled
 }
 
+// applyTaskSubmitRequestMediaFeatures counts the same media fields that task
+// adaptors receive after TaskSubmitReq decoding. This matters for form bodies:
+// input and content are JSON-encoded strings there, rather than top-level
+// form fields.
+func applyTaskSubmitRequestMediaFeatures(features *VideoRequestFeatures, request relaycommon.TaskSubmitReq) {
+	if features == nil {
+		return
+	}
+
+	features.Images = countNonEmptyFeatureStrings(request.Images) +
+		countNonEmptyFeatureStrings(request.ImageURLs) +
+		countNonEmptyFeatureStrings(request.InputStartFrames) +
+		countNonEmptyFeatureStrings(request.InputImageReferences) +
+		countNonEmptyFeatureStrings(request.MetadataStartFrames) +
+		countNonEmptyFeatureStrings([]string{request.Image, request.InputReference})
+	features.Videos = countNonEmptyFeatureStrings(request.Videos) + countNonEmptyFeatureStrings(request.VideoURLs)
+	features.Audios = countNonEmptyFeatureStrings(request.Audios) + countNonEmptyFeatureStrings(request.AudioURLs)
+	if len(request.Content) == 0 {
+		features.profiledContent = nil
+		return
+	}
+
+	genericContent, profiledContent := countTaskContentMedia(request.Content)
+	features.Images += genericContent.Images
+	features.Videos += genericContent.Videos
+	features.Audios += genericContent.Audios
+	features.profiledContent = &profiledContent
+}
+
 func extractMultipartVideoRequestFeatures(c *gin.Context, features VideoRequestFeatures) (VideoRequestFeatures, error) {
 	form, err := common.ParseMultipartFormReusable(c)
 	if err != nil {
@@ -233,9 +248,16 @@ func extractMultipartVideoRequestFeatures(c *gin.Context, features VideoRequestF
 }
 
 func extractFormVideoRequestFeatures(values url.Values, files map[string][]*multipart.FileHeader, features VideoRequestFeatures) (VideoRequestFeatures, error) {
-	features.Images = countFormMedia(values, files, "image", "images", "image_urls", "input_reference")
-	features.Videos = countFormMedia(values, files, "video", "videos", "video_url", "video_urls")
-	features.Audios = countFormMedia(values, files, "audio", "audios", "audio_url", "audio_urls")
+	request, err := taskSubmitReqFromFormValues(values)
+	if err != nil {
+		return features, &videoRequestFeatureDTOError{err: err}
+	}
+	applyTaskSubmitRequestMediaFeatures(&features, request)
+	// Binary files are not represented in TaskSubmitReq. Keep their existing
+	// routing contribution in addition to the decoded string references.
+	features.Images += countFormFiles(files, "image", "images", "image_urls", "input_reference")
+	features.Videos += countFormFiles(files, "video", "videos", "video_url", "video_urls")
+	features.Audios += countFormFiles(files, "audio", "audios", "audio_url", "audio_urls")
 	// Jimeng Dimensio consumes its binary references from numbered file fields.
 	// Count them here so an exact media capability rule is enforced before the
 	// channel is selected.
@@ -245,10 +267,6 @@ func extractFormVideoRequestFeatures(values url.Values, files map[string][]*mult
 	duration := parseFormDuration(values)
 	features.Duration = duration.Value
 	features.durationUnnormalized = duration.Unnormalized
-	request, err := taskSubmitReqFromFormValues(values)
-	if err != nil {
-		return features, &videoRequestFeatureDTOError{err: err}
-	}
 	output, err := relaycommon.NormalizeTaskSubmitVideoOutput(&request)
 	if err != nil {
 		return features, &videoRequestOutputError{err: err}
@@ -288,14 +306,9 @@ func taskSubmitReqFromFormValues(values url.Values) (relaycommon.TaskSubmitReq, 
 	return request, nil
 }
 
-func countFormMedia(values url.Values, files map[string][]*multipart.FileHeader, fields ...string) int {
+func countFormFiles(files map[string][]*multipart.FileHeader, fields ...string) int {
 	count := 0
 	for _, field := range fields {
-		for _, value := range values[field] {
-			if strings.TrimSpace(value) != "" {
-				count++
-			}
-		}
 		count += len(files[field])
 	}
 	return count

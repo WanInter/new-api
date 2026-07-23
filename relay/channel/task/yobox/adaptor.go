@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/relay/channel"
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -151,21 +153,73 @@ func (a *TaskAdaptor) ValidateMappedRequest(c *gin.Context, info *relaycommon.Re
 	return nil
 }
 
-func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) map[string]float64 {
+func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return nil
 	}
-	seconds := req.Duration
-	if seconds <= 0 {
-		if v, ok := parseYoboxSeconds(req.Seconds); ok {
-			seconds = v
-		}
+	seconds, ok := yoboxEffectiveDurationSeconds(&req, info)
+	if !ok {
+		seconds = 0
 	}
 	if seconds <= 0 {
+		// This remains the legacy per-call fallback. It is intentionally not
+		// exposed as canonical billing input because the upstream payload does
+		// not declare a matching default.
 		seconds = 4
 	}
 	return map[string]float64{"seconds": float64(seconds)}
+}
+
+// BuildBillingInput exposes only values that are already present in the
+// Seedance 2.0 payload resolver. It never invents upstream defaults: missing
+// fields stay absent from billing.*, while legacy expressions can still read
+// their original request fields during the migration.
+func (a *TaskAdaptor) BuildBillingInput(c *gin.Context, info *relaycommon.RelayInfo) (billingexpr.RequestInput, error) {
+	requestInput := billingexpr.RequestInput{Headers: yoboxBillingHeaders(c, info)}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return requestInput, err
+	}
+	if !isYoboxSeedance20Model(yoboxRequestModelName(&req, info)) {
+		return requestInput, nil
+	}
+
+	payloadInput := resolveYoboxSeedance20Input(&req)
+	billing := map[string]any{}
+	if seconds, ok := yoboxInputDurationSeconds(payloadInput); ok {
+		billing["duration_seconds"] = seconds
+	}
+	if resolution, ok := yoboxInputResolution(payloadInput); ok {
+		billing["resolution"] = resolution
+	}
+	body, err := common.Marshal(map[string]any{"billing": billing})
+	if err != nil {
+		return billingexpr.RequestInput{}, err
+	}
+	requestInput.Body = body
+	return requestInput, nil
+}
+
+func yoboxBillingHeaders(c *gin.Context, info *relaycommon.RelayInfo) map[string]string {
+	headers := make(map[string]string)
+	if info != nil {
+		for key, value := range info.RequestHeaders {
+			if strings.TrimSpace(key) != "" {
+				headers[key] = value
+			}
+		}
+	}
+	if c == nil || c.Request == nil {
+		return headers
+	}
+	for key, values := range c.Request.Header {
+		if strings.TrimSpace(key) == "" || len(values) == 0 {
+			continue
+		}
+		headers[key] = strings.Join(values, ",")
+	}
+	return headers
 }
 
 func (a *TaskAdaptor) BuildRequestURL(_ *relaycommon.RelayInfo) (string, error) {
@@ -362,6 +416,16 @@ func convertSeedance2Payload(req *relaycommon.TaskSubmitReq, modelName string) m
 }
 
 func convertSeedance20Payload(req *relaycommon.TaskSubmitReq, modelName string) map[string]any {
+	return map[string]any{
+		"model": modelName,
+		"input": resolveYoboxSeedance20Input(req),
+	}
+}
+
+// resolveYoboxSeedance20Input is the single source of truth for Seedance 2.0
+// effective request fields. Both payload construction and canonical billing
+// input must use this resolver so aliases and nested input fields cannot drift.
+func resolveYoboxSeedance20Input(req *relaycommon.TaskSubmitReq) map[string]any {
 	input := copyYoboxMetadata(req.Metadata, "model", "prompt", "input", "seconds", "size")
 	input["prompt"] = req.Prompt
 	setYoboxDuration(input, req)
@@ -388,10 +452,7 @@ func convertSeedance20Payload(req *relaycommon.TaskSubmitReq, modelName string) 
 	if _, hasStartFrames := input["start_frames"]; !hasStartFrames && len(req.MetadataStartFrames) > 0 {
 		input["start_frames"] = req.MetadataStartFrames
 	}
-	return map[string]any{
-		"model": modelName,
-		"input": input,
-	}
+	return input
 }
 
 func buildYoboxImageReferences(images []string) []map[string]any {
@@ -616,6 +677,102 @@ func setYoboxResolution(input map[string]any, req *relaycommon.TaskSubmitReq) {
 	}
 }
 
+func yoboxEffectiveDurationSeconds(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (int, bool) {
+	if req == nil {
+		return 0, false
+	}
+	modelName := yoboxRequestModelName(req, info)
+	if !isYoboxSeedance2Model(modelName) {
+		return yoboxInputDurationSeconds(resolveYoboxSeedance20Input(req))
+	}
+	payload := convertSeedance2Payload(req, modelName)
+	return yoboxDurationSeconds(payload["seconds"])
+}
+
+func yoboxInputDurationSeconds(input map[string]any) (int, bool) {
+	if input == nil {
+		return 0, false
+	}
+	return yoboxDurationSeconds(input["duration"])
+}
+
+func yoboxDurationSeconds(value any) (int, bool) {
+	seconds, ok := yoboxIntegerDuration(value)
+	if ok && seconds > 0 {
+		return seconds, true
+	}
+	if text, ok := value.(string); ok {
+		return parseYoboxSeconds(text)
+	}
+	return 0, false
+}
+
+func yoboxIntegerDuration(value any) (int, bool) {
+	switch typed := value.(type) {
+	case int:
+		return typed, typed >= 0
+	case int8:
+		return int(typed), typed >= 0
+	case int16:
+		return int(typed), typed >= 0
+	case int32:
+		return int(typed), typed >= 0
+	case int64:
+		if typed < 0 || int64(int(typed)) != typed {
+			return 0, false
+		}
+		return int(typed), true
+	case uint:
+		if uint(int(typed)) != typed {
+			return 0, false
+		}
+		return int(typed), true
+	case uint8:
+		return int(typed), true
+	case uint16:
+		return int(typed), true
+	case uint32:
+		if uint32(int(typed)) != typed {
+			return 0, false
+		}
+		return int(typed), true
+	case uint64:
+		if uint64(int(typed)) != typed {
+			return 0, false
+		}
+		return int(typed), true
+	case float32:
+		seconds := int(typed)
+		if float32(seconds) != typed || seconds < 0 {
+			return 0, false
+		}
+		return seconds, true
+	case float64:
+		seconds := int(typed)
+		if float64(seconds) != typed || seconds < 0 {
+			return 0, false
+		}
+		return seconds, true
+	default:
+		return 0, false
+	}
+}
+
+func yoboxInputResolution(input map[string]any) (string, bool) {
+	if input == nil {
+		return "", false
+	}
+	resolution, ok := input["resolution"].(string)
+	if !ok {
+		return "", false
+	}
+	normalized, err := relaycommon.NormalizeVideoOutputResolution(resolution)
+	if err != nil {
+		return "", false
+	}
+	return normalized, true
+}
+
 func yoboxRequestImages(req *relaycommon.TaskSubmitReq, includeInputReferences bool) []string {
 	images := make([]string, 0, len(req.Images)+len(req.ImageURLs)+len(req.InputImageReferences)+2)
 	images = append(images, req.Images...)
@@ -727,16 +884,8 @@ func parseYoboxSeconds(seconds string) (int, bool) {
 }
 
 func mergeYoboxRequestMetadata(c *gin.Context, req *relaycommon.TaskSubmitReq) {
-	storage, err := common.GetBodyStorage(c)
+	raw, err := yoboxRequestRawValues(c)
 	if err != nil {
-		return
-	}
-	body, err := storage.Bytes()
-	if err != nil {
-		return
-	}
-	var raw map[string]any
-	if err := common.Unmarshal(body, &raw); err != nil {
 		return
 	}
 	if req.Metadata == nil {
@@ -747,11 +896,87 @@ func mergeYoboxRequestMetadata(c *gin.Context, req *relaycommon.TaskSubmitReq) {
 			req.Metadata[key] = value
 		}
 	}
-	if input, ok := raw["input"].(map[string]any); ok {
+	if input, ok := yoboxRequestObject(raw["input"]); ok {
 		for key, value := range input {
 			req.Metadata[key] = value
 		}
 	}
+}
+
+func yoboxRequestRawValues(c *gin.Context) (map[string]any, error) {
+	if c == nil || c.Request == nil {
+		return nil, fmt.Errorf("request is required")
+	}
+	contentType := strings.ToLower(strings.TrimSpace(c.GetHeader("Content-Type")))
+	if strings.HasPrefix(contentType, "application/json") {
+		storage, err := common.GetBodyStorage(c)
+		if err != nil {
+			return nil, err
+		}
+		body, err := storage.Bytes()
+		if err != nil {
+			return nil, err
+		}
+		var raw map[string]any
+		if err := common.Unmarshal(body, &raw); err != nil {
+			return nil, err
+		}
+		return raw, nil
+	}
+	if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
+		storage, err := common.GetBodyStorage(c)
+		if err != nil {
+			return nil, err
+		}
+		body, err := storage.Bytes()
+		if err != nil {
+			return nil, err
+		}
+		values, err := url.ParseQuery(string(body))
+		if err != nil {
+			return nil, err
+		}
+		return yoboxFormValues(values), nil
+	}
+	if strings.HasPrefix(contentType, "multipart/form-data") {
+		form, err := common.ParseMultipartFormReusable(c)
+		if err != nil {
+			return nil, err
+		}
+		defer form.RemoveAll()
+		return yoboxFormValues(form.Value), nil
+	}
+	return nil, fmt.Errorf("unsupported content type %q", contentType)
+}
+
+func yoboxFormValues(values map[string][]string) map[string]any {
+	raw := make(map[string]any, len(values))
+	for key, formValues := range values {
+		switch len(formValues) {
+		case 0:
+			continue
+		case 1:
+			raw[key] = formValues[0]
+		default:
+			raw[key] = append([]string(nil), formValues...)
+		}
+	}
+	return raw
+}
+
+func yoboxRequestObject(value any) (map[string]any, bool) {
+	if object, ok := value.(map[string]any); ok {
+		return object, true
+	}
+	encoded, ok := value.(string)
+	if !ok || strings.TrimSpace(encoded) == "" {
+		return nil, false
+	}
+	var object map[string]any
+	if err := common.UnmarshalJsonStr(encoded, &object); err != nil {
+		return nil, false
+	}
+	return object, true
 }
 
 func yoboxTopLevelMetadataField(key string, value any) bool {

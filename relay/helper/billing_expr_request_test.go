@@ -143,3 +143,57 @@ func TestResolveIncomingBillingExprRequestInputFromMultipartImageEdit(t *testing
 	require.NoError(t, err)
 	assert.Equal(t, originalBody, replayedBody)
 }
+
+func TestBuildIncomingBillingExprRequestInputFromURLEncodedForm(t *testing.T) {
+	body := []byte("model=seedance-2.0-noface&duration=15&resolution=720p&tag=first&tag=second")
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	t.Cleanup(func() { common.CleanupBodyStorage(ctx) })
+
+	input, err := BuildIncomingBillingExprRequestInput(ctx, &relaycommon.RelayInfo{})
+	require.NoError(t, err)
+	assert.Equal(t, "seedance-2.0-noface", gjson.GetBytes(input.Body, "model").String())
+	assert.Equal(t, "15", gjson.GetBytes(input.Body, "duration").String())
+	assert.Equal(t, "720p", gjson.GetBytes(input.Body, "resolution").String())
+	assert.Equal(t, "first", gjson.GetBytes(input.Body, "tag.0").String())
+	assert.Equal(t, "second", gjson.GetBytes(input.Body, "tag.1").String())
+
+	cost, trace, err := billingexpr.RunExprWithRequest(
+		`param("duration") == "15" ? tier("form", 100000) : tier("fallback", 0)`,
+		billingexpr.TokenParams{},
+		input,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, float64(100000), cost)
+	assert.Equal(t, "form", trace.MatchedTier)
+}
+
+func TestMergeCanonicalBillingExprRequestInputPreservesLegacyFields(t *testing.T) {
+	base := billingexpr.RequestInput{
+		Headers: map[string]string{"X-Request": "original"},
+		Body:    []byte(`{"duration":"4","resolution":"480p","billing":{"duration_seconds":1}}`),
+	}
+	canonical := billingexpr.RequestInput{
+		Headers: map[string]string{"X-Canonical": "true"},
+		Body:    []byte(`{"billing":{"duration_seconds":15,"resolution":"720p"}}`),
+	}
+
+	merged, err := MergeCanonicalBillingExprRequestInput(base, canonical)
+	require.NoError(t, err)
+	assert.Equal(t, "original", merged.Headers["X-Request"])
+	assert.Equal(t, "true", merged.Headers["X-Canonical"])
+	assert.Equal(t, "4", gjson.GetBytes(merged.Body, "duration").String())
+	assert.Equal(t, "480p", gjson.GetBytes(merged.Body, "resolution").String())
+	assert.Equal(t, int64(15), gjson.GetBytes(merged.Body, "billing.duration_seconds").Int())
+	assert.Equal(t, "720p", gjson.GetBytes(merged.Body, "billing.resolution").String())
+
+	cost, trace, err := billingexpr.RunExprWithRequest(
+		`param("billing.duration_seconds") == 15 ? tier("canonical", 100000) : tier("fallback", 0)`,
+		billingexpr.TokenParams{},
+		merged,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, float64(100000), cost)
+	assert.Equal(t, "canonical", trace.MatchedTier)
+}
