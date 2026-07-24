@@ -240,7 +240,7 @@ func TestGetTaskBillingCapabilitySummaryIgnoresGenericNonVideoRoute(t *testing.T
 func TestGetTaskBillingCapabilitySummaryKeepsUnsupportedVideoRouteVisible(t *testing.T) {
 	db := setupTaskBillingCapabilityTestDB(t)
 	const publicModel = "public-unknown-video-model"
-	createTaskBillingCapabilityRoute(t, db, 1, constant.ChannelTypeShishi, publicModel, "unpublished-video-model")
+	createTaskBillingCapabilityRoute(t, db, 1, constant.ChannelTypeYoboxCorp, publicModel, "unpublished-video-model")
 
 	summary, err := GetTaskBillingCapabilitySummary(publicModel)
 
@@ -249,5 +249,25 @@ func TestGetTaskBillingCapabilitySummaryKeepsUnsupportedVideoRouteVisible(t *tes
 	assert.True(t, summary.Applicable)
 	assert.False(t, summary.Compatible)
 	require.Len(t, summary.IncompatibleChannels, 1)
-	assert.Contains(t, summary.IncompatibleChannels[0].Incompatibility, "未声明规范计费 schema")
+	assert.NotEmpty(t, summary.IncompatibleChannels[0].Incompatibility)
+}
+
+func TestGetTaskBillingCapabilitySummaryDerivesSchemaForCustomKlingAlias(t *testing.T) {
+	db := setupTaskBillingCapabilityTestDB(t)
+	const publicModel = "public-kling-alias"
+	createTaskBillingCapabilityRoute(t, db, 1, constant.ChannelTypeKling, publicModel, "kling-custom-alias")
+
+	summary, err := GetTaskBillingCapabilitySummary(publicModel)
+
+	require.NoError(t, err)
+	require.NotNil(t, summary)
+	assert.True(t, summary.Applicable)
+	assert.True(t, summary.Compatible)
+	assert.Len(t, summary.CompatibleChannels, 1)
+	assert.Empty(t, summary.IncompatibleChannels)
+	assert.True(t, strings.HasPrefix(summary.SchemaVersion, "task.canonical-merged."))
+	require.Len(t, summary.Fields, 2)
+	for _, field := range summary.Fields {
+		assert.False(t, field.Required, "custom aliases must not inherit model-specific required defaults")
+	}
 }

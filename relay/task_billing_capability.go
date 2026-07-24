@@ -77,13 +77,19 @@ func GetTaskBillingCapabilitySummary(modelName string) (*TaskBillingCapabilitySu
 	for _, upstreamChannel := range channels {
 		entry, capability := inspectTaskBillingChannel(modelName, upstreamChannel)
 		inspected = append(inspected, compatibleCandidate{entry: entry, capability: capability})
-		if capability != nil || isDedicatedVideoTaskChannel(entry.ChannelType) {
+		if isDedicatedVideoTaskChannel(entry.ChannelType) {
 			summary.Applicable = true
 		}
 	}
 
 	candidates := make([]compatibleCandidate, 0, len(inspected))
 	for _, candidate := range inspected {
+		if !summary.Applicable && !isDedicatedVideoTaskChannel(candidate.entry.ChannelType) {
+			// A generic task adaptor may expose profile-derived capabilities even
+			// for a non-video public model. Do not let that fallback turn an
+			// ordinary chat route into a video billing route.
+			continue
+		}
 		if candidate.capability == nil {
 			if !summary.Applicable {
 				// Generic chat/image channels do not participate in video task
@@ -245,7 +251,71 @@ func resolveTaskBillingCapability(adaptor channel.TaskAdaptor, info *relaycommon
 			capability = provider.GetDefaultTaskBillingCapability()
 		}
 	}
+	if capability == nil {
+		capability = deriveTaskBillingCapabilityFromProfiles(adaptor, info)
+	}
 	return normalizeTaskBillingCapability(capability)
+}
+
+// deriveTaskBillingCapabilityFromProfiles builds a conservative fallback for
+// adaptors whose known models share a finite set of canonical dimensions but
+// whose newly mapped upstream alias is not in the profile table. Every merged
+// field becomes optional because the unknown model's defaults are not known.
+func deriveTaskBillingCapabilityFromProfiles(adaptor channel.TaskAdaptor, info *relaycommon.RelayInfo) *channel.TaskBillingCapability {
+	provider, ok := adaptor.(channel.TaskBillingCapabilityProvider)
+	if !ok || adaptor == nil {
+		return nil
+	}
+
+	models := adaptor.GetModelList()
+	profiles := make([]*channel.TaskBillingCapability, 0, len(models))
+	seen := make(map[string]struct{}, len(models))
+	for _, modelName := range models {
+		modelName = strings.TrimSpace(modelName)
+		if modelName == "" {
+			continue
+		}
+		if _, exists := seen[modelName]; exists {
+			continue
+		}
+		seen[modelName] = struct{}{}
+
+		profileInfo := cloneTaskBillingCapabilityInfo(info, modelName)
+		if capability := normalizeTaskBillingCapability(provider.GetTaskBillingCapability(profileInfo)); capability != nil {
+			profiles = append(profiles, capability)
+		}
+	}
+	if len(profiles) == 0 {
+		return nil
+	}
+
+	merged, err := mergeTaskBillingCapabilities(profiles)
+	if err != nil || merged == nil {
+		return nil
+	}
+	for index := range merged.Fields {
+		merged.Fields[index].Required = false
+	}
+	merged.SchemaVersion = mergedTaskBillingSchemaVersion(merged.Fields)
+	return merged
+}
+
+func cloneTaskBillingCapabilityInfo(info *relaycommon.RelayInfo, modelName string) *relaycommon.RelayInfo {
+	clone := &relaycommon.RelayInfo{OriginModelName: modelName}
+	if info == nil {
+		clone.ChannelMeta = &relaycommon.ChannelMeta{UpstreamModelName: modelName}
+		return clone
+	}
+	*clone = *info
+	clone.OriginModelName = modelName
+	if info.ChannelMeta != nil {
+		meta := *info.ChannelMeta
+		meta.UpstreamModelName = modelName
+		clone.ChannelMeta = &meta
+	} else {
+		clone.ChannelMeta = &relaycommon.ChannelMeta{UpstreamModelName: modelName}
+	}
+	return clone
 }
 
 func normalizeTaskBillingCapability(capability *channel.TaskBillingCapability) *channel.TaskBillingCapability {
