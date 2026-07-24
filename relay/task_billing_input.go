@@ -41,10 +41,27 @@ func prepareTaskBillingRequestInput(c *gin.Context, info *relaycommon.RelayInfo,
 		if capability == nil {
 			return fmt.Errorf("channel does not provide canonical task billing schema %q for mapped model %q", schemaVersion, info.UpstreamModelName)
 		}
+		modelCapability := capability
 		if capability.SchemaVersion != schemaVersion {
-			return fmt.Errorf("channel canonical billing schema %q does not match model schema %q", capability.SchemaVersion, schemaVersion)
+			summary, err := GetTaskBillingCapabilitySummary(modelName)
+			if err != nil {
+				return fmt.Errorf("resolve model canonical billing schema: %w", err)
+			}
+			if !summary.Compatible {
+				return fmt.Errorf("model canonical billing schema is no longer compatible: %s", summary.Reason)
+			}
+			if summary.SchemaVersion != schemaVersion {
+				return fmt.Errorf("current model canonical billing schema %q does not match configured schema %q", summary.SchemaVersion, schemaVersion)
+			}
+			modelCapability = normalizeTaskBillingCapability(&channel.TaskBillingCapability{
+				SchemaVersion: summary.SchemaVersion,
+				Fields:        cloneTaskBillingFields(summary.Fields),
+			})
+			if err := taskBillingCapabilityFitsModelSchema(capability, modelCapability); err != nil {
+				return fmt.Errorf("channel canonical billing schema cannot satisfy model schema %q: %w", schemaVersion, err)
+			}
 		}
-		if err := billingexpr.ValidateCanonicalBillingExpression(billingExpr, CanonicalBillingFields(capability)); err != nil {
+		if err := billingexpr.ValidateCanonicalBillingExpression(billingExpr, CanonicalBillingFields(modelCapability)); err != nil {
 			return fmt.Errorf("canonical billing expression is invalid: %w", err)
 		}
 		inputProvider, ok := adaptor.(channel.TaskBillingInputProvider)
@@ -62,8 +79,13 @@ func prepareTaskBillingRequestInput(c *gin.Context, info *relaycommon.RelayInfo,
 		if err := billingexpr.ValidateCanonicalBillingInput(canonicalInput.Body, CanonicalBillingFields(capability)); err != nil {
 			return err
 		}
+		if capability.SchemaVersion != modelCapability.SchemaVersion {
+			if err := billingexpr.ValidateCanonicalBillingInput(canonicalInput.Body, CanonicalBillingFields(modelCapability)); err != nil {
+				return fmt.Errorf("canonical billing input does not satisfy model schema %q: %w", schemaVersion, err)
+			}
+		}
 		info.BillingRequestInput = &canonicalInput
-		info.BillingCanonicalFields = CanonicalBillingFields(capability)
+		info.BillingCanonicalFields = CanonicalBillingFields(modelCapability)
 		return nil
 	}
 

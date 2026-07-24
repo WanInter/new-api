@@ -24,6 +24,7 @@ import {
   getCanonicalPricingBlockReason,
   getCanonicalPricingSchema,
   hasCanonicalSchemaVersionConflict,
+  normalizeCanonicalBillingCapability,
 } from './canonicalVideoBilling.js';
 
 const durationField = {
@@ -96,6 +97,18 @@ function assertPricingRoundTrip(fields, mode, values) {
     assert.match(match[1], /^billing\./);
   }
 }
+
+test('normalizes video applicability without breaking older responses', () => {
+  assert.equal(
+    normalizeCanonicalBillingCapability({ applicable: false })
+      .canonical_applicable,
+    false,
+  );
+  assert.equal(
+    normalizeCanonicalBillingCapability({}).canonical_applicable,
+    true,
+  );
+});
 
 test('round-trips duration-only per-second pricing', () => {
   assertPricingRoundTrip([durationField], 'per-second', ['3']);

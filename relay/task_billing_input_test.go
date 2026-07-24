@@ -4,6 +4,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -105,4 +106,45 @@ func TestPrepareTaskBillingRequestInputFreezesBillingConfig(t *testing.T) {
 		map[string]string{modelName: schemaVersion},
 	)
 	assert.Equal(t, expression, info.TaskBillingConfig.Expr)
+}
+
+func TestPrepareTaskBillingRequestInputAcceptsMergedModelSchema(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupTaskBillingCapabilityTestDB(t)
+	const modelName = "shared-seedance"
+	createTaskBillingCapabilityRoute(t, db, 1, constant.ChannelTypeDoubaoVideo, modelName, "bytefor-2.0-real-priority")
+	createTaskBillingCapabilityRoute(t, db, 2, constant.ChannelTypeSeventhFrame, modelName, "viraldance900--person-stripe--6c832bb1--voice-tone--a0c4ee78")
+	summary, err := GetTaskBillingCapabilitySummary(modelName)
+	require.NoError(t, err)
+	require.True(t, summary.Compatible)
+
+	withTaskBillingSettings(t,
+		map[string]string{modelName: billing_setting.BillingModeTieredExpr},
+		map[string]string{modelName: `tier("fixed", 1000000)`},
+		map[string]string{modelName: summary.SchemaVersion},
+	)
+	providerCapability := taskBillingTestCapability("video.provider.duration.v1", channel.TaskBillingField{
+		Path:       "billing.duration_seconds",
+		Type:       "number",
+		Required:   true,
+		EnumValues: []string{"4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"},
+	})
+	adaptor := &taskBillingInputTestAdaptor{
+		capability: providerCapability,
+		input:      billingexpr.RequestInput{Body: []byte(`{"billing":{"duration_seconds":5}}`)},
+	}
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	info := &relaycommon.RelayInfo{
+		OriginModelName: modelName,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "bytefor-2.0-real-priority",
+		},
+	}
+
+	require.NoError(t, prepareTaskBillingRequestInput(context, info, adaptor, modelName))
+	require.NotNil(t, info.BillingRequestInput)
+	assert.Equal(t, CanonicalBillingFields(&channel.TaskBillingCapability{
+		SchemaVersion: summary.SchemaVersion,
+		Fields:        summary.Fields,
+	}), info.BillingCanonicalFields)
 }

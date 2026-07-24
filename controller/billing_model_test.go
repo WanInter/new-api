@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -83,6 +84,27 @@ func createCanonicalBillingTestRoute(t *testing.T, db *gorm.DB, channelID int, c
 	require.NoError(t, db.Create(&model.Ability{
 		Group:     "default",
 		Model:     canonicalBillingTestModel,
+		ChannelId: channelID,
+		Enabled:   true,
+	}).Error)
+}
+
+func createMappedCanonicalBillingTestRoute(t *testing.T, db *gorm.DB, channelID, channelType int, publicModel, upstreamModel string) {
+	t.Helper()
+	mappingBytes, err := common.Marshal(map[string]string{publicModel: upstreamModel})
+	require.NoError(t, err)
+	mapping := string(mappingBytes)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:           channelID,
+		Type:         channelType,
+		Name:         fmt.Sprintf("channel-%d", channelID),
+		Key:          "test-key",
+		Status:       common.ChannelStatusEnabled,
+		ModelMapping: &mapping,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group:     "default",
+		Model:     publicModel,
 		ChannelId: channelID,
 		Enabled:   true,
 	}).Error)
@@ -202,6 +224,27 @@ func TestUpdateBillingModelsRejectsRawPathAndIncompatibleRoute(t *testing.T) {
 	var response map[string]any
 	require.NoError(t, common.Unmarshal(incompatibleRoute.Body.Bytes(), &response))
 	assert.Contains(t, response["message"], "不能启用规范动态计费")
+}
+
+func TestUpdateBillingModelsAcceptsMergedCanonicalSchema(t *testing.T) {
+	db := setupBillingModelControllerTest(t)
+	const publicModel = "shared-seedance"
+	createMappedCanonicalBillingTestRoute(t, db, 1, constant.ChannelTypeDoubaoVideo, publicModel, "bytefor-2.0-real-priority")
+	createMappedCanonicalBillingTestRoute(t, db, 2, constant.ChannelTypeSeventhFrame, publicModel, "viraldance900--person-stripe--6c832bb1--voice-tone--a0c4ee78")
+	summary, err := relay.GetTaskBillingCapabilitySummary(publicModel)
+	require.NoError(t, err)
+	require.True(t, summary.Compatible)
+
+	expression := canonicalDurationBranches("shared", 3)
+	recorder := updateBillingModelsRequest(t, BillingModelsUpdateRequest{
+		BillingMode:   map[string]string{publicModel: billing_setting.BillingModeTieredExpr},
+		BillingExpr:   map[string]string{publicModel: expression},
+		BillingSchema: map[string]string{publicModel: summary.SchemaVersion},
+	})
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, summary.SchemaVersion, billing_setting.GetBillingSchema(publicModel))
+	assert.Equal(t, expression, billing_setting.GetBillingExprCopy()[publicModel])
 }
 
 func TestUpdateOptionRejectsIndividualBillingMapUpdates(t *testing.T) {

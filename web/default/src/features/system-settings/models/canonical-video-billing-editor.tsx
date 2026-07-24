@@ -241,6 +241,8 @@ export function CanonicalVideoBillingEditor({
 
   if (!capability) return null
 
+  if (!capability.canonical_applicable && !enabled) return null
+
   if (!available) {
     return (
       <div className='space-y-3'>

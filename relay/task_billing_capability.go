@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"sort"
 	"strconv"
@@ -26,10 +27,11 @@ type TaskBillingChannelCapability struct {
 	Incompatibility string `json:"incompatibility,omitempty"`
 }
 
-// TaskBillingCapabilitySummary describes whether every currently enabled route
-// for a public model agrees on one canonical schema.
+// TaskBillingCapabilitySummary describes whether every currently enabled video
+// route for a public model can safely project into one canonical schema.
 type TaskBillingCapabilitySummary struct {
 	Model                string                         `json:"model"`
+	Applicable           bool                           `json:"applicable"`
 	Compatible           bool                           `json:"compatible"`
 	QuotaPerUnit         float64                        `json:"quota_per_unit"`
 	CheckedAt            int64                          `json:"checked_at"`
@@ -42,7 +44,7 @@ type TaskBillingCapabilitySummary struct {
 
 // GetTaskBillingCapabilitySummary resolves every enabled ability route for a
 // model. Billing settings are model-wide, therefore a dynamic expression is
-// safe only when all enabled routes expose the same canonical schema.
+// safe when every video route exposes a compatible canonical projection.
 func GetTaskBillingCapabilitySummary(modelName string) (*TaskBillingCapabilitySummary, error) {
 	modelName = strings.TrimSpace(modelName)
 	summary := &TaskBillingCapabilitySummary{
@@ -66,33 +68,94 @@ func GetTaskBillingCapabilitySummary(modelName string) (*TaskBillingCapabilitySu
 		return summary, nil
 	}
 
-	var baseline *channel.TaskBillingCapability
+	type compatibleCandidate struct {
+		entry      TaskBillingChannelCapability
+		capability *channel.TaskBillingCapability
+	}
+	inspected := make([]compatibleCandidate, 0, len(channels))
+	summary.Applicable = modelSupportsCanonicalTaskBilling(modelName)
 	for _, upstreamChannel := range channels {
 		entry, capability := inspectTaskBillingChannel(modelName, upstreamChannel)
-		if capability == nil {
-			summary.IncompatibleChannels = append(summary.IncompatibleChannels, entry)
-			continue
+		inspected = append(inspected, compatibleCandidate{entry: entry, capability: capability})
+		if capability != nil || isDedicatedVideoTaskChannel(entry.ChannelType) {
+			summary.Applicable = true
 		}
-		if baseline == nil {
-			baseline = capability
-			summary.SchemaVersion = capability.SchemaVersion
-			summary.Fields = cloneTaskBillingFields(capability.Fields)
-			summary.CompatibleChannels = append(summary.CompatibleChannels, entry)
-			continue
-		}
-		if sameTaskBillingCapability(baseline, capability) {
-			summary.CompatibleChannels = append(summary.CompatibleChannels, entry)
-			continue
-		}
-		entry.Incompatibility = fmt.Sprintf("规范计费 schema 与 %s 不一致", baseline.SchemaVersion)
-		summary.IncompatibleChannels = append(summary.IncompatibleChannels, entry)
 	}
 
-	summary.Compatible = baseline != nil && len(summary.IncompatibleChannels) == 0
+	candidates := make([]compatibleCandidate, 0, len(inspected))
+	for _, candidate := range inspected {
+		if candidate.capability == nil {
+			if !summary.Applicable {
+				// Generic chat/image channels do not participate in video task
+				// billing. They should not make every expression-priced model
+				// display a video-specific warning.
+				continue
+			}
+			summary.IncompatibleChannels = append(summary.IncompatibleChannels, candidate.entry)
+			continue
+		}
+		candidates = append(candidates, candidate)
+	}
+
+	capabilities := make([]*channel.TaskBillingCapability, 0, len(candidates))
+	for _, candidate := range candidates {
+		capabilities = append(capabilities, candidate.capability)
+	}
+	merged, mergeErr := mergeTaskBillingCapabilities(capabilities)
+	if mergeErr != nil {
+		for _, candidate := range candidates {
+			entry := candidate.entry
+			entry.Incompatibility = "规范计费 schema 无法安全合并: " + mergeErr.Error()
+			summary.IncompatibleChannels = append(summary.IncompatibleChannels, entry)
+		}
+	} else if merged != nil {
+		summary.SchemaVersion = merged.SchemaVersion
+		summary.Fields = cloneTaskBillingFields(merged.Fields)
+		for _, candidate := range candidates {
+			summary.CompatibleChannels = append(summary.CompatibleChannels, candidate.entry)
+		}
+	}
+
+	summary.Compatible = merged != nil && len(summary.IncompatibleChannels) == 0
 	if !summary.Compatible && summary.Reason == "" {
-		summary.Reason = "存在未提供或不兼容规范计费 schema 的启用渠道"
+		if !summary.Applicable {
+			summary.Reason = "该模型不是视频任务模型"
+		} else {
+			summary.Reason = "存在未提供或不兼容规范计费 schema 的启用渠道"
+		}
 	}
 	return summary, nil
+}
+
+func modelSupportsCanonicalTaskBilling(modelName string) bool {
+	for _, endpointType := range model.GetModelSupportEndpointTypes(modelName) {
+		if endpointType == constant.EndpointTypeOpenAIVideo {
+			return true
+		}
+	}
+	return false
+}
+
+func isDedicatedVideoTaskChannel(channelType int) bool {
+	switch channelType {
+	case constant.ChannelTypeKling,
+		constant.ChannelTypeJimeng,
+		constant.ChannelTypeVidu,
+		constant.ChannelTypeDoubaoVideo,
+		constant.ChannelTypeSora,
+		constant.ChannelTypeJimengDimensio,
+		constant.ChannelTypeXingheVideo,
+		constant.ChannelTypeAGGC,
+		constant.ChannelTypeYobox,
+		constant.ChannelTypeTencentVOD,
+		constant.ChannelTypeAxmgc,
+		constant.ChannelTypeSeventhFrame,
+		constant.ChannelTypeYoboxCorp,
+		constant.ChannelTypeShishi:
+		return true
+	default:
+		return false
+	}
 }
 
 // CanonicalBillingFields adapts a channel contract to the expression package
@@ -207,6 +270,157 @@ func cloneTaskBillingFields(fields []channel.TaskBillingField) []channel.TaskBil
 		})
 	}
 	return result
+}
+
+func mergeTaskBillingCapabilities(capabilities []*channel.TaskBillingCapability) (*channel.TaskBillingCapability, error) {
+	normalized := make([]*channel.TaskBillingCapability, 0, len(capabilities))
+	for _, capability := range capabilities {
+		capability = normalizeTaskBillingCapability(capability)
+		if capability == nil {
+			return nil, fmt.Errorf("empty canonical billing capability")
+		}
+		if err := billingexpr.ValidateCanonicalBillingSchema(CanonicalBillingFields(capability)); err != nil {
+			return nil, err
+		}
+		normalized = append(normalized, capability)
+	}
+	if len(normalized) == 0 {
+		return nil, nil
+	}
+
+	allIdentical := true
+	for index := 1; index < len(normalized); index++ {
+		if !sameTaskBillingCapability(normalized[0], normalized[index]) {
+			allIdentical = false
+			break
+		}
+	}
+	if allIdentical {
+		return &channel.TaskBillingCapability{
+			SchemaVersion: normalized[0].SchemaVersion,
+			Fields:        cloneTaskBillingFields(normalized[0].Fields),
+		}, nil
+	}
+
+	type mergedField struct {
+		field          channel.TaskBillingField
+		presentCount   int
+		requiredByAll  bool
+		openEnumValues bool
+		enumValues     map[string]struct{}
+	}
+	mergedFields := make(map[string]*mergedField)
+	for _, capability := range normalized {
+		for _, field := range capability.Fields {
+			current, exists := mergedFields[field.Path]
+			if !exists {
+				current = &mergedField{
+					field: channel.TaskBillingField{
+						Path: field.Path,
+						Type: field.Type,
+					},
+					requiredByAll: field.Required,
+					enumValues:    make(map[string]struct{}, len(field.EnumValues)),
+				}
+				mergedFields[field.Path] = current
+			} else if current.field.Type != field.Type {
+				return nil, fmt.Errorf("field %q has conflicting types %q and %q", field.Path, current.field.Type, field.Type)
+			} else {
+				current.requiredByAll = current.requiredByAll && field.Required
+			}
+			current.presentCount++
+			if len(field.EnumValues) == 0 {
+				current.openEnumValues = true
+			}
+			for _, value := range field.EnumValues {
+				current.enumValues[value] = struct{}{}
+			}
+		}
+	}
+
+	fields := make([]channel.TaskBillingField, 0, len(mergedFields))
+	for _, current := range mergedFields {
+		field := current.field
+		field.Required = current.presentCount == len(normalized) && current.requiredByAll
+		if !current.openEnumValues {
+			field.EnumValues = make([]string, 0, len(current.enumValues))
+			for value := range current.enumValues {
+				field.EnumValues = append(field.EnumValues, value)
+			}
+			sort.Strings(field.EnumValues)
+		}
+		fields = append(fields, field)
+	}
+	sort.Slice(fields, func(left, right int) bool {
+		return fields[left].Path < fields[right].Path
+	})
+	merged := &channel.TaskBillingCapability{
+		SchemaVersion: mergedTaskBillingSchemaVersion(fields),
+		Fields:        fields,
+	}
+	if err := billingexpr.ValidateCanonicalBillingSchema(CanonicalBillingFields(merged)); err != nil {
+		return nil, err
+	}
+	return merged, nil
+}
+
+func mergedTaskBillingSchemaVersion(fields []channel.TaskBillingField) string {
+	var contract strings.Builder
+	for _, field := range fields {
+		fmt.Fprintf(&contract, "%s\x00%s\x00%t\x00", field.Path, field.Type, field.Required)
+		for _, value := range field.EnumValues {
+			contract.WriteString(value)
+			contract.WriteByte(0)
+		}
+		contract.WriteByte('\n')
+	}
+	digest := sha256.Sum256([]byte(contract.String()))
+	return fmt.Sprintf("task.canonical-merged.%x.v1", digest[:16])
+}
+
+func taskBillingCapabilityFitsModelSchema(provider, modelCapability *channel.TaskBillingCapability) error {
+	provider = normalizeTaskBillingCapability(provider)
+	modelCapability = normalizeTaskBillingCapability(modelCapability)
+	if provider == nil || modelCapability == nil {
+		return fmt.Errorf("canonical billing capability is empty")
+	}
+	modelFields := make(map[string]channel.TaskBillingField, len(modelCapability.Fields))
+	for _, field := range modelCapability.Fields {
+		modelFields[field.Path] = field
+	}
+	providerFields := make(map[string]channel.TaskBillingField, len(provider.Fields))
+	for _, field := range provider.Fields {
+		providerFields[field.Path] = field
+		modelField, exists := modelFields[field.Path]
+		if !exists {
+			return fmt.Errorf("provider declares field %q outside the model schema", field.Path)
+		}
+		if modelField.Type != field.Type {
+			return fmt.Errorf("field %q has provider type %q but model type %q", field.Path, field.Type, modelField.Type)
+		}
+		if len(modelField.EnumValues) == 0 {
+			continue
+		}
+		if len(field.EnumValues) == 0 {
+			return fmt.Errorf("provider field %q is open-ended but the model schema is finite", field.Path)
+		}
+		allowedValues := make(map[string]struct{}, len(modelField.EnumValues))
+		for _, value := range modelField.EnumValues {
+			allowedValues[value] = struct{}{}
+		}
+		for _, value := range field.EnumValues {
+			if _, exists := allowedValues[value]; !exists {
+				return fmt.Errorf("provider field %q value %q is outside the model schema", field.Path, value)
+			}
+		}
+	}
+	for _, field := range modelCapability.Fields {
+		providerField, exists := providerFields[field.Path]
+		if field.Required && (!exists || !providerField.Required) {
+			return fmt.Errorf("model-required field %q is not required by the provider", field.Path)
+		}
+	}
+	return nil
 }
 
 func sameTaskBillingCapability(left, right *channel.TaskBillingCapability) bool {

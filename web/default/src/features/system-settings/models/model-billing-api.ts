@@ -37,6 +37,7 @@ export type BillingIncompatibleChannel = BillingCapabilityChannel & {
 
 export type BillingCapability = {
   model: string
+  canonical_applicable: boolean
   canonical_available: boolean
   quota_per_unit: number
   checked_at: number
@@ -49,6 +50,8 @@ export type BillingCapability = {
 
 type BillingCapabilityWire = {
   model?: unknown
+  applicable?: unknown
+  canonical_applicable?: unknown
   canonical_available?: unknown
   compatible?: unknown
   quota_per_unit?: unknown
@@ -169,6 +172,10 @@ function normalizeBillingCapability(
 ): BillingCapability {
   return {
     model: toString(value.model) || model,
+    canonical_applicable:
+      value.canonical_applicable === undefined && value.applicable === undefined
+        ? true
+        : toBoolean(value.canonical_applicable ?? value.applicable),
     canonical_available: toBoolean(
       value.canonical_available ?? value.compatible
     ),

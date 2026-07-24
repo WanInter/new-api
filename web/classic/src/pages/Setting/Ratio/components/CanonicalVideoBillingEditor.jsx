@@ -393,6 +393,8 @@ export default function CanonicalVideoBillingEditor({
 
   if (!capability) return null;
 
+  if (!capability.canonical_applicable && !persistedEnabled) return null;
+
   if (!available) {
     return (
       <div style={{ marginBottom: 16 }}>

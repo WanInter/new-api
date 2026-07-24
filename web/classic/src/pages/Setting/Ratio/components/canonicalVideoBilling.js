@@ -98,6 +98,13 @@ export function normalizeCanonicalBillingCapability(value, fallbackModel = '') {
   );
   return {
     model: toString(capability.model) || fallbackModel,
+    canonical_applicable:
+      capability.canonical_applicable === undefined &&
+      capability.applicable === undefined
+        ? true
+        : toBoolean(
+            capability.canonical_applicable ?? capability.applicable,
+          ),
     canonical_available: toBoolean(
       capability.canonical_available ?? capability.compatible,
     ),
