@@ -55,6 +55,28 @@ func TestCanonicalBillingMatchesKlingPayload(t *testing.T) {
 	require.NoError(t, billingexpr.ValidateCanonicalBillingInput(input.Body, fields))
 }
 
+func TestCanonicalBillingBuildsInputForCustomUpstreamAlias(t *testing.T) {
+	request := relaycommon.TaskSubmitReq{
+		Model:    "public-kling-alias",
+		Prompt:   "cat",
+		Duration: 5,
+	}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/videos", nil)
+	c.Set("task_request", request)
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "public-kling-alias",
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "provider-custom-kling"},
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+
+	input, err := (&TaskAdaptor{}).BuildBillingInput(c, info)
+
+	require.NoError(t, err)
+	require.NotEmpty(t, input.Body)
+	assert.Contains(t, string(input.Body), `"duration_seconds":5`)
+}
+
 func TestKlingLimitedSchemaRejectsUnsupportedWireMode(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	capability := adaptor.GetTaskBillingCapability(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "kling-v1"}})

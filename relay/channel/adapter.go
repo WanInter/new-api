@@ -125,6 +125,14 @@ type TaskBillingDefaultCapabilityProvider interface {
 	GetDefaultTaskBillingCapability() *TaskBillingCapability
 }
 
+// TaskBillingProfileFallbackProvider opts a task adaptor into the framework's
+// conservative profile-union fallback for previously unseen upstream aliases.
+// The adaptor must build canonical input from the normalized request without a
+// model-name whitelist; otherwise it should expose an explicit default schema.
+type TaskBillingProfileFallbackProvider interface {
+	SupportsTaskBillingProfileFallback() bool
+}
+
 type OpenAIVideoConverter interface {
 	ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error)
 }

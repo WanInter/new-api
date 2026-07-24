@@ -12,6 +12,10 @@ import (
 
 const aggcBillingSchema = "video.duration-seconds+resolution.duration-4-15.default-4.resolution-720p-1080p.explicit-required.v1"
 
+func (a *TaskAdaptor) SupportsTaskBillingProfileFallback() bool {
+	return true
+}
+
 func (a *TaskAdaptor) BuildBillingInput(c *gin.Context, info *relaycommon.RelayInfo) (billingexpr.RequestInput, error) {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {

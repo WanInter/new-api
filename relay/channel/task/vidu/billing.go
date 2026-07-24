@@ -12,6 +12,10 @@ import (
 
 const viduBillingSchema = "video.duration-seconds+resolution+audio.duration-5.default-5.resolution-720p-1080p.default-1080p.audio-false-true.default-false.limited.v1"
 
+func (a *TaskAdaptor) SupportsTaskBillingProfileFallback() bool {
+	return true
+}
+
 func (a *TaskAdaptor) BuildBillingInput(c *gin.Context, info *relaycommon.RelayInfo) (billingexpr.RequestInput, error) {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {

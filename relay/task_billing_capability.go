@@ -245,6 +245,19 @@ func resolveTaskBillingCapability(adaptor channel.TaskAdaptor, info *relaycommon
 	var capability *channel.TaskBillingCapability
 	if provider, ok := adaptor.(channel.TaskBillingCapabilityProvider); ok {
 		capability = provider.GetTaskBillingCapability(info)
+		if capability == nil && info != nil {
+			// Billing is configured against the public model name. A channel
+			// mapping may use any transport alias, so retry the provider profile
+			// with the public name before considering a generic fallback.
+			publicModel := strings.TrimSpace(info.OriginModelName)
+			upstreamModel := ""
+			if info.ChannelMeta != nil {
+				upstreamModel = strings.TrimSpace(info.ChannelMeta.UpstreamModelName)
+			}
+			if publicModel != "" && publicModel != upstreamModel {
+				capability = provider.GetTaskBillingCapability(cloneTaskBillingCapabilityInfo(info, publicModel))
+			}
+		}
 	}
 	if capability == nil {
 		if provider, ok := adaptor.(channel.TaskBillingDefaultCapabilityProvider); ok {
@@ -252,7 +265,9 @@ func resolveTaskBillingCapability(adaptor channel.TaskAdaptor, info *relaycommon
 		}
 	}
 	if capability == nil {
-		capability = deriveTaskBillingCapabilityFromProfiles(adaptor, info)
+		if provider, ok := adaptor.(channel.TaskBillingProfileFallbackProvider); ok && provider.SupportsTaskBillingProfileFallback() {
+			capability = deriveTaskBillingCapabilityFromProfiles(adaptor, info)
+		}
 	}
 	return normalizeTaskBillingCapability(capability)
 }

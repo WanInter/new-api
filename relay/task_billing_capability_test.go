@@ -271,3 +271,20 @@ func TestGetTaskBillingCapabilitySummaryDerivesSchemaForCustomKlingAlias(t *test
 		assert.False(t, field.Required, "custom aliases must not inherit model-specific required defaults")
 	}
 }
+
+func TestGetTaskBillingCapabilitySummaryUsesPublicProfileForMappedAlias(t *testing.T) {
+	db := setupTaskBillingCapabilityTestDB(t)
+	const publicModel = "kling-v1"
+	createTaskBillingCapabilityRoute(t, db, 1, constant.ChannelTypeKling, publicModel, "provider-custom-kling-v1")
+
+	summary, err := GetTaskBillingCapabilitySummary(publicModel)
+
+	require.NoError(t, err)
+	require.NotNil(t, summary)
+	assert.True(t, summary.Compatible)
+	assert.Equal(t, "video.duration-seconds+quality.duration-5-10.default-5.quality-std-pro.default-std.limited.v1", summary.SchemaVersion)
+	assert.Len(t, summary.Fields, 2)
+	for _, field := range summary.Fields {
+		assert.True(t, field.Required, "a known public model keeps its declared required fields")
+	}
+}

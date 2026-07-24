@@ -12,6 +12,10 @@ import (
 
 const klingBillingSchema = "video.duration-seconds+quality.duration-5-10.default-5.quality-std-pro.default-std.limited.v1"
 
+func (a *TaskAdaptor) SupportsTaskBillingProfileFallback() bool {
+	return true
+}
+
 func (a *TaskAdaptor) BuildBillingInput(c *gin.Context, info *relaycommon.RelayInfo) (billingexpr.RequestInput, error) {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {

@@ -10,13 +10,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func (a *TaskAdaptor) SupportsTaskBillingProfileFallback() bool {
+	return true
+}
+
 // BuildBillingInput reuses seventhFrameDuration, the resolver used by the
 // generation payload for JSON, multipart, and URL-encoded requests.
 func (a *TaskAdaptor) BuildBillingInput(c *gin.Context, info *relaycommon.RelayInfo) (billingexpr.RequestInput, error) {
 	requestInput := billingexpr.RequestInput{Headers: taskcommon.CanonicalBillingHeaders(c, info)}
-	if !supportsSeventhFrameCanonicalDuration(info) {
-		return requestInput, nil
-	}
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return requestInput, err
