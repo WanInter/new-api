@@ -33,11 +33,7 @@ func prepareTaskBillingRequestInput(c *gin.Context, info *relaycommon.RelayInfo,
 	}
 	schemaVersion = strings.TrimSpace(schemaVersion)
 	if billingMode == billing_setting.BillingModeTieredExpr && schemaVersion != "" {
-		capabilityProvider, ok := adaptor.(channel.TaskBillingCapabilityProvider)
-		if !ok {
-			return fmt.Errorf("channel does not provide canonical task billing capability for schema %q", schemaVersion)
-		}
-		capability := normalizeTaskBillingCapability(capabilityProvider.GetTaskBillingCapability(info))
+		capability := resolveTaskBillingCapability(adaptor, info)
 		if capability == nil {
 			return fmt.Errorf("channel does not provide canonical task billing schema %q for mapped model %q", schemaVersion, info.UpstreamModelName)
 		}

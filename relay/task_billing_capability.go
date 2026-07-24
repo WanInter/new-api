@@ -211,16 +211,11 @@ func inspectTaskBillingChannel(modelName string, upstreamChannel *model.Channel)
 		return entry, nil
 	}
 	adaptor.Init(info)
-	provider, ok := adaptor.(channel.TaskBillingCapabilityProvider)
-	if !ok {
-		entry.Incompatibility = "渠道未提供规范计费输入"
-		return entry, nil
-	}
 	if _, ok := adaptor.(channel.TaskBillingInputProvider); !ok {
 		entry.Incompatibility = "渠道声明了规范计费 schema，但不能生成规范计费输入"
 		return entry, nil
 	}
-	capability := normalizeTaskBillingCapability(provider.GetTaskBillingCapability(info))
+	capability := resolveTaskBillingCapability(adaptor, info)
 	if capability == nil {
 		entry.Incompatibility = "该渠道映射模型未声明规范计费 schema"
 		return entry, nil
@@ -231,6 +226,26 @@ func inspectTaskBillingChannel(modelName string, upstreamChannel *model.Channel)
 	}
 	entry.SchemaVersion = capability.SchemaVersion
 	return entry, capability
+}
+
+// resolveTaskBillingCapability first checks a model-specific profile and then
+// falls back to a channel-level conservative schema. The fallback is useful
+// for custom upstream aliases whose wire semantics are already handled by the
+// adaptor but whose name is not present in a static profile table.
+func resolveTaskBillingCapability(adaptor channel.TaskAdaptor, info *relaycommon.RelayInfo) *channel.TaskBillingCapability {
+	if adaptor == nil {
+		return nil
+	}
+	var capability *channel.TaskBillingCapability
+	if provider, ok := adaptor.(channel.TaskBillingCapabilityProvider); ok {
+		capability = provider.GetTaskBillingCapability(info)
+	}
+	if capability == nil {
+		if provider, ok := adaptor.(channel.TaskBillingDefaultCapabilityProvider); ok {
+			capability = provider.GetDefaultTaskBillingCapability()
+		}
+	}
+	return normalizeTaskBillingCapability(capability)
 }
 
 func normalizeTaskBillingCapability(capability *channel.TaskBillingCapability) *channel.TaskBillingCapability {

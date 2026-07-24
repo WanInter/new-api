@@ -1095,6 +1095,55 @@ func TestSeedance20CanonicalBillingMatrixMatchesPayloadAndQuota(t *testing.T) {
 	}
 }
 
+func TestDefaultCanonicalBillingSupportsUnlistedMappedModel(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "seedance-2.0-yo",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "seedance-2.0-933",
+			IsModelMapped:     true,
+		},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+
+	assert.Nil(t, adaptor.GetTaskBillingCapability(info))
+	defaultCapability := adaptor.GetDefaultTaskBillingCapability()
+	require.NotNil(t, defaultCapability)
+
+	c := newYoboxBillingTestContext(t, "application/json", strings.NewReader(`{
+		"model":"seedance-2.0-yo",
+		"prompt":"animate",
+		"duration":7,
+		"resolution":"1080p"
+	}`))
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	req, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+
+	billingInput, err := adaptor.BuildBillingInput(c, info)
+	require.NoError(t, err)
+	payload, err := adaptor.convertToRequestPayload(&req, info)
+	require.NoError(t, err)
+	upstreamInput, ok := payload.(map[string]any)["input"].(map[string]any)
+	require.True(t, ok)
+
+	assert.EqualValues(t, 7, upstreamInput["duration"])
+	assert.Equal(t, "1080p", upstreamInput["resolution"])
+	assert.EqualValues(t, 7, gjson.GetBytes(billingInput.Body, "billing.duration_seconds").Int())
+	assert.Equal(t, "1080p", gjson.GetBytes(billingInput.Body, "billing.resolution").String())
+
+	fields := make([]billingexpr.CanonicalBillingField, 0, len(defaultCapability.Fields))
+	for _, field := range defaultCapability.Fields {
+		fields = append(fields, billingexpr.CanonicalBillingField{
+			Path:       field.Path,
+			Type:       field.Type,
+			Required:   field.Required,
+			EnumValues: field.EnumValues,
+		})
+	}
+	require.NoError(t, billingexpr.ValidateCanonicalBillingInput(billingInput.Body, fields))
+}
+
 func TestSeedance20CanonicalBillingUsesResolvedDefaultResolution(t *testing.T) {
 	testCases := []struct {
 		model string

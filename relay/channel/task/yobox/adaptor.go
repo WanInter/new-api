@@ -30,7 +30,11 @@ const (
 	yoboxTasksPath                   = "/async/tasks"
 	yoboxSeedance20FastNoFaceSchema  = "video.yobox.seedance-2.0.fast-noface.v1"
 	yoboxSeedance20NoFaceSchema      = "video.yobox.seedance-2.0.noface.v1"
+	yoboxDefaultBillingSchema        = "video.yobox.seedance-2.0.duration-4-15.resolution-480p-720p-1080p-4k.optional.v1"
 )
+
+var yoboxDefaultBillingDurations = []string{"4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"}
+var yoboxDefaultBillingResolutions = []string{"480p", "720p", "1080p", "4k"}
 
 var modelList = []string{
 	"seedance2",
@@ -184,24 +188,32 @@ func (a *TaskAdaptor) BuildBillingInput(c *gin.Context, info *relaycommon.RelayI
 		return requestInput, err
 	}
 	modelName := yoboxRequestModelName(&req, info)
-	if !isYoboxSeedance20Model(modelName) {
-		return requestInput, nil
-	}
-
-	payloadInput := resolveYoboxSeedance20Input(&req, modelName)
 	billing := map[string]any{}
-	if seconds, ok := yoboxInputDurationSeconds(payloadInput); ok {
-		billing["duration_seconds"] = seconds
+	if isYoboxSeedance2Model(modelName) {
+		payload := convertSeedance2Payload(&req, modelName)
+		if seconds, ok := yoboxDurationSeconds(payload["seconds"]); ok {
+			billing["duration_seconds"] = seconds
+		}
+		if resolution, ok := yoboxPayloadResolution(payload); ok {
+			billing["resolution"] = resolution
+		}
+	} else {
+		// Unknown mapped names use the same nested input contract as the
+		// adapter's default Seedance 2.0 payload. Capability validation decides
+		// whether the resulting values fit the configured model schema.
+		payloadInput := resolveYoboxSeedance20Input(&req, modelName)
+		if seconds, ok := yoboxInputDurationSeconds(payloadInput); ok {
+			billing["duration_seconds"] = seconds
+		}
+		if resolution, ok := yoboxInputResolution(payloadInput); ok {
+			billing["resolution"] = resolution
+		}
 	}
-	if resolution, ok := yoboxInputResolution(payloadInput); ok {
-		billing["resolution"] = resolution
-	}
-	body, err := common.Marshal(map[string]any{"billing": billing})
+	canonicalInput, err := taskcommon.BuildCanonicalBillingInput(c, info, billing)
 	if err != nil {
 		return billingexpr.RequestInput{}, err
 	}
-	requestInput.Body = body
-	return requestInput, nil
+	return canonicalInput, nil
 }
 
 // GetTaskBillingCapability declares the stable dimensions that are shared by
@@ -252,6 +264,51 @@ func (a *TaskAdaptor) GetTaskBillingCapability(info *relaycommon.RelayInfo) *cha
 			},
 		},
 	}
+}
+
+// GetDefaultTaskBillingCapability covers custom upstream aliases that use the
+// adapter's default nested Seedance 2.0 payload. Both dimensions are optional:
+// duration has no provider-confirmed default, while resolution is defaulted by
+// the payload resolver when the nested contract is used. The broad finite
+// value set keeps the schema useful for newly mapped models without guessing a
+// model-specific price matrix.
+func (a *TaskAdaptor) GetDefaultTaskBillingCapability() *channel.TaskBillingCapability {
+	return &channel.TaskBillingCapability{
+		SchemaVersion: yoboxDefaultBillingSchema,
+		Fields: []channel.TaskBillingField{
+			{
+				Path:       "billing.duration_seconds",
+				Type:       "number",
+				Required:   false,
+				EnumValues: append([]string(nil), yoboxDefaultBillingDurations...),
+			},
+			{
+				Path:       "billing.resolution",
+				Type:       "string",
+				Required:   false,
+				EnumValues: append([]string(nil), yoboxDefaultBillingResolutions...),
+			},
+		},
+	}
+}
+
+func yoboxPayloadResolution(payload map[string]any) (string, bool) {
+	if payload == nil {
+		return "", false
+	}
+	for _, key := range []string{"resolution", "size"} {
+		value, ok := payload[key].(string)
+		if !ok || strings.TrimSpace(value) == "" {
+			continue
+		}
+		if resolution, err := relaycommon.NormalizeVideoOutputResolution(value); err == nil {
+			return resolution, true
+		}
+		if resolution := yoboxResolutionFromSize(value); resolution != "" {
+			return resolution, true
+		}
+	}
+	return "", false
 }
 
 func yoboxBillingHeaders(c *gin.Context, info *relaycommon.RelayInfo) map[string]string {
@@ -743,7 +800,7 @@ func setYoboxResolution(input map[string]any, req *relaycommon.TaskSubmitReq, mo
 		input["resolution"] = resolution
 		return
 	}
-	if isYoboxSeedance20Model(modelName) {
+	if !isYoboxSeedance2Model(modelName) {
 		input["resolution"] = defaultYoboxSeedance20Resolution
 	}
 }

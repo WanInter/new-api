@@ -117,6 +117,14 @@ type TaskBillingCapabilityProvider interface {
 	GetTaskBillingCapability(info *relaycommon.RelayInfo) *TaskBillingCapability
 }
 
+// TaskBillingDefaultCapabilityProvider supplies a conservative channel-level
+// schema when a mapped upstream model does not have a model-specific profile.
+// This keeps custom upstream aliases from silently disabling canonical billing;
+// providers must still emit values that fit this default schema.
+type TaskBillingDefaultCapabilityProvider interface {
+	GetDefaultTaskBillingCapability() *TaskBillingCapability
+}
+
 type OpenAIVideoConverter interface {
 	ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error)
 }

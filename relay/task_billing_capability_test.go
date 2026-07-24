@@ -206,6 +206,21 @@ func TestGetTaskBillingCapabilitySummaryMergesCompatibleVideoRoutes(t *testing.T
 	assert.ElementsMatch(t, []string{"4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"}, summary.Fields[0].EnumValues)
 }
 
+func TestGetTaskBillingCapabilitySummaryUsesChannelDefaultForUnlistedYoboxModel(t *testing.T) {
+	db := setupTaskBillingCapabilityTestDB(t)
+	const publicModel = "public-yobox-alias"
+	createTaskBillingCapabilityRoute(t, db, 1, constant.ChannelTypeYobox, publicModel, "seedance-2.0-933")
+
+	summary, err := GetTaskBillingCapabilitySummary(publicModel)
+
+	require.NoError(t, err)
+	require.NotNil(t, summary)
+	assert.True(t, summary.Applicable)
+	assert.True(t, summary.Compatible)
+	assert.Equal(t, "video.yobox.seedance-2.0.duration-4-15.resolution-480p-720p-1080p-4k.optional.v1", summary.SchemaVersion)
+	assert.Empty(t, summary.IncompatibleChannels)
+}
+
 func TestGetTaskBillingCapabilitySummaryIgnoresGenericNonVideoRoute(t *testing.T) {
 	db := setupTaskBillingCapabilityTestDB(t)
 	const publicModel = "chat-model"
@@ -224,8 +239,8 @@ func TestGetTaskBillingCapabilitySummaryIgnoresGenericNonVideoRoute(t *testing.T
 
 func TestGetTaskBillingCapabilitySummaryKeepsUnsupportedVideoRouteVisible(t *testing.T) {
 	db := setupTaskBillingCapabilityTestDB(t)
-	const publicModel = "public-yobox-model"
-	createTaskBillingCapabilityRoute(t, db, 1, constant.ChannelTypeYobox, publicModel, "happy-horse-1.1")
+	const publicModel = "public-unknown-video-model"
+	createTaskBillingCapabilityRoute(t, db, 1, constant.ChannelTypeShishi, publicModel, "unpublished-video-model")
 
 	summary, err := GetTaskBillingCapabilitySummary(publicModel)
 
