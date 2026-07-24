@@ -217,8 +217,45 @@ func TestGetTaskBillingCapabilitySummaryUsesChannelDefaultForUnlistedYoboxModel(
 	require.NotNil(t, summary)
 	assert.True(t, summary.Applicable)
 	assert.True(t, summary.Compatible)
-	assert.Equal(t, "video.yobox.seedance-2.0.duration-4-15.resolution-480p-720p-1080p-4k.optional.v1", summary.SchemaVersion)
+	assert.Equal(t, "video.yobox.seedance-2.0.duration-4-15.resolution-480p-720p-1080p-4k.explicit-required.v2", summary.SchemaVersion)
 	assert.Empty(t, summary.IncompatibleChannels)
+}
+
+func TestGetTaskBillingCapabilitySummaryUsesDefaultForHappyHorseAlias(t *testing.T) {
+	db := setupTaskBillingCapabilityTestDB(t)
+	const publicModel = "happy-horse-public"
+	createTaskBillingCapabilityRoute(t, db, 1, constant.ChannelTypeYobox, publicModel, "happy-horse-1.1")
+
+	summary, err := GetTaskBillingCapabilitySummary(publicModel)
+
+	require.NoError(t, err)
+	require.NotNil(t, summary)
+	assert.True(t, summary.Applicable)
+	assert.True(t, summary.Compatible)
+	assert.Empty(t, summary.IncompatibleChannels)
+	require.Len(t, summary.Fields, 2)
+	assert.Equal(t, "billing.duration_seconds", summary.Fields[0].Path)
+	assert.True(t, summary.Fields[0].Required)
+	assert.Equal(t, "billing.resolution", summary.Fields[1].Path)
+	assert.True(t, summary.Fields[1].Required)
+	assert.ElementsMatch(t, []string{"480p", "720p", "1080p", "4k"}, summary.Fields[1].EnumValues)
+}
+
+func TestGetTaskBillingCapabilitySummaryDoesNotApplyNestedDefaultToLegacyYobox(t *testing.T) {
+	db := setupTaskBillingCapabilityTestDB(t)
+	const publicModel = "legacy-yobox-public"
+	createTaskBillingCapabilityRoute(t, db, 1, constant.ChannelTypeYobox, publicModel, "seedance2")
+
+	summary, err := GetTaskBillingCapabilitySummary(publicModel)
+
+	require.NoError(t, err)
+	require.NotNil(t, summary)
+	assert.True(t, summary.Applicable)
+	assert.False(t, summary.Compatible)
+	assert.Empty(t, summary.SchemaVersion)
+	assert.Empty(t, summary.Fields)
+	require.Len(t, summary.IncompatibleChannels, 1)
+	assert.Contains(t, summary.IncompatibleChannels[0].Incompatibility, "未声明")
 }
 
 func TestGetTaskBillingCapabilitySummaryIgnoresGenericNonVideoRoute(t *testing.T) {

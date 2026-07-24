@@ -30,7 +30,7 @@ const (
 	yoboxTasksPath                   = "/async/tasks"
 	yoboxSeedance20FastNoFaceSchema  = "video.yobox.seedance-2.0.fast-noface.v1"
 	yoboxSeedance20NoFaceSchema      = "video.yobox.seedance-2.0.noface.v1"
-	yoboxDefaultBillingSchema        = "video.yobox.seedance-2.0.duration-4-15.resolution-480p-720p-1080p-4k.optional.v1"
+	yoboxDefaultBillingSchema        = "video.yobox.seedance-2.0.duration-4-15.resolution-480p-720p-1080p-4k.explicit-required.v2"
 )
 
 var yoboxDefaultBillingDurations = []string{"4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"}
@@ -267,11 +267,11 @@ func (a *TaskAdaptor) GetTaskBillingCapability(info *relaycommon.RelayInfo) *cha
 }
 
 // GetDefaultTaskBillingCapability covers custom upstream aliases that use the
-// adapter's default nested Seedance 2.0 payload. Both dimensions are optional:
-// duration has no provider-confirmed default, while resolution is defaulted by
-// the payload resolver when the nested contract is used. The broad finite
-// value set keeps the schema useful for newly mapped models without guessing a
-// model-specific price matrix.
+// adapter's default nested Seedance 2.0 payload. The resolver always supplies
+// the provider's 720p resolution, while duration has no confirmed upstream
+// default. Both fields are therefore declared in the canonical contract and
+// dynamic billing requires clients to make duration explicit; otherwise the
+// request would be priced against an unknown provider default.
 func (a *TaskAdaptor) GetDefaultTaskBillingCapability() *channel.TaskBillingCapability {
 	return &channel.TaskBillingCapability{
 		SchemaVersion: yoboxDefaultBillingSchema,
@@ -279,17 +279,27 @@ func (a *TaskAdaptor) GetDefaultTaskBillingCapability() *channel.TaskBillingCapa
 			{
 				Path:       "billing.duration_seconds",
 				Type:       "number",
-				Required:   false,
+				Required:   true,
 				EnumValues: append([]string(nil), yoboxDefaultBillingDurations...),
 			},
 			{
 				Path:       "billing.resolution",
 				Type:       "string",
-				Required:   false,
+				Required:   true,
 				EnumValues: append([]string(nil), yoboxDefaultBillingResolutions...),
 			},
 		},
 	}
+}
+
+// GetDefaultTaskBillingCapabilityFor keeps the legacy top-level Seedance2
+// payload out of the nested Seedance 2.0 fallback schema. The former does not
+// expose the same duration/resolution contract and must retain legacy billing.
+func (a *TaskAdaptor) GetDefaultTaskBillingCapabilityFor(info *relaycommon.RelayInfo) *channel.TaskBillingCapability {
+	if isYoboxSeedance2Model(yoboxRequestModelName(nil, info)) {
+		return nil
+	}
+	return a.GetDefaultTaskBillingCapability()
 }
 
 func yoboxPayloadResolution(payload map[string]any) (string, bool) {

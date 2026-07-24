@@ -125,6 +125,13 @@ type TaskBillingDefaultCapabilityProvider interface {
 	GetDefaultTaskBillingCapability() *TaskBillingCapability
 }
 
+// TaskBillingDefaultCapabilityProviderWithInfo is an optional extension for
+// adaptors whose channel-level fallback depends on the mapped wire model. It
+// lets legacy and nested payload contracts keep distinct billing schemas.
+type TaskBillingDefaultCapabilityProviderWithInfo interface {
+	GetDefaultTaskBillingCapabilityFor(info *relaycommon.RelayInfo) *TaskBillingCapability
+}
+
 // TaskBillingProfileFallbackProvider opts a task adaptor into the framework's
 // conservative profile-union fallback for previously unseen upstream aliases.
 // The adaptor must build canonical input from the normalized request without a

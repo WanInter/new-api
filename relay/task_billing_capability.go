@@ -260,7 +260,12 @@ func resolveTaskBillingCapability(adaptor channel.TaskAdaptor, info *relaycommon
 		}
 	}
 	if capability == nil {
-		if provider, ok := adaptor.(channel.TaskBillingDefaultCapabilityProvider); ok {
+		if provider, ok := adaptor.(channel.TaskBillingDefaultCapabilityProviderWithInfo); ok {
+			// An info-aware provider owns the complete fallback decision. A nil
+			// result is intentional (for example, a legacy wire contract) and
+			// must not be replaced by the older unconditional default.
+			capability = provider.GetDefaultTaskBillingCapabilityFor(info)
+		} else if provider, ok := adaptor.(channel.TaskBillingDefaultCapabilityProvider); ok {
 			capability = provider.GetDefaultTaskBillingCapability()
 		}
 	}

@@ -1109,6 +1109,9 @@ func TestDefaultCanonicalBillingSupportsUnlistedMappedModel(t *testing.T) {
 	assert.Nil(t, adaptor.GetTaskBillingCapability(info))
 	defaultCapability := adaptor.GetDefaultTaskBillingCapability()
 	require.NotNil(t, defaultCapability)
+	for _, field := range defaultCapability.Fields {
+		assert.True(t, field.Required, "default Yobox canonical fields must be explicit")
+	}
 
 	c := newYoboxBillingTestContext(t, "application/json", strings.NewReader(`{
 		"model":"seedance-2.0-yo",
@@ -1142,6 +1145,48 @@ func TestDefaultCanonicalBillingSupportsUnlistedMappedModel(t *testing.T) {
 		})
 	}
 	require.NoError(t, billingexpr.ValidateCanonicalBillingInput(billingInput.Body, fields))
+}
+
+func TestDefaultCanonicalBillingRejectsMissingDuration(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "happy-horse-1.1",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+	c := newYoboxBillingTestContext(t, "application/json", strings.NewReader(`{
+		"model":"happy-horse-1.1",
+		"prompt":"animate",
+		"resolution":"480p"
+	}`))
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+
+	billingInput, err := adaptor.BuildBillingInput(c, info)
+	require.NoError(t, err)
+	assert.Equal(t, "480p", gjson.GetBytes(billingInput.Body, "billing.resolution").String())
+	capability := adaptor.GetDefaultTaskBillingCapability()
+	fields := make([]billingexpr.CanonicalBillingField, 0, len(capability.Fields))
+	for _, field := range capability.Fields {
+		fields = append(fields, billingexpr.CanonicalBillingField{
+			Path:       field.Path,
+			Type:       field.Type,
+			Required:   field.Required,
+			EnumValues: field.EnumValues,
+		})
+	}
+	err = billingexpr.ValidateCanonicalBillingInput(billingInput.Body, fields)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "billing.duration_seconds")
+}
+
+func TestDefaultCanonicalBillingSkipsLegacySeedance2Payload(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "seedance2",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "seedance2",
+		},
+	}
+	assert.Nil(t, adaptor.GetDefaultTaskBillingCapabilityFor(info))
 }
 
 func TestSeedance20CanonicalBillingUsesResolvedDefaultResolution(t *testing.T) {
