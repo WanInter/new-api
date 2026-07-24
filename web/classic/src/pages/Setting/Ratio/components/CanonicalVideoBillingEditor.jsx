@@ -422,11 +422,7 @@ export default function CanonicalVideoBillingEditor({
     <div style={{ marginBottom: 16 }}>
       <SchemaSummary capability={capability} t={t} />
       <div className='flex flex-wrap gap-2 mb-3'>
-        <Button
-          type={canonicalEnabled ? 'primary' : 'tertiary'}
-          theme={canonicalEnabled ? 'solid' : 'borderless'}
-          onClick={enableCanonical}
-        >
+        <Button type='primary' theme='solid' onClick={enableCanonical}>
           {t('Use canonical video pricing')}
         </Button>
         {canonicalEnabled ? (
