@@ -217,7 +217,7 @@ func TestGetTaskBillingCapabilitySummaryUsesChannelDefaultForUnlistedYoboxModel(
 	require.NotNil(t, summary)
 	assert.True(t, summary.Applicable)
 	assert.True(t, summary.Compatible)
-	assert.Equal(t, "video.yobox.seedance-2.0.duration-4-15.resolution-480p-720p-1080p-4k.explicit-required.v2", summary.SchemaVersion)
+	assert.Equal(t, "video.yobox.seedance-2.0.duration-4-15.resolution-480p-720p.explicit-required.v3", summary.SchemaVersion)
 	assert.Empty(t, summary.IncompatibleChannels)
 }
 
@@ -238,7 +238,7 @@ func TestGetTaskBillingCapabilitySummaryUsesDefaultForHappyHorseAlias(t *testing
 	assert.True(t, summary.Fields[0].Required)
 	assert.Equal(t, "billing.resolution", summary.Fields[1].Path)
 	assert.True(t, summary.Fields[1].Required)
-	assert.ElementsMatch(t, []string{"480p", "720p", "1080p", "4k"}, summary.Fields[1].EnumValues)
+	assert.ElementsMatch(t, []string{"480p", "720p"}, summary.Fields[1].EnumValues)
 }
 
 func TestGetTaskBillingCapabilitySummaryDoesNotApplyNestedDefaultToLegacyYobox(t *testing.T) {

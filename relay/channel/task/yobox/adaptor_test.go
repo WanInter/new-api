@@ -1117,7 +1117,7 @@ func TestDefaultCanonicalBillingSupportsUnlistedMappedModel(t *testing.T) {
 		"model":"seedance-2.0-yo",
 		"prompt":"animate",
 		"duration":7,
-		"resolution":"1080p"
+		"resolution":"720p"
 	}`))
 	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
 	req, err := relaycommon.GetTaskRequest(c)
@@ -1131,9 +1131,9 @@ func TestDefaultCanonicalBillingSupportsUnlistedMappedModel(t *testing.T) {
 	require.True(t, ok)
 
 	assert.EqualValues(t, 7, upstreamInput["duration"])
-	assert.Equal(t, "1080p", upstreamInput["resolution"])
+	assert.Equal(t, "720p", upstreamInput["resolution"])
 	assert.EqualValues(t, 7, gjson.GetBytes(billingInput.Body, "billing.duration_seconds").Int())
-	assert.Equal(t, "1080p", gjson.GetBytes(billingInput.Body, "billing.resolution").String())
+	assert.Equal(t, "720p", gjson.GetBytes(billingInput.Body, "billing.resolution").String())
 
 	fields := make([]billingexpr.CanonicalBillingField, 0, len(defaultCapability.Fields))
 	for _, field := range defaultCapability.Fields {
@@ -1145,6 +1145,10 @@ func TestDefaultCanonicalBillingSupportsUnlistedMappedModel(t *testing.T) {
 		})
 	}
 	require.NoError(t, billingexpr.ValidateCanonicalBillingInput(billingInput.Body, fields))
+	require.Error(t, billingexpr.ValidateCanonicalBillingInput(
+		[]byte(`{"billing":{"duration_seconds":7,"resolution":"1080p"}}`),
+		fields,
+	))
 }
 
 func TestDefaultCanonicalBillingRejectsMissingDuration(t *testing.T) {

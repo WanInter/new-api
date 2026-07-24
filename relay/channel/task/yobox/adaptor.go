@@ -30,11 +30,11 @@ const (
 	yoboxTasksPath                   = "/async/tasks"
 	yoboxSeedance20FastNoFaceSchema  = "video.yobox.seedance-2.0.fast-noface.v1"
 	yoboxSeedance20NoFaceSchema      = "video.yobox.seedance-2.0.noface.v1"
-	yoboxDefaultBillingSchema        = "video.yobox.seedance-2.0.duration-4-15.resolution-480p-720p-1080p-4k.explicit-required.v2"
+	yoboxDefaultBillingSchema        = "video.yobox.seedance-2.0.duration-4-15.resolution-480p-720p.explicit-required.v3"
 )
 
 var yoboxDefaultBillingDurations = []string{"4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"}
-var yoboxDefaultBillingResolutions = []string{"480p", "720p", "1080p", "4k"}
+var yoboxDefaultBillingResolutions = []string{"480p", "720p"}
 
 var modelList = []string{
 	"seedance2",
@@ -271,7 +271,9 @@ func (a *TaskAdaptor) GetTaskBillingCapability(info *relaycommon.RelayInfo) *cha
 // the provider's 720p resolution, while duration has no confirmed upstream
 // default. Both fields are therefore declared in the canonical contract and
 // dynamic billing requires clients to make duration explicit; otherwise the
-// request would be priced against an unknown provider default.
+// request would be priced against an unknown provider default. The fallback
+// resolution set is the conservative intersection shared by the confirmed
+// nested Yobox profiles; higher tiers require an explicit model capability.
 func (a *TaskAdaptor) GetDefaultTaskBillingCapability() *channel.TaskBillingCapability {
 	return &channel.TaskBillingCapability{
 		SchemaVersion: yoboxDefaultBillingSchema,
