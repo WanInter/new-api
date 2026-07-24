@@ -132,7 +132,7 @@ function SchemaSummary({ capability }: { capability: BillingCapability }) {
               ))}
             </div>
           ) : (
-            <div className='text-muted-foreground text-xs'>-</div>
+            <div className='text-muted-foreground text-xs'>{t('None')}</div>
           )}
         </div>
       </div>

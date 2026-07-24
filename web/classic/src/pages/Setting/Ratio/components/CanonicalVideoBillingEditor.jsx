@@ -95,7 +95,7 @@ function SchemaSummary({ capability, t }) {
               </div>
             ))
           ) : (
-            <span className='text-xs text-gray-500'>-</span>
+            <span className='text-xs text-gray-500'>{t('None')}</span>
           )}
         </div>
       </div>
